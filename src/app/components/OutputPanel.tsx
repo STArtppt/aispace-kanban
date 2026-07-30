@@ -18,16 +18,23 @@ export function OutputPanel({
   scan,
   openPath,
   onOpen,
+  compact = false,
 }: {
   scan: Scan;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  /** 预览打开时看板变窄，顶部卡片 2 列换行 */
+  compact?: boolean;
 }) {
   const { output } = scan;
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div
+        className={
+          compact ? 'grid grid-cols-2 gap-2 sm:gap-3' : 'grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4'
+        }
+      >
         <Stat label="产出文件" value={output.stats.total} hint={formatWords(output.stats.words)} />
         <Stat label="分析产物" value={output.stats.analysis} />
         <Stat label="交付文档" value={output.stats.docs} />

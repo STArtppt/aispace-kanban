@@ -5,6 +5,7 @@ import { SectionTitle, Stat } from '@/components/Primitives';
 import { Completeness, MetaView } from '@/components/MetaView';
 import type { FileItem, Scan } from '@/lib/api';
 import { formatRelative, formatWords } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 type Stage = { key: string; title: string; hint: string; done: boolean; current: boolean };
 
@@ -36,10 +37,13 @@ export function OverviewPanel({
   scan,
   onOpen,
   onGoto,
+  compact = false,
 }: {
   scan: Scan;
   onOpen: (item: FileItem) => void;
   onGoto: (view: 'input' | 'output' | 'prototypes') => void;
+  /** 预览打开时看板变窄，顶部卡片 2 列换行 */
+  compact?: boolean;
 }) {
   const stages = inferStages(scan);
   const { meta } = scan;
@@ -48,15 +52,20 @@ export function OverviewPanel({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="font-display text-2xl">{title}</h1>
-        <p className="font-mono text-xs text-muted-foreground">{scan.project.root}</p>
+        <h1 className={cn('font-display', compact ? 'text-xl' : 'text-2xl')}>{title}</h1>
+        <p className="font-mono text-xs text-muted-foreground break-all">{scan.project.root}</p>
       </div>
 
       {meta.error ? (
         <div className="rounded-lg border border-destructive/40 px-4 py-3 text-sm text-destructive">{meta.error}</div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div
+        className={cn(
+          'grid gap-2 sm:gap-3',
+          compact ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-4',
+        )}
+      >
         {meta.stats ? (
           <Completeness meta={meta} />
         ) : (
@@ -81,7 +90,7 @@ export function OverviewPanel({
       </div>
 
       <section className="flex flex-col gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <SectionTitle>工作空间进度</SectionTitle>
           <Badge variant="outline" className="text-muted-foreground">
             推断

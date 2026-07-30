@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import { ChevronDown, ChevronRight, FolderOpen, SquareArrowOutUpRight, X } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Markdown } from '@/components/Markdown';
-import { api, type FileItem } from '@/lib/api';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
+import { api, type ConvertedItem, type FileItem } from '@/lib/api';
 import { formatBytes, formatRelative } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 /** 只做展示用的 frontmatter 拆分，和服务端那份保持一致的宽松规则。 */
 function splitFrontmatter(text: string): { meta: [string, string][]; body: string } {
@@ -38,6 +40,10 @@ function resolveRelative(base: string, url: string) {
     else stack.push(seg);
   }
   return stack.join('/');
+}
+
+function sheetLabel(name: string) {
+  return name.replace(/\.(csv|tsv)$/i, '') || name;
 }
 
 function SourceBar({ meta }: { meta: [string, string][] }) {
@@ -84,6 +90,7 @@ function CsvTable({ text }: { text: string }) {
   }, [text]);
   if (!rows.length) return <p className="text-sm text-muted-foreground">这张表是空的。</p>;
   const [head, ...body] = rows;
+  if (!head?.length) return <p className="text-sm text-muted-foreground">这张表是空的。</p>;
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full border-collapse text-sm">
@@ -115,31 +122,23 @@ function CsvTable({ text }: { text: string }) {
   );
 }
 
-export function Reader({
-  projectId,
-  item,
-  onClose,
-}: {
-  projectId: string;
-  item: FileItem;
-  onClose: () => void;
-}) {
+function useFileContent(projectId: string, path: string | null) {
   const [content, setContent] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
 
-  const needsContent = item.reader === 'markdown' || item.reader === 'table' || item.reader === 'text';
-
   useEffect(() => {
-    if (!needsContent) {
+    if (!path) {
       setContent('');
+      setError('');
+      setLoading(false);
       return;
     }
     let cancelled = false;
     setLoading(true);
     setError('');
     api
-      .file(projectId, item.path)
+      .file(projectId, path)
       .then((data) => {
         if (!cancelled) setContent(data.content);
       })
@@ -152,18 +151,133 @@ export function Reader({
     return () => {
       cancelled = true;
     };
-  }, [projectId, item.path, needsContent]);
+  }, [projectId, path]);
 
-  const { meta, body } = useMemo(
-    () => (item.reader === 'markdown' ? splitFrontmatter(content) : { meta: [], body: content }),
-    [content, item.reader],
-  );
+  return { content, loading, error };
+}
 
-  const base = dirOf(item.path);
+/** 多 sheet（xlsx 拆目录）或单 csv/tsv 表格预览。 */
+function TableReader({
+  projectId,
+  item,
+  sheets,
+}: {
+  projectId: string;
+  item: FileItem;
+  sheets: { path: string; name: string }[];
+}) {
+  const multi = sheets.length > 1;
+  const firstPath = sheets[0]?.path || item.path;
+  const [active, setActive] = useState(firstPath);
+  const { content, loading, error } = useFileContent(projectId, active || null);
+
+  useEffect(() => {
+    setActive(firstPath);
+  }, [item.path, firstPath]);
+
+  if (!multi) {
+    return (
+      <>
+        {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
+        {error ? <p className="text-sm text-destructive">{error}</p> : null}
+        {!loading && !error ? <CsvTable text={content} /> : null}
+      </>
+    );
+  }
 
   return (
-    <aside className="flex h-full min-w-0 flex-col border-l border-border bg-background">
-      <header className="flex items-start gap-2 border-b border-border px-4 py-3">
+    <Tabs value={active} onValueChange={(v) => setActive(String(v))} className="gap-3">
+      <TabsList variant="line" className="px-0">
+        {sheets.map((sheet) => (
+          <TabsTrigger key={sheet.path} value={sheet.path} title={sheet.name}>
+            {sheetLabel(sheet.name)}
+          </TabsTrigger>
+        ))}
+      </TabsList>
+      {sheets.map((sheet) => (
+        <TabsContent key={sheet.path} value={sheet.path} className="min-w-0">
+          {active === sheet.path ? (
+            <>
+              {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              {!loading && !error ? <CsvTable text={content} /> : null}
+            </>
+          ) : null}
+        </TabsContent>
+      ))}
+    </Tabs>
+  );
+}
+
+function isConverted(item: FileItem): item is ConvertedItem {
+  return 'isDir' in item || 'sheets' in item;
+}
+
+export function Reader({
+  projectId,
+  item,
+  onClose,
+}: {
+  projectId: string;
+  item: FileItem;
+  onClose: () => void;
+}) {
+  const sheets = useMemo(() => {
+    if (isConverted(item) && item.sheets?.length) {
+      return item.sheets.map((s) => ({ path: s.path, name: s.name }));
+    }
+    return [] as { path: string; name: string }[];
+  }, [item]);
+
+  // 目录型转换产物：有多张 csv → 表格预览；否则读 _manifest.md
+  const multiSheet = sheets.length > 0;
+  const isDir = isConverted(item) && item.isDir;
+  const manifestPath = isDir ? `${item.path.replace(/\/$/, '')}/_manifest.md` : '';
+
+  const mode: 'markdown' | 'table' | 'text' | 'image' | 'external' = multiSheet
+    ? 'table'
+    : item.reader;
+
+  const contentPath =
+    mode === 'markdown' && isDir
+      ? manifestPath
+      : mode === 'markdown' || mode === 'text'
+        ? item.path
+        : null;
+
+  // 表格内容由 TableReader 自行拉取；此处只负责 md / 纯文本
+  const { content, loading, error } = useFileContent(projectId, contentPath);
+
+  // 多 sheet 时仍尽量拉 manifest 做溯源条
+  const { content: manifestContent } = useFileContent(
+    projectId,
+    multiSheet && isDir ? manifestPath : null,
+  );
+
+  const { meta, body } = useMemo(() => {
+    if (mode === 'markdown') return splitFrontmatter(content);
+    if (multiSheet && manifestContent) return splitFrontmatter(manifestContent);
+    return { meta: [] as [string, string][], body: content };
+  }, [content, mode, multiSheet, manifestContent]);
+
+  const base = dirOf(mode === 'markdown' && isDir ? manifestPath : item.path);
+
+  // markdown 目录：放在滚动区外；条目来自渲染后 DOM，与锚点严格一致
+  const mdScrollRef = useRef<HTMLDivElement>(null);
+  const [tocState, setTocState] = useState<{ path: string; items: TocItem[] }>({
+    path: item.path,
+    items: [],
+  });
+  // 路径变化时同步清空（render 期更新，避免 effect 清掉 layout 刚写入的目录）
+  if (tocState.path !== item.path) {
+    setTocState({ path: item.path, items: [] });
+  }
+  const tocItems = mode === 'markdown' && tocState.path === item.path ? tocState.items : [];
+  const showToc = tocItems.length >= 2;
+
+  return (
+    <aside className="flex h-full min-h-0 min-w-0 flex-col border-l border-border bg-background max-[899px]:border-l-0">
+      <header className="flex shrink-0 items-start gap-2 border-b border-border px-3 py-3 sm:px-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="truncate text-sm font-medium">{item.title || item.name}</span>
           <span className="truncate font-mono text-[11px] text-muted-foreground">{item.path}</span>
@@ -183,52 +297,99 @@ export function Reader({
         </div>
       </header>
 
-      <ScrollArea className="min-h-0 flex-1" viewportClassName="px-6 py-5">
-        {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
-
-        {!loading && !error && item.reader === 'markdown' ? (
-          <>
-            <SourceBar meta={meta} />
-            <Markdown urlTransform={(url) => api.fileUrl(projectId, resolveRelative(base, url))}>{body}</Markdown>
-          </>
-        ) : null}
-
-        {!loading && !error && item.reader === 'table' ? <CsvTable text={content} /> : null}
-
-        {!loading && !error && item.reader === 'text' ? (
-          <pre className="font-mono text-xs leading-6 whitespace-pre-wrap">{content}</pre>
-        ) : null}
-
-        {item.reader === 'image' ? (
-          <img
-            src={api.fileUrl(projectId, item.path)}
-            alt={item.name}
-            className="mx-auto max-w-full rounded-lg border border-border"
-          />
-        ) : null}
-
-        {item.reader === 'external' ? (
-          <div className="flex flex-col items-start gap-4 rounded-lg border border-dashed border-border px-5 py-8">
-            <div className="flex flex-col gap-1">
-              <p className="text-sm">这是原始格式文档，网页里不渲染。</p>
-              <p className="text-xs text-muted-foreground">
-                {formatBytes(item.size)} · {formatRelative(item.mtime)}
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => void api.reveal(projectId, item.path, 'open')}>
-                <SquareArrowOutUpRight className="size-3.5" />
-                用默认程序打开
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => void api.reveal(projectId, item.path)}>
-                <FolderOpen className="size-3.5" />
-                在访达中显示
-              </Button>
-            </div>
+      {/*
+        markdown：正文可滚 + 右侧固定目录（不随正文翻滚，对齐 pentou）
+        其它类型：整块 ScrollArea
+      */}
+      {mode === 'markdown' ? (
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          <div
+            ref={mdScrollRef}
+            data-reader-scroll
+            className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5"
+          >
+            {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
+            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {!loading && !error ? (
+              <div className="mx-auto w-full max-w-[76ch]">
+                <SourceBar meta={meta} />
+                <Markdown
+                  key={item.path}
+                  urlTransform={(url) => api.fileUrl(projectId, resolveRelative(base, url))}
+                  onHeadingsChange={(items) => setTocState({ path: item.path, items })}
+                >
+                  {body}
+                </Markdown>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </ScrollArea>
+
+          {showToc ? (
+            <div
+              className={cn(
+                // 预览面板够宽才显示；与正文之间不画分割线
+                'hidden h-full min-h-0 w-[200px] shrink-0 flex-col bg-background px-3 py-4 xl:w-[220px]',
+                'min-[900px]:flex',
+              )}
+            >
+              <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
+          {mode === 'text' ? (
+            <>
+              {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            </>
+          ) : null}
+
+          {mode === 'table' ? (
+            <>
+              {multiSheet && meta.length ? <SourceBar meta={meta} /> : null}
+              <TableReader
+                projectId={projectId}
+                item={item}
+                sheets={multiSheet ? sheets : [{ path: item.path, name: item.name }]}
+              />
+            </>
+          ) : null}
+
+          {!loading && !error && mode === 'text' ? (
+            <pre className="font-mono text-xs leading-6 whitespace-pre-wrap">{content}</pre>
+          ) : null}
+
+          {mode === 'image' ? (
+            <img
+              src={api.fileUrl(projectId, item.path)}
+              alt={item.name}
+              className="mx-auto max-w-full rounded-lg border border-border"
+            />
+          ) : null}
+
+          {mode === 'external' ? (
+            <div className="flex flex-col items-start gap-4 rounded-lg border border-dashed border-border px-5 py-8">
+              <div className="flex flex-col gap-1">
+                <p className="text-sm">这是原始格式文档，网页里不渲染。</p>
+                <p className="text-xs text-muted-foreground">
+                  {formatBytes(item.size)} · {formatRelative(item.mtime)}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => void api.reveal(projectId, item.path, 'open')}>
+                  <SquareArrowOutUpRight className="size-3.5" />
+                  用默认程序打开
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void api.reveal(projectId, item.path)}>
+                  <FolderOpen className="size-3.5" />
+                  在访达中显示
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </ScrollArea>
+      )}
     </aside>
   );
 }

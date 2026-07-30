@@ -16,17 +16,24 @@ export function InputPanel({
   projectId,
   openPath,
   onOpen,
+  compact = false,
 }: {
   scan: Scan;
   projectId: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  /** 预览打开时看板变窄，顶部卡片 2 列换行 */
+  compact?: boolean;
 }) {
   const { input } = scan;
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div
+        className={
+          compact ? 'grid grid-cols-2 gap-2 sm:gap-3' : 'grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4'
+        }
+      >
         <Stat label="原始资料" value={input.stats.raw} hint={formatBytes(input.stats.bytes)} />
         <Stat label="已转换" value={input.stats.converted} hint={formatWords(input.stats.words)} />
         <Stat
@@ -116,7 +123,7 @@ export function InputPanel({
       {input.assets.length ? (
         <section className="flex flex-col gap-2">
           <SectionTitle count={input.assets.length}>文档里抽出的图片</SectionTitle>
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
             {input.assets.map((item) => (
               <button
                 key={item.path}

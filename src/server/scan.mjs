@@ -69,8 +69,20 @@ function describeConverted(root, abs) {
   };
   if (isDir) {
     const sheets = listFiles(abs, { recursive: false })
-      .filter((f) => f.endsWith('.csv'))
-      .map((f) => ({ path: rel(root, f), name: path.basename(f), ...stat(f) }));
+      .filter((f) => /\.(csv|tsv)$/i.test(f))
+      .sort((a, b) => a.localeCompare(b))
+      .map((f) => {
+        const name = path.basename(f);
+        const ext = path.extname(f).toLowerCase();
+        return {
+          path: rel(root, f),
+          name,
+          ext,
+          reader: 'table',
+          title: name.replace(/\.(csv|tsv)$/i, ''),
+          ...stat(f),
+        };
+      });
     item.sheets = sheets;
     item.size = sheets.reduce((sum, s) => sum + s.size, 0);
   }
