@@ -64,6 +64,47 @@ export function inspectWorkspace(root) {
   return { ok: reasons.length === 0, root: abs, reasons };
 }
 
+/**
+ * 登记条目的健康度。目录被改名 / 移走 / 删掉都会落到 ok:false。
+ * 看板据此在侧栏挂提示，而不是安安静静扫出一份空结果。
+ */
+export function projectStatus(project) {
+  const info = inspectWorkspace(project.root);
+  return { ok: info.ok, reasons: info.reasons };
+}
+
+/**
+ * 目录丢了以后猜猜它去哪了：在原父目录里找还没被登记过的、长得像工作空间的兄弟目录。
+ * 只是给一键重连当候选，猜错了用户还能自己填路径。
+ */
+export function suggestRelinkCandidates(root, { limit = 8 } = {}) {
+  const parent = path.dirname(path.resolve(root));
+  const taken = new Set(readProjects().projects.map((p) => p.root));
+  let entries;
+  try {
+    entries = fs.readdirSync(parent, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const out = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    const abs = path.join(parent, entry.name);
+    if (taken.has(abs)) continue;
+    if (!inspectWorkspace(abs).ok) continue;
+    let mtime = '';
+    try {
+      mtime = fs.statSync(abs).mtime.toISOString();
+    } catch {
+      /* 读不到就不排序，不影响候选本身 */
+    }
+    out.push({ root: abs, name: entry.name, mtime });
+  }
+  // 改名后的目录通常刚被动过，最近改动的排前面
+  out.sort((a, b) => (b.mtime || '').localeCompare(a.mtime || ''));
+  return out.slice(0, limit);
+}
+
 function slugId(root) {
   const base = path.basename(root).replace(/[^\w一-鿿-]+/gu, '-').replace(/^-+|-+$/gu, '');
   return base || 'workspace';
@@ -96,6 +137,41 @@ export function addProject(root, name) {
   };
   data.projects.push(project);
   data.activeProjectId = id;
+  writeProjects(data);
+  return project;
+}
+
+/**
+ * 改登记信息：换路径（目录被改名/移动后重连）或改显示名。
+ * id 不动 —— 它只是个稳定的 key，跟目录名脱钩，换了路径也不用重新选一遍项目。
+ */
+export function updateProject(id, patch = {}) {
+  const data = readProjects();
+  const project = data.projects.find((p) => p.id === id);
+  if (!project) {
+    const err = new Error(`没有登记过的项目：${id}`);
+    err.statusCode = 404;
+    throw err;
+  }
+  if (typeof patch.root === 'string' && patch.root.trim()) {
+    const info = inspectWorkspace(patch.root.trim());
+    if (!info.ok) {
+      const err = new Error(`不是有效的工作空间：${info.reasons.join('、')}`);
+      err.statusCode = 400;
+      throw err;
+    }
+    const clash = data.projects.find((p) => p.id !== id && p.root === info.root);
+    if (clash) {
+      const err = new Error(`这个目录已经登记为「${clash.name}」了`);
+      err.statusCode = 409;
+      throw err;
+    }
+    project.root = info.root;
+  }
+  if (typeof patch.name === 'string' && patch.name.trim()) {
+    project.name = patch.name.trim();
+  }
+  project.updatedAt = new Date().toISOString();
   writeProjects(data);
   return project;
 }

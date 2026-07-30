@@ -182,10 +182,13 @@ function scanOutput(root) {
   };
 }
 
-export function scanWorkspace(project) {
+export function scanWorkspace(project, status = { ok: true, reasons: [] }) {
   const root = project.root;
   return {
     project: { id: project.id, name: project.name, root },
+    // 目录被改名/移走时不能扫出一份「什么都没有」的空结果 —— 那和真的空工作空间没法区分
+    available: status.ok,
+    unavailableReasons: status.reasons,
     scannedAt: new Date().toISOString(),
     meta: readMeta(root),
     input: scanInput(root),

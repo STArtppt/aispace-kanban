@@ -55,6 +55,13 @@ export interface ProjectMeta {
 
 export interface Scan {
   project: { id: string; name: string; root: string };
+  /**
+   * false = 登记的目录不在了（被改名、移走或删掉），下面的清单全都不作数。
+   * 可选：服务进程可能比前端旧（改完代码没重启），缺字段时一律当「正常」处理，
+   * 宁可退回改动前的行为，也不能因为少个字段白屏。
+   */
+  available?: boolean;
+  unavailableReasons?: string[];
   scannedAt: string;
   meta: ProjectMeta;
   input: {
@@ -89,12 +96,24 @@ export interface Scan {
   prototypes: Prototypes;
 }
 
+export interface ProjectStatus {
+  ok: boolean;
+  reasons: string[];
+}
+
 export interface Project {
   id: string;
   name: string;
   root: string;
   createdAt: string;
   updatedAt: string;
+  status?: ProjectStatus;
+}
+
+export interface RelinkCandidate {
+  root: string;
+  name: string;
+  mtime: string;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -104,6 +123,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ error: res.statusText }));
+    // 前端已经构建到新版、接口服务还是老进程时会撞上这个。直接把原因写进提示，
+    // 不然「未知接口」看着像路由写错了，实际只是没重启 serve。
+    if (res.status === 404 && typeof detail.error === 'string' && detail.error.startsWith('未知接口')) {
+      throw new Error(`${detail.error}（接口服务的进程可能比前端旧，重启 serve 再试）`);
+    }
     throw new Error(detail.error || `请求失败（${res.status}）`);
   }
   return res.json() as Promise<T>;
@@ -116,6 +140,10 @@ export const api = {
   createWorkspace: (name: string, path: string) =>
     request<Project>('/api/workspaces', { method: 'POST', body: JSON.stringify({ name, path }) }),
   template: () => request<{ root: string; ok: boolean }>('/api/template'),
+  updateProject: (id: string, patch: { root?: string; name?: string }) =>
+    request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  candidates: (id: string) =>
+    request<{ candidates: RelinkCandidate[] }>(`/api/projects/${id}/candidates`),
   removeProject: (id: string) => request<{ removed: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
   scan: (id: string) => request<Scan>(`/api/projects/${id}/scan`),
   prototypes: (id: string) => request<Prototypes>(`/api/projects/${id}/prototypes`),

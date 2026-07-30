@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
+  AlertTriangle,
   FolderInput,
   FolderOutput,
   FolderPlus,
@@ -8,6 +9,7 @@ import {
   Moon,
   Plus,
   RefreshCw,
+  Settings2,
   Sun,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -18,8 +20,9 @@ import { OutputPanel } from '@/components/OutputPanel';
 import { OverviewPanel } from '@/components/OverviewPanel';
 import { PrototypePanel } from '@/components/PrototypePanel';
 import { Reader } from '@/components/Reader';
+import { UnavailableWorkspace, WorkspaceDialog } from '@/components/WorkspaceSettings';
 import { useProjects, useScan } from '@/hooks/useWorkspace';
-import { api, type FileItem } from '@/lib/api';
+import { api, type FileItem, type Project } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -144,11 +147,18 @@ export default function App() {
   const { scan, loading, error, reload, refreshedAt } = useScan(activeId);
   const [view, setView] = useState<View>('overview');
   const [openFile, setOpenFile] = useState<FileItem | null>(null);
+  const [settingsFor, setSettingsFor] = useState<Project | null>(null);
   const { dark, toggle } = useTheme();
 
   useEffect(() => {
     setOpenFile(null);
   }, [activeId]);
+
+  // 改完路径/名字或移出登记之后，列表和扫描结果都得重新拉
+  const afterRegistryChange = async () => {
+    await reloadProjects();
+    await reload();
+  };
 
   return (
     <div className="flex h-screen w-screen overflow-hidden">
@@ -162,20 +172,41 @@ export default function App() {
 
         <div className="flex flex-col gap-1">
           <span className="px-2 text-[11px] text-muted-foreground">工作空间</span>
-          {projects.map((project) => (
-            <button
-              key={project.id}
-              type="button"
-              onClick={() => select(project.id)}
-              title={project.root}
-              className={cn(
-                'truncate rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent',
-                project.id === activeId && 'bg-secondary text-secondary-foreground',
-              )}
-            >
-              {project.name}
-            </button>
-          ))}
+          {projects.map((project) => {
+            const broken = project.status && !project.status.ok;
+            return (
+              <div
+                key={project.id}
+                className={cn(
+                  'group flex items-center gap-1 rounded-md pr-1 transition-colors hover:bg-accent',
+                  project.id === activeId && 'bg-secondary text-secondary-foreground',
+                )}
+              >
+                <button
+                  type="button"
+                  onClick={() => select(project.id)}
+                  title={broken ? `目录找不到了：${project.root}` : project.root}
+                  className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-sm"
+                >
+                  {broken ? (
+                    <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+                  ) : null}
+                  <span className="truncate">{project.name}</span>
+                </button>
+                <button
+                  type="button"
+                  title="工作空间设置"
+                  onClick={() => setSettingsFor(project)}
+                  className={cn(
+                    'shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100',
+                    broken && 'opacity-100',
+                  )}
+                >
+                  <Settings2 className="size-3.5" />
+                </button>
+              </div>
+            );
+          })}
           <WorkspaceForms
             onDone={async (id) => {
               await reloadProjects();
@@ -231,7 +262,19 @@ export default function App() {
             </div>
           ) : null}
 
-          {scan ? (
+          {scan?.available === false ? (
+            <UnavailableWorkspace
+              project={scan.project}
+              reasons={scan.unavailableReasons || []}
+              onSettings={() => {
+                const project = projects.find((p) => p.id === scan.project.id);
+                if (project) setSettingsFor(project);
+              }}
+              onRelinked={() => void afterRegistryChange()}
+            />
+          ) : null}
+
+          {scan && scan.available !== false ? (
             <>
               {view === 'overview' ? (
                 <OverviewPanel scan={scan} onOpen={setOpenFile} onGoto={setView} />
@@ -258,6 +301,16 @@ export default function App() {
           </div>
         ) : null}
       </main>
+
+      {settingsFor ? (
+        <WorkspaceDialog
+          project={settingsFor}
+          open
+          onOpenChange={(next) => !next && setSettingsFor(null)}
+          onSaved={() => void afterRegistryChange()}
+          onRemoved={() => void reloadProjects()}
+        />
+      ) : null}
     </div>
   );
 }

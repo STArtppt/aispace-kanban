@@ -7,9 +7,12 @@ import {
   addProject,
   getProject,
   inspectWorkspace,
+  projectStatus,
   readProjects,
   removeProject,
   resolveTemplateRoot,
+  suggestRelinkCandidates,
+  updateProject,
 } from './config.mjs';
 import { probeOrigin, scanPrototypes } from './prototypes.mjs';
 import { scanWorkspace } from './scan.mjs';
@@ -144,7 +147,14 @@ async function handleApi(req, res, url) {
   if (head === 'health') return json(res, 200, { ok: true });
 
   if (head === 'projects' && !id) {
-    if (req.method === 'GET') return json(res, 200, readProjects());
+    if (req.method === 'GET') {
+      const data = readProjects();
+      // 带上每条的健康度，侧栏才能把「目录不在了」直接标出来
+      return json(res, 200, {
+        ...data,
+        projects: data.projects.map((p) => ({ ...p, status: projectStatus(p) })),
+      });
+    }
     if (req.method === 'POST') {
       const body = await readBody(req);
       const project = addProject(body.root, body.name);
@@ -154,7 +164,20 @@ async function handleApi(req, res, url) {
 
   if (head === 'projects' && id && !action) {
     if (req.method === 'DELETE') return json(res, 200, { removed: removeProject(id) });
-    if (req.method === 'GET') return json(res, 200, requireProject(id));
+    if (req.method === 'PATCH') {
+      const body = await readBody(req);
+      return json(res, 200, updateProject(id, { root: body.root, name: body.name }));
+    }
+    if (req.method === 'GET') {
+      const project = requireProject(id);
+      return json(res, 200, { ...project, status: projectStatus(project) });
+    }
+  }
+
+  // 目录丢了以后的重连候选：原父目录下还没登记过的工作空间
+  if (head === 'projects' && id && action === 'candidates') {
+    const project = requireProject(id);
+    return json(res, 200, { candidates: suggestRelinkCandidates(project.root) });
   }
 
   if (head === 'inspect') {
@@ -185,7 +208,9 @@ async function handleApi(req, res, url) {
   }
 
   if (head === 'projects' && id && action === 'scan') {
-    return json(res, 200, scanWorkspace(requireProject(id)));
+    const project = requireProject(id);
+    const status = projectStatus(project);
+    return json(res, 200, scanWorkspace(project, status));
   }
 
   if (head === 'projects' && id && action === 'prototypes') {

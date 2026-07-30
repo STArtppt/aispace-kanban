@@ -50,6 +50,7 @@ export function useScan(projectId: string) {
     async (silent = false) => {
       if (!projectId) {
         setScan(null);
+        setError('');
         return;
       }
       if (!silent) setLoading(true);

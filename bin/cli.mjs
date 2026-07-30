@@ -11,7 +11,14 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { addProject, PROJECTS_FILE, readProjects, removeProject } from '../src/server/config.mjs';
+import {
+  addProject,
+  PROJECTS_FILE,
+  projectStatus,
+  readProjects,
+  removeProject,
+  updateProject,
+} from '../src/server/config.mjs';
 import { createServer } from '../src/server/http.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -43,7 +50,8 @@ function usage() {
   workspace-dashboard serve [--port ${DEFAULT_PORT}] [--dev]   起服务
   workspace-dashboard add <工作空间目录> [--name 名字]        登记一个工作空间
   workspace-dashboard list                                    看已登记的工作空间
-  workspace-dashboard remove <id>                             取消登记
+  workspace-dashboard relink <id> <新目录> [--name 名字]      目录改名/移动后接回来
+  workspace-dashboard remove <id>                             取消登记（不删本地文件）
 
 登记信息存在 ${PROJECTS_FILE}`);
 }
@@ -55,7 +63,9 @@ function cmdList() {
     return;
   }
   for (const p of projects) {
-    console.log(`${p.id === activeProjectId ? '*' : ' '} ${p.id.padEnd(24)} ${p.name.padEnd(20)} ${p.root}`);
+    const status = projectStatus(p);
+    const flag = status.ok ? '' : `  ← ${status.reasons.join('、')}，用 relink 接回来`;
+    console.log(`${p.id === activeProjectId ? '*' : ' '} ${p.id.padEnd(24)} ${p.name.padEnd(20)} ${p.root}${flag}`);
   }
 }
 
@@ -112,9 +122,23 @@ try {
     case 'list':
       cmdList();
       break;
+    case 'relink': {
+      const newRoot = args._[2];
+      if (!target || !newRoot) throw new Error('用法：relink <id> <新目录>，id 用 list 查看');
+      const project = updateProject(target, {
+        root: path.resolve(newRoot),
+        name: typeof args.name === 'string' ? args.name : '',
+      });
+      console.log(`已接回：${project.id}  ${project.name}\n${project.root}`);
+      break;
+    }
     case 'remove':
       if (!target) throw new Error('要指定项目 id，用 list 查看');
-      console.log(removeProject(target) ? `已移除 ${target}` : `没有这个项目：${target}`);
+      console.log(
+        removeProject(target)
+          ? `已移出看板 ${target}（只删登记信息，本地文件没动）`
+          : `没有这个项目：${target}`,
+      );
       break;
     default:
       usage();
