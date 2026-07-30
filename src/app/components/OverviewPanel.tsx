@@ -1,8 +1,8 @@
-import { CircleDot } from 'lucide-react';
+import { CircleDot, FileCode } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SectionTitle, Stat } from '@/components/Primitives';
-import { Markdown } from '@/components/Markdown';
+import { Completeness, MetaView } from '@/components/MetaView';
 import type { FileItem, Scan } from '@/lib/api';
 import { formatRelative, formatWords } from '@/lib/format';
 
@@ -43,16 +43,25 @@ export function OverviewPanel({
 }) {
   const stages = inferStages(scan);
   const { meta } = scan;
+  const title = meta.data?.identity?.项目名称 || meta.data?.workspace?.name || scan.project.name;
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className="font-display text-2xl">{scan.project.name}</h1>
+        <h1 className="font-display text-2xl">{title}</h1>
         <p className="font-mono text-xs text-muted-foreground">{scan.project.root}</p>
       </div>
 
+      {meta.error ? (
+        <div className="rounded-lg border border-destructive/40 px-4 py-3 text-sm text-destructive">{meta.error}</div>
+      ) : null}
+
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="资料" value={scan.input.stats.converted} hint={`共 ${scan.input.stats.raw} 份原始文件`} />
+        {meta.stats ? (
+          <Completeness meta={meta} />
+        ) : (
+          <Stat label="资料" value={scan.input.stats.converted} hint={`共 ${scan.input.stats.raw} 份原始文件`} />
+        )}
         <Stat label="产出" value={scan.output.stats.total} hint={formatWords(scan.output.stats.words)} />
         <Stat
           label="待办信号"
@@ -73,12 +82,14 @@ export function OverviewPanel({
 
       <section className="flex flex-col gap-3">
         <div className="flex items-center gap-2">
-          <SectionTitle>项目阶段</SectionTitle>
-          {!meta.exists ? (
-            <Badge variant="outline" className="text-muted-foreground">
-              推断
-            </Badge>
-          ) : null}
+          <SectionTitle>工作空间进度</SectionTitle>
+          <Badge variant="outline" className="text-muted-foreground">
+            推断
+          </Badge>
+          <span className="text-xs text-muted-foreground">
+            按目录里有没有产物判断的，不是项目实际阶段
+            {meta.data?.workspace?.stage ? `（项目阶段：${meta.data.workspace.stage}）` : ''}
+          </span>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {stages.map((stage) => (
@@ -106,17 +117,36 @@ export function OverviewPanel({
       </section>
 
       <section className="flex flex-col gap-3">
-        <SectionTitle>项目元信息</SectionTitle>
-        {meta.exists ? (
-          <div className="rounded-lg border border-border bg-card px-5 py-4">
-            <div className="mb-3 flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SectionTitle>项目元信息</SectionTitle>
+          {meta.exists ? (
+            <>
               <Badge variant="muted" className="font-mono">
                 {meta.path}
               </Badge>
               <span className="text-xs text-muted-foreground">更新于 {formatRelative(meta.mtime)}</span>
-            </div>
-            <pre className="overflow-x-auto font-mono text-xs leading-6 whitespace-pre-wrap">{meta.raw}</pre>
-          </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  onOpen({
+                    path: meta.path,
+                    name: meta.path,
+                    reader: 'text',
+                    size: 0,
+                    mtime: meta.mtime || '',
+                  })
+                }
+              >
+                <FileCode className="size-3.5" />
+                看原文
+              </Button>
+            </>
+          ) : null}
+        </div>
+
+        {meta.exists && meta.data ? (
+          <MetaView meta={meta} />
         ) : (
           <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border px-5 py-6">
             <p className="text-sm">
@@ -124,7 +154,8 @@ export function OverviewPanel({
               ，上面的阶段判断是看板按目录状态推断的，不是项目事实。
             </p>
             <p className="text-xs text-muted-foreground">
-              等元信息的字段规格定下来，这里会换成项目目标、干系人、里程碑、范围边界这些真实信息。
+              把合同 / 招标技术文件 / 立项文件放进 input/raw/ 转换入库，再让 AI 走 pm-project-meta
+              技能提取，这里就会显示项目背景、目标、干系人、里程碑和还缺什么。
             </p>
           </div>
         )}
@@ -158,8 +189,6 @@ export function OverviewPanel({
           </div>
         )}
       </section>
-
-      {meta.exists && meta.raw.trim().startsWith('#') ? <Markdown>{meta.raw}</Markdown> : null}
     </div>
   );
 }

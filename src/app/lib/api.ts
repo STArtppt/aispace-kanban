@@ -39,10 +39,24 @@ export interface Prototypes {
   updatedAt?: string;
 }
 
+export interface ProjectMeta {
+  exists: boolean;
+  path: string;
+  raw: string;
+  mtime?: string;
+  error?: string;
+  data: Record<string, any> | null;
+  missing: string[];
+  filled: string[];
+  provenance: Record<string, string>;
+  confidence: Record<string, string>;
+  stats: { filled: number; missing: number; total: number; completeness: number } | null;
+}
+
 export interface Scan {
   project: { id: string; name: string; root: string };
   scannedAt: string;
-  meta: { exists: boolean; path: string; raw: string; mtime?: string };
+  meta: ProjectMeta;
   input: {
     raw: FileItem[];
     converted: ConvertedItem[];
@@ -99,6 +113,9 @@ export const api = {
   projects: () => request<{ projects: Project[]; activeProjectId: string }>('/api/projects'),
   addProject: (root: string, name?: string) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ root, name }) }),
+  createWorkspace: (name: string, path: string) =>
+    request<Project>('/api/workspaces', { method: 'POST', body: JSON.stringify({ name, path }) }),
+  template: () => request<{ root: string; ok: boolean }>('/api/template'),
   removeProject: (id: string) => request<{ removed: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
   scan: (id: string) => request<Scan>(`/api/projects/${id}/scan`),
   prototypes: (id: string) => request<Prototypes>(`/api/projects/${id}/prototypes`),

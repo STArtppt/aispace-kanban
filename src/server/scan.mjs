@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { countWords, firstHeading, parseFrontmatter } from './frontmatter.mjs';
+import { readMeta } from './meta.mjs';
 import { scanPrototypes } from './prototypes.mjs';
 
 const SKIP = new Set(['.git', 'node_modules', '.DS_Store', '.gitkeep']);
@@ -181,26 +182,12 @@ function scanOutput(root) {
   };
 }
 
-/**
- * 项目元信息。字段规格还没定，这里只负责如实报告「有没有」，
- * 有就把原文交给前端，等 schema 定了再结构化。
- */
-function scanMeta(root) {
-  for (const name of ['project.yaml', 'project.yml']) {
-    const abs = path.join(root, name);
-    if (fs.existsSync(abs)) {
-      return { exists: true, path: rel(root, abs), raw: readTextSafe(abs), ...stat(abs) };
-    }
-  }
-  return { exists: false, path: '', raw: '' };
-}
-
 export function scanWorkspace(project) {
   const root = project.root;
   return {
     project: { id: project.id, name: project.name, root },
     scannedAt: new Date().toISOString(),
-    meta: scanMeta(root),
+    meta: readMeta(root),
     input: scanInput(root),
     output: scanOutput(root),
     prototypes: scanPrototypes(root),

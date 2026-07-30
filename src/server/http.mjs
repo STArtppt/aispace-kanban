@@ -3,7 +3,14 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { addProject, getProject, inspectWorkspace, readProjects, removeProject } from './config.mjs';
+import {
+  addProject,
+  getProject,
+  inspectWorkspace,
+  readProjects,
+  removeProject,
+  resolveTemplateRoot,
+} from './config.mjs';
 import { probeOrigin, scanPrototypes } from './prototypes.mjs';
 import { scanWorkspace } from './scan.mjs';
 
@@ -52,6 +59,34 @@ function resolveInside(root, relPath) {
     throw err;
   }
   return abs;
+}
+
+/** 跑模板仓的初始化脚本，把它的 JSON 输出捞回来。 */
+function runInit(templateRoot, name, target) {
+  return new Promise((resolve) => {
+    const child = spawn(
+      'python3',
+      [path.join(templateRoot, 'scripts', 'init_workspace.py'), '--name', name, '--path', target, '--json'],
+      { cwd: templateRoot },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.on('error', (err) => resolve({ ok: false, error: `启动初始化脚本失败：${err.message}` }));
+    child.on('close', () => {
+      try {
+        const parsed = JSON.parse(stdout.trim() || stderr.trim());
+        resolve(parsed.ok ? { ok: true, root: parsed.root } : { ok: false, error: parsed.error });
+      } catch {
+        resolve({ ok: false, error: stderr.trim() || stdout.trim() || '初始化脚本没有返回结果' });
+      }
+    });
+  });
 }
 
 function requireProject(id) {
@@ -124,6 +159,29 @@ async function handleApi(req, res, url) {
 
   if (head === 'inspect') {
     return json(res, 200, inspectWorkspace(url.searchParams.get('root') || ''));
+  }
+
+  if (head === 'template') {
+    const root = resolveTemplateRoot();
+    return json(res, 200, { root, ok: Boolean(root) });
+  }
+
+  // 新建工作空间：调模板仓的 init_workspace.py，建完自动登记
+  if (head === 'workspaces' && req.method === 'POST') {
+    const body = await readBody(req);
+    const name = (body.name || '').trim();
+    const target = (body.path || '').trim();
+    if (!name || !target) return json(res, 400, { error: '名称和路径都要填' });
+    const templateRoot = resolveTemplateRoot();
+    if (!templateRoot) {
+      return json(res, 500, {
+        error: '找不到 pmwork-template。把它放在看板仓库的兄弟目录，或设 PMWORK_TEMPLATE_ROOT 环境变量。',
+      });
+    }
+    const result = await runInit(templateRoot, name, target);
+    if (!result.ok) return json(res, 400, { error: result.error });
+    const project = addProject(result.root, name);
+    return json(res, 200, project);
   }
 
   if (head === 'projects' && id && action === 'scan') {

@@ -5,11 +5,31 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const CONFIG_DIR = path.join(os.homedir(), '.pmwork', 'dashboard');
 export const PROJECTS_FILE = path.join(CONFIG_DIR, 'projects.json');
 
-const EMPTY = { schemaVersion: 1, activeProjectId: '', projects: [] };
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const EMPTY = { schemaVersion: 1, activeProjectId: '', templateRoot: '', projects: [] };
+
+/**
+ * 找 pmwork-template 的位置 —— 新建工作空间时要调它的 init_workspace.py。
+ * 顺序：配置里写死的 > 环境变量 > 看板仓库的兄弟目录。
+ */
+export function resolveTemplateRoot() {
+  const candidates = [
+    readProjects().templateRoot,
+    process.env.PMWORK_TEMPLATE_ROOT,
+    path.resolve(HERE, '../../../pmwork-template'),
+  ];
+  for (const candidate of candidates) {
+    if (candidate && fs.existsSync(path.join(candidate, 'scripts', 'init_workspace.py'))) {
+      return path.resolve(candidate);
+    }
+  }
+  return '';
+}
 
 export function readProjects() {
   try {
