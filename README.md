@@ -64,3 +64,9 @@ cd ../workspace-dashboard && npx shadcn@latest add @startist/<组件名> --yes
 
 配色遵守 startist 的硬约束：黑白灰为主，**orange（`--destructive`）只用于"需要注意"**——
 在这个看板里就是待转换资料和内容存疑的资料，别的地方一律不上彩色。
+
+## 改代码前
+
+编码规范总则在 **[AGENTS.md](./AGENTS.md)**（人和 AI Agent 共用的事实源）：
+只读红线、三个平面的边界、前后端契约、验证闸门。
+配套的工程技能在 [`.claude/skills/`](./.claude/skills/)，加功能先读 `dashboard-feature-flow`。
