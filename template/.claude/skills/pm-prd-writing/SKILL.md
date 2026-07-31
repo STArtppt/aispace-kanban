@@ -5,7 +5,7 @@ description: 撰写可直接交付评审的 PRD、需求规格说明书、功能
 
 # PRD 撰写
 
-阶段三。产物写进 `output/docs/`，文件名就是文档名（`水电巡屏工具需求规格说明书.md`），
+阶段三。产物写进 `output/docs/`，文件名就是文档名（`数字孪生可视化需求规格说明书.md`），
 不要带 `v2`、`最终版` 后缀——版本交给 git。
 
 模板在 [`assets/prd-template.md`](assets/prd-template.md)，开始写之前先读一遍并按项目实际情况裁剪。
