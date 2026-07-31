@@ -1,11 +1,11 @@
-import { AlertTriangle, FileText, FolderOpen, Image, Table } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { AppWindow, FileText, FolderOpen, Image, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EmptyState, Row, SectionTitle, Stat } from '@/components/Primitives';
 import { api, type ConvertedItem, type FileItem, type Scan } from '@/lib/api';
 import { formatBytes, formatRelative, formatWords } from '@/lib/format';
 
 function KindIcon({ item }: { item: { reader: string; isDir?: boolean } }) {
+  if (item.reader === 'html') return <AppWindow className="size-4 text-muted-foreground" />;
   if (item.isDir || item.reader === 'table') return <Table className="size-4 text-muted-foreground" />;
   if (item.reader === 'image') return <Image className="size-4 text-muted-foreground" />;
   return <FileText className="size-4 text-muted-foreground" />;
@@ -88,16 +88,11 @@ export function InputPanel({
                 <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm">{item.title || item.name}</span>
-                    {item.warning ? (
-                      <Badge variant="outline" className="border-destructive text-destructive">
-                        <AlertTriangle className="size-3" />
-                        内容存疑
-                      </Badge>
-                    ) : null}
                   </div>
                   <span className="truncate text-xs text-muted-foreground">
                     {item.source || item.name}
                     {item.convertedBy ? ` · ${item.convertedBy}` : ''}
+                    {item.reader === 'html' ? ' · HTML 原型' : ''}
                     {item.sheets?.length ? ` · ${item.sheets.length} 张表` : ''}
                     {item.extractedImages ? ` · ${item.extractedImages} 张图` : ''}
                   </span>

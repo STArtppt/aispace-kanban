@@ -1,4 +1,6 @@
-@import "tailwindcss";
+/* 只扫前端平面：template/ 是工作空间模板，里面的 markdown 不该影响看板的 CSS 产物 */
+@import "tailwindcss" source(none);
+@source "../";
 
 @custom-variant dark (&:is(.dark *));
 

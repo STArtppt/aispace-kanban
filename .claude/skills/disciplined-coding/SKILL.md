@@ -1,13 +1,13 @@
 ---
 name: disciplined-coding
-description: 在 workspace-dashboard 中接到任何编码任务时使用 —— 动手前先说清假设、只写最少代码、外科手术式改动、目标可验证;克制 LLM 常见的臆测与过度工程。
+description: 在 aispace-kanban 中接到任何编码任务时使用 —— 动手前先说清假设、只写最少代码、外科手术式改动、目标可验证;克制 LLM 常见的臆测与过度工程。
 ---
 
 # 克制式编码(Disciplined Coding)
 
 > 上游来源:[multica-ai/andrej-karpathy-skills](https://github.com/multica-ai/andrej-karpathy-skills) ——
 > 基于 Andrej Karpathy 对 LLM 编码常见错误(臆测假设、过度工程、擅自改动)的观察。
-> 本文件是 workspace-dashboard 的本地化改写版。
+> 本文件是 aispace-kanban 的本地化改写版。
 
 ## 何时使用
 

@@ -130,38 +130,90 @@ function CsvTable({ text }: { text: string }) {
   );
 }
 
+/** 进程内正文缓存：切换文档时先出缓存，避免「读取中」闪一下。 */
+const fileContentCache = new Map<string, string>();
+
+function cacheKey(projectId: string, path: string) {
+  return `${projectId}\0${path}`;
+}
+
+/**
+ * 读工作空间文本文件。
+ * - 有缓存：立刻展示，后台静默刷新
+ * - 无缓存：不立刻亮「读取中」；超过短延迟仍未返回才提示
+ * - 切换 path 时保留上一份正文直到新正文到位（或延迟后仍无内容才显示读取中）
+ */
 function useFileContent(projectId: string, path: string | null) {
   const [content, setContent] = useState('');
-  const [loading, setLoading] = useState(false);
+  /** 当前 content 对应的 path；与请求 path 一致才算已对齐 */
+  const [resolvedPath, setResolvedPath] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [showSpinner, setShowSpinner] = useState(false);
 
   useEffect(() => {
     if (!path) {
       setContent('');
+      setResolvedPath(null);
       setError('');
-      setLoading(false);
+      setShowSpinner(false);
       return;
     }
+
     let cancelled = false;
-    setLoading(true);
+    const key = cacheKey(projectId, path);
+    const cached = fileContentCache.get(key);
+
     setError('');
+    setShowSpinner(false);
+
+    if (cached !== undefined) {
+      // 命中缓存：马上对齐，不出现 loading；后台仍拉一次保持新鲜
+      setContent(cached);
+      setResolvedPath(path);
+    }
+
+    // 无缓存时才考虑「读取中」：本地接口通常 <200ms，延迟后再显示可避免闪一下
+    const timer =
+      cached === undefined
+        ? window.setTimeout(() => {
+            if (!cancelled) setShowSpinner(true);
+          }, 200)
+        : 0;
+
     api
       .file(projectId, path)
       .then((data) => {
-        if (!cancelled) setContent(data.content);
+        if (cancelled) return;
+        fileContentCache.set(key, data.content);
+        setContent(data.content);
+        setResolvedPath(path);
+        setError('');
+        setShowSpinner(false);
       })
       .catch((err: Error) => {
-        if (!cancelled) setError(err.message);
+        if (cancelled) return;
+        // 失败时不要继续展示别的文件的旧正文
+        setContent('');
+        setResolvedPath(path);
+        setError(err.message);
+        setShowSpinner(false);
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (timer) window.clearTimeout(timer);
       });
+
     return () => {
       cancelled = true;
+      if (timer) window.clearTimeout(timer);
     };
   }, [projectId, path]);
 
-  return { content, loading, error };
+  const aligned = path !== null && resolvedPath === path;
+  // 有对齐正文时绝不因后台刷新闪 loading；仅无正文且已过延迟才提示
+  const loading = Boolean(path) && showSpinner && !aligned;
+  const displayContent = aligned ? content : '';
+
+  return { content: displayContent, loading, error: aligned ? error : '' };
 }
 
 /** 多 sheet（xlsx 拆目录）或单 csv/tsv 表格预览。 */
@@ -188,7 +240,7 @@ function TableReader({
       <>
         {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
         {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        {!loading && !error ? <CsvTable text={content} /> : null}
+        {content && !error ? <CsvTable text={content} /> : null}
       </>
     );
   }
@@ -203,12 +255,12 @@ function TableReader({
         ))}
       </TabsList>
       {sheets.map((sheet) => (
-        <TabsContent key={sheet.path} value={sheet.path} className="min-w-0">
+        <TabsContent key={sheet.path} value={sheet.path} className="min-h-0 min-w-0">
           {active === sheet.path ? (
             <>
               {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
-              {!loading && !error ? <CsvTable text={content} /> : null}
+              {content && !error ? <CsvTable text={content} /> : null}
             </>
           ) : null}
         </TabsContent>
@@ -243,12 +295,18 @@ export function Reader({
     return [] as { path: string; name: string }[];
   }, [item]);
 
-  // 目录型转换产物：有多张 csv → 表格预览；否则读 _manifest.md
+  // 目录型转换产物：csv → 表格；html 原型 → iframe；否则读 _manifest.md
   const multiSheet = sheets.length > 0;
   const isDir = isConverted(item) && item.isDir;
   const manifestPath = isDir ? `${item.path.replace(/\/$/, '')}/_manifest.md` : '';
+  const htmlPath =
+    isConverted(item) && item.reader === 'html'
+      ? item.htmlPath || (item.ext === '.html' || item.ext === '.htm' ? item.path : '')
+      : item.reader === 'html'
+        ? item.path
+        : '';
 
-  const mode: 'markdown' | 'table' | 'text' | 'image' | 'external' = multiSheet
+  const mode: 'markdown' | 'table' | 'text' | 'image' | 'html' | 'external' = multiSheet
     ? 'table'
     : item.reader;
 
@@ -262,19 +320,20 @@ export function Reader({
   // 表格内容由 TableReader 自行拉取；此处只负责 md / 纯文本
   const { content, loading, error } = useFileContent(projectId, contentPath);
 
-  // 多 sheet 时仍尽量拉 manifest 做溯源条
-  const { content: manifestContent } = useFileContent(
+  // 多 sheet / html 原型：manifest 做溯源与「校验说明」页
+  const { content: manifestContent, loading: manifestLoading, error: manifestError } = useFileContent(
     projectId,
-    multiSheet && isDir ? manifestPath : null,
+    (multiSheet || mode === 'html') && isDir ? manifestPath : null,
   );
 
   const { meta, body } = useMemo(() => {
     if (mode === 'markdown') return splitFrontmatter(content);
-    if (multiSheet && manifestContent) return splitFrontmatter(manifestContent);
+    if ((multiSheet || mode === 'html') && manifestContent) return splitFrontmatter(manifestContent);
     return { meta: [] as [string, string][], body: content };
   }, [content, mode, multiSheet, manifestContent]);
 
   const base = dirOf(mode === 'markdown' && isDir ? manifestPath : item.path);
+  const [htmlTab, setHtmlTab] = useState<'preview' | 'manifest'>('preview');
 
   // markdown 目录：放在滚动区外；条目来自渲染后 DOM，与锚点严格一致
   const mdScrollRef = useRef<HTMLDivElement>(null);
@@ -353,7 +412,7 @@ export function Reader({
           >
             {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
-            {!loading && !error ? (
+            {content && !error ? (
               <div className="mx-auto w-full max-w-[76ch]">
                 <SourceBar meta={meta} />
                 <Markdown
@@ -384,6 +443,9 @@ export function Reader({
             <>
               {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              {content && !error ? (
+                <pre className="font-mono text-xs leading-6 whitespace-pre-wrap">{content}</pre>
+              ) : null}
             </>
           ) : null}
 
@@ -398,16 +460,69 @@ export function Reader({
             </>
           ) : null}
 
-          {!loading && !error && mode === 'text' ? (
-            <pre className="font-mono text-xs leading-6 whitespace-pre-wrap">{content}</pre>
-          ) : null}
-
           {mode === 'image' ? (
             <img
               src={api.fileUrl(projectId, item.path)}
               alt={item.name}
               className="mx-auto max-w-full rounded-lg border border-border"
             />
+          ) : null}
+
+          {mode === 'html' ? (
+            <div className="flex min-h-[min(70vh,640px)] flex-col gap-3">
+              <SourceBar meta={meta} />
+              <Tabs
+                value={htmlTab}
+                onValueChange={(v) => setHtmlTab(v === 'manifest' ? 'manifest' : 'preview')}
+                className="flex min-h-0 flex-1 flex-col gap-3"
+              >
+                <TabsList variant="line" className="px-0">
+                  <TabsTrigger value="preview">预览</TabsTrigger>
+                  <TabsTrigger value="manifest">校验说明</TabsTrigger>
+                </TabsList>
+                <TabsContent value="preview" className="min-h-0 flex-1">
+                  {htmlPath ? (
+                    <div className="flex h-[min(70vh,640px)] flex-col gap-2">
+                      <iframe
+                        title={
+                          item.title ||
+                          (isConverted(item) ? item.htmlName : undefined) ||
+                          item.name
+                        }
+                        src={api.fileUrl(projectId, htmlPath)}
+                        sandbox="allow-scripts allow-forms allow-modals allow-popups"
+                        className="h-full w-full flex-1 rounded-lg border border-border bg-white"
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void api.reveal(projectId, htmlPath, 'open')}
+                        >
+                          <SquareArrowOutUpRight className="size-3.5" />
+                          用浏览器打开
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => void api.reveal(projectId, htmlPath)}>
+                          <FolderOpen className="size-3.5" />
+                          在访达中显示
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">目录里没有找到可预览的 HTML 文件。</p>
+                  )}
+                </TabsContent>
+                <TabsContent value="manifest" className="min-h-0 flex-1">
+                  {manifestLoading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
+                  {manifestError ? <p className="text-sm text-destructive">{manifestError}</p> : null}
+                  {manifestContent && !manifestError ? (
+                    <div className="mx-auto w-full max-w-[76ch]">
+                      <Markdown key={`${item.path}-manifest`}>{body}</Markdown>
+                    </div>
+                  ) : null}
+                </TabsContent>
+              </Tabs>
+            </div>
           ) : null}
 
           {mode === 'external' ? (

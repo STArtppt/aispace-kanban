@@ -1,4 +1,4 @@
-export type ReaderKind = 'markdown' | 'table' | 'image' | 'text' | 'external';
+export type ReaderKind = 'markdown' | 'table' | 'image' | 'text' | 'html' | 'external';
 
 export interface FileItem {
   path: string;
@@ -16,6 +16,9 @@ export interface FileItem {
 export interface ConvertedItem extends FileItem {
   isDir: boolean;
   sheets?: FileItem[];
+  /** html 原型包：目录内可预览的 .html 相对路径 */
+  htmlPath?: string;
+  htmlName?: string;
   source?: string;
   sourceSha256?: string;
   convertedBy?: string;

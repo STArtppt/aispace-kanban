@@ -14,14 +14,15 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EMPTY = { schemaVersion: 1, activeProjectId: '', templateRoot: '', projects: [] };
 
 /**
- * 找 pmwork-template 的位置 —— 新建工作空间时要调它的 init_workspace.py。
- * 顺序：配置里写死的 > 环境变量 > 看板仓库的兄弟目录。
+ * 找工作空间模板的位置 —— 新建工作空间时要调它的 init_workspace.py。
+ * 模板随本仓一起维护，就在仓库根的 template/；配置和环境变量仍可覆盖。
+ * 顺序：配置里写死的 > 环境变量 > 仓库内 template/。
  */
 export function resolveTemplateRoot() {
   const candidates = [
     readProjects().templateRoot,
     process.env.PMWORK_TEMPLATE_ROOT,
-    path.resolve(HERE, '../../../pmwork-template'),
+    path.resolve(HERE, '../../template'),
   ];
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(path.join(candidate, 'scripts', 'init_workspace.py'))) {

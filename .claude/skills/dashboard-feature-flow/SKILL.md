@@ -1,6 +1,6 @@
 ---
 name: dashboard-feature-flow
-description: 在 workspace-dashboard 里新增或修改任何功能时使用 —— 跨 CLI / 服务端 / 前端三平面的改动顺序、契约同步清单、常驻服务的兼容性要求;防止"改一半"导致接口 404、字段 undefined、界面白屏。
+description: 在 aispace-kanban 里新增或修改任何功能时使用 —— 跨 CLI / 服务端 / 前端三平面的改动顺序、契约同步清单、常驻服务的兼容性要求;防止"改一半"导致接口 404、字段 undefined、界面白屏。
 ---
 
 # 加功能的正确顺序(Feature Flow)

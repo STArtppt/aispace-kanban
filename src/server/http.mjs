@@ -190,7 +190,7 @@ async function handleApi(req, res, url) {
     return json(res, 200, { root, ok: Boolean(root) });
   }
 
-  // 新建工作空间：调模板仓的 init_workspace.py，建完自动登记
+  // 新建工作空间：调模板的 init_workspace.py（默认是本仓 template/），建完自动登记
   if (head === 'workspaces' && req.method === 'POST') {
     const body = await readBody(req);
     const name = (body.name || '').trim();
@@ -199,7 +199,7 @@ async function handleApi(req, res, url) {
     const templateRoot = resolveTemplateRoot();
     if (!templateRoot) {
       return json(res, 500, {
-        error: '找不到 pmwork-template。把它放在看板仓库的兄弟目录，或设 PMWORK_TEMPLATE_ROOT 环境变量。',
+        error: '找不到工作空间模板。它应该在看板仓库的 template/ 下，或用 PMWORK_TEMPLATE_ROOT 环境变量指过去。',
       });
     }
     const result = await runInit(templateRoot, name, target);
@@ -229,7 +229,9 @@ async function handleApi(req, res, url) {
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return json(res, 404, { error: '文件不存在' });
     const ext = path.extname(abs).toLowerCase();
     const mime = MIME[ext];
-    if (mime && !mime.startsWith('text')) {
+    // 图片等二进制直出；html/htm 也直出，供 iframe 预览单文件原型（不要包成 JSON）
+    const rawStream = mime && (!mime.startsWith('text') || ext === '.html' || ext === '.htm');
+    if (rawStream) {
       res.writeHead(200, { 'content-type': mime, 'cache-control': 'no-cache' });
       return fs.createReadStream(abs).pipe(res);
     }

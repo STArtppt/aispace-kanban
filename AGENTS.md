@@ -1,6 +1,6 @@
 # AGENTS.md —— 项目编码规范总则
 
-> 本文件是 **workspace-dashboard** 面向所有编码 Agent(Claude Code / Cursor / Codex / Copilot…)
+> 本文件是 **aispace-kanban** 面向所有编码 Agent(Claude Code / Cursor / Codex / Copilot…)
 > 与人类协作者的**唯一事实源**。`CLAUDE.md` 只是指针,内容不在两处重复。
 > 改协作约定 / 项目说明,**只改本文件**。
 >
@@ -10,8 +10,12 @@
 
 ## 1. 项目是什么 + 最硬的不变量
 
-**workspace-dashboard** 是 PM 工作空间([pmwork-template](../pmwork-template))的**只读看板**:
+**aispace-kanban** 是 PM 工作空间的**只读看板**:
 一个常驻本机的服务,指向若干工作空间目录,在浏览器里切换查看概览 / 输入资料 / 产出文档 / 原型。
+
+工作空间**模板**([`template/`](./template))也在本仓一起维护 —— 看板"新建工作空间"调的
+就是它的 `scripts/init_workspace.py`。模板是**另一套语境**(PM 业务流程、pm-* 技能),
+本文件的编码规范只管看板三平面,**不适用于 `template/` 内部**;改模板见 [`template/AGENTS.md`](./template/AGENTS.md)。
 
 **不变量(违反即为 bug,不接受任何"顺手写一下"):**
 
@@ -42,7 +46,7 @@
 ## 3. 三个平面与目录结构
 
 ```
-workspace-dashboard/
+aispace-kanban/
 ├── bin/cli.mjs             # 平面 1 · CLI:参数解析 + serve/add/list/relink/remove
 ├── src/
 │   ├── server/             # 平面 2 · 常驻服务(.mjs,无类型检查)
@@ -59,8 +63,18 @@ workspace-dashboard/
 │       ├── hooks/          #   useProjects / useScan(含 SSE 订阅)
 │       ├── lib/api.ts      #   ★ 前后端契约:接口封装 + 全部响应类型
 │       └── styles/globals.css  # ★ 设计令牌唯一源头
+├── template/               # 平面外 · 工作空间模板,看板代码不 import 它
+│   ├── scripts/init_workspace.py  #   ★ 唯一被看板调用的入口(runInit)
+│   ├── .claude/skills/     #   pm-* 业务技能(会随新建工作空间一起铺过去)
+│   └── input/ output/ prototypes/ project.yaml   # 骨架 + 说明文档
 └── dist/                   # 构建产物(gitignore),serve 非 dev 模式伺服它
 ```
+
+`template/` 是**另一个语境**:它是给 PM 用的工作空间骨架,不是看板的源码。
+看板与它之间**只有一个接口** —— `src/server/http.mjs` 的 `runInit` 起子进程跑
+`template/scripts/init_workspace.py`(路径由 `config.mjs` 的 `resolveTemplateRoot` 解析,
+顺序:注册表 `templateRoot` > `PMWORK_TEMPLATE_ROOT` > 仓库内 `template/`)。
+本文件第 2 / 5 节的技术栈与编码规范**不适用于 `template/` 内部**,那边自己有一份 `AGENTS.md`。
 
 **平面职责互斥,判据一句话:**
 

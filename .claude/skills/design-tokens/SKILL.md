@@ -1,6 +1,6 @@
 ---
 name: design-tokens
-description: 在 workspace-dashboard 中改动颜色 / 字体 / 圆角 / 深色模式等视觉体系时使用 —— 令牌唯一写在 globals.css,且必须遵守"黑白灰为主、orange 只给需要注意"的硬约束。
+description: 在 aispace-kanban 中改动颜色 / 字体 / 圆角 / 深色模式等视觉体系时使用 —— 令牌唯一写在 globals.css,且必须遵守"黑白灰为主、orange 只给需要注意"的硬约束。
 ---
 
 # 设计令牌与配色约束(Design Tokens)

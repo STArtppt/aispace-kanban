@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * workspace-dashboard —— PM 工作空间看板的常驻服务。
+ * aispace-kanban —— PM 工作空间看板的常驻服务。
  *
- *   workspace-dashboard serve [--port 5180] [--dev]
- *   workspace-dashboard add <工作空间目录> [--name 名字]
- *   workspace-dashboard list
- *   workspace-dashboard remove <id>
+ *   aispace-kanban serve [--port 5180] [--dev]
+ *   aispace-kanban add <工作空间目录> [--name 名字]
+ *   aispace-kanban list
+ *   aispace-kanban remove <id>
  */
 import { spawn } from 'node:child_process';
 import path from 'node:path';
@@ -47,11 +47,11 @@ function parseArgs(argv) {
 function usage() {
   console.log(`工作空间看板
 
-  workspace-dashboard serve [--port ${DEFAULT_PORT}] [--dev]   起服务
-  workspace-dashboard add <工作空间目录> [--name 名字]        登记一个工作空间
-  workspace-dashboard list                                    看已登记的工作空间
-  workspace-dashboard relink <id> <新目录> [--name 名字]      目录改名/移动后接回来
-  workspace-dashboard remove <id>                             取消登记（不删本地文件）
+  aispace-kanban serve [--port ${DEFAULT_PORT}] [--dev]   起服务
+  aispace-kanban add <工作空间目录> [--name 名字]        登记一个工作空间
+  aispace-kanban list                                    看已登记的工作空间
+  aispace-kanban relink <id> <新目录> [--name 名字]      目录改名/移动后接回来
+  aispace-kanban remove <id>                             取消登记（不删本地文件）
 
 登记信息存在 ${PROJECTS_FILE}`);
 }
@@ -59,7 +59,7 @@ function usage() {
 function cmdList() {
   const { projects, activeProjectId } = readProjects();
   if (!projects.length) {
-    console.log('还没登记任何工作空间。用 `workspace-dashboard add <目录>` 加一个。');
+    console.log('还没登记任何工作空间。用 `aispace-kanban add <目录>` 加一个。');
     return;
   }
   for (const p of projects) {
@@ -114,7 +114,7 @@ try {
       cmdServe(args);
       break;
     case 'add': {
-      if (!target) throw new Error('要指定工作空间目录，比如 add ../pmwork-template');
+      if (!target) throw new Error('要指定工作空间目录，比如 add ~/work/某个工作空间');
       const project = addProject(path.resolve(target), typeof args.name === 'string' ? args.name : '');
       console.log(`已登记：${project.id}  ${project.name}\n${project.root}`);
       break;

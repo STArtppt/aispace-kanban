@@ -1,0 +1,31 @@
+# API key 等本地配置，绝对不能入库（.env.example 是模板，可以入库）
+.env
+.env.local
+
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Axhub Make 会在 prototypes/ 下自动构建客户端，其依赖和产物不入库。
+# 客户端本身是否入库看你的需要——要入库就把下面几行留着，
+# 不想让生成内容进版本库就整体忽略 prototypes/（保留 .gitkeep 以便目录还在）。
+prototypes/**/node_modules/
+prototypes/**/.axhub-cache/
+prototypes/**/dist/
+prototypes/**/.cache/
+
+# Office 编辑时产生的锁文件
+~$*
+.~lock.*
+
+# skill-creator 跑评测产生的工作区
+*-workspace/
+
+# 如果原始资料涉密、体积大或不该入库，取消下面这行的注释
+# input/raw/

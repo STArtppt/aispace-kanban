@@ -1,11 +1,11 @@
 {
-  "name": "workspace-dashboard",
+  "name": "aispace-kanban",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "PM 工作空间看板 —— 常驻服务，指向 pmwork 工作空间目录，只读展示项目概览、输入资料、输出产物与原型入口",
   "bin": {
-    "workspace-dashboard": "./bin/cli.mjs"
+    "aispace-kanban": "./bin/cli.mjs"
   },
   "scripts": {
     "dev": "node bin/cli.mjs serve --dev",

@@ -1,6 +1,6 @@
 ---
 name: react-component-authoring
-description: 在 workspace-dashboard 中新建或重构 React 组件 / 面板 / 视图时使用 —— 组件结构、props 类型、已有可复用小件、startist 组件消费方式与可访问性。
+description: 在 aispace-kanban 中新建或重构 React 组件 / 面板 / 视图时使用 —— 组件结构、props 类型、已有可复用小件、startist 组件消费方式与可访问性。
 ---
 
 # React 组件编写(Component Authoring)
@@ -24,7 +24,7 @@ description: 在 workspace-dashboard 中新建或重构 React 组件 / 面板 / 
    ```bash
    cd ../startist-ui && npm run registry:build
    python3 -m http.server 5199 --directory public &      # 临时喂给 shadcn
-   cd ../workspace-dashboard && npx shadcn@latest add @startist/<组件名> --yes
+   cd ../aispace-kanban && npx shadcn@latest add @startist/<组件名> --yes
    ```
    **`components/ui/**` 是 vendored 快照**:不做与上游分叉的语义修改
    (透传 `className` 做局部微调可以)。需要改行为就上行改 startist-ui。

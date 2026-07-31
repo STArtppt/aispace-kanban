@@ -1,6 +1,6 @@
-# 工作空间看板 workspace-dashboard
+# 工作空间看板 aispace-kanban
 
-PM 接手项目工作空间（[pmwork-template](../pmwork-template)）的**只读看板**。
+PM 接手项目工作空间（模板见 [`template/`](./template)）的**只读看板**。
 常驻服务模式：服务起在本机，指向任意几个工作空间目录，浏览器里切换查看。
 
 看板对工作空间**只读**，不会往里写任何文件。
@@ -11,7 +11,7 @@ PM 接手项目工作空间（[pmwork-template](../pmwork-template)）的**只�
 pnpm install
 pnpm build                                  # 构建前端（首次必须）
 
-node bin/cli.mjs add ../pmwork-template     # 登记一个工作空间
+node bin/cli.mjs add ~/work/某个工作空间     # 登记一个工作空间
 node bin/cli.mjs list                       # 看已登记的
 node bin/cli.mjs serve                      # 起服务 → http://localhost:5180
 ```
@@ -59,7 +59,7 @@ registry 还没部署到公网，本地更新组件的方法：
 ```bash
 cd ../startist-ui && npm run registry:build
 python3 -m http.server 5199 --directory public &     # 临时喂给 shadcn
-cd ../workspace-dashboard && npx shadcn@latest add @startist/<组件名> --yes
+cd ../aispace-kanban && npx shadcn@latest add @startist/<组件名> --yes
 ```
 
 配色遵守 startist 的硬约束：黑白灰为主，**orange（`--destructive`）只用于"需要注意"**——

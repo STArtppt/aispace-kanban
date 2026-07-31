@@ -40,6 +40,7 @@ function stat(abs) {
 function readerKind(ext) {
   if (ext === '.md' || ext === '.markdown') return 'markdown';
   if (ext === '.csv' || ext === '.tsv') return 'table';
+  if (ext === '.html' || ext === '.htm') return 'html';
   if (IMAGE_EXT.has(ext)) return 'image';
   if (TEXT_EXT.has(ext)) return 'text';
   return 'external'; // docx/pdf/xlsx… 网页不渲染，点开走系统
@@ -54,7 +55,7 @@ function readTextSafe(abs, limit = 2 * 1024 * 1024) {
   }
 }
 
-/** input/converted 下的一个产物：可能是单个 .md，也可能是 xlsx 拆出来的目录。 */
+/** input/converted 下的一个产物：.md、xlsx 拆目录、或 html 原型目录。 */
 function describeConverted(root, abs) {
   const isDir = fs.statSync(abs).isDirectory();
   const manifest = isDir ? path.join(abs, '_manifest.md') : abs;
@@ -68,7 +69,8 @@ function describeConverted(root, abs) {
     ...stat(isDir ? manifest : abs),
   };
   if (isDir) {
-    const sheets = listFiles(abs, { recursive: false })
+    const children = listFiles(abs, { recursive: false });
+    const sheets = children
       .filter((f) => /\.(csv|tsv)$/i.test(f))
       .sort((a, b) => a.localeCompare(b))
       .map((f) => {
@@ -84,7 +86,20 @@ function describeConverted(root, abs) {
         };
       });
     item.sheets = sheets;
-    item.size = sheets.reduce((sum, s) => sum + s.size, 0);
+
+    // 单文件 HTML 原型包：目录内保留 .html + _manifest.md
+    const htmlFiles = children
+      .filter((f) => /\.html?$/i.test(f))
+      .sort((a, b) => a.localeCompare(b));
+    if (htmlFiles.length) {
+      const htmlAbs = htmlFiles[0];
+      item.reader = 'html';
+      item.htmlPath = rel(root, htmlAbs);
+      item.htmlName = path.basename(htmlAbs);
+      item.size = stat(htmlAbs).size + (fs.existsSync(manifest) ? stat(manifest).size : 0);
+    } else {
+      item.size = sheets.reduce((sum, s) => sum + s.size, 0);
+    }
   }
   // frontmatter 里带着溯源信息，是这个看板最有价值的部分
   if (fs.existsSync(manifest) && manifest.endsWith('.md')) {
@@ -97,6 +112,14 @@ function describeConverted(root, abs) {
     item.extractedImages = Number(meta.extracted_images || 0);
     item.title = firstHeading(body);
     item.words = countWords(body);
+    // manifest 可写 preview: foo.html，优先用它
+    if (item.reader === 'html' && meta.preview) {
+      const previewAbs = path.join(abs, meta.preview);
+      if (fs.existsSync(previewAbs)) {
+        item.htmlPath = rel(root, previewAbs);
+        item.htmlName = path.basename(previewAbs);
+      }
+    }
   }
   return item;
 }

@@ -1,7 +1,7 @@
 /**
  * 解析工作空间根目录的 project.yaml，并算出「还缺什么」。
  *
- * 约定见 pmwork-template/AGENTS.md：
+ * 约定见 template/AGENTS.md：
  *   null / [] / {} = 该有但资料里还没有 → 缺口
  *   provenance     = 字段点号路径 → 来源文件和小节
  *   confidence     = 推断 / 口述待确认

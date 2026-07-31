@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type Project, type Scan } from '@/lib/api';
 
-const LAST_PROJECT_KEY = 'workspace-dashboard:last-project';
+const LAST_PROJECT_KEY = 'aispace-kanban:last-project';
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);

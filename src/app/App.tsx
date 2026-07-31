@@ -91,13 +91,13 @@ const NAV: { key: View; label: string; icon: typeof LayoutDashboard }[] = [
 function useTheme() {
   const [dark, setDark] = useState(
     () =>
-      localStorage.getItem('workspace-dashboard:theme') === 'dark' ||
-      (!localStorage.getItem('workspace-dashboard:theme') &&
+      localStorage.getItem('aispace-kanban:theme') === 'dark' ||
+      (!localStorage.getItem('aispace-kanban:theme') &&
         window.matchMedia('(prefers-color-scheme: dark)').matches),
   );
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
-    localStorage.setItem('workspace-dashboard:theme', dark ? 'dark' : 'light');
+    localStorage.setItem('aispace-kanban:theme', dark ? 'dark' : 'light');
   }, [dark]);
   return { dark, toggle: () => setDark((v) => !v) };
 }
@@ -403,7 +403,7 @@ export default function App() {
           <p className="mt-2 text-xs text-muted-foreground">
             用菜单里的「添加工作空间」填入目录，或在终端里跑
             <code className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono">
-              workspace-dashboard add &lt;目录&gt;
+              aispace-kanban add &lt;目录&gt;
             </code>
           </p>
         </div>

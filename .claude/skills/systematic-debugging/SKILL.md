@@ -1,12 +1,12 @@
 ---
 name: systematic-debugging
-description: 在 workspace-dashboard 中定位 / 修复任何 bug、类型报错、构建失败、接口 404、界面空白或不刷新时使用 —— 强制"先找根因再动手",并附本仓高频故障的分诊清单。
+description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、构建失败、接口 404、界面空白或不刷新时使用 —— 强制"先找根因再动手",并附本仓高频故障的分诊清单。
 ---
 
 # 系统化调试(Systematic Debugging)
 
 > 上游来源:[obra/superpowers · systematic-debugging](https://github.com/obra/superpowers/tree/main/skills/systematic-debugging)。
-> 本文件是 workspace-dashboard 的本地化改写版(贴本仓的三平面结构与常驻服务特性)。
+> 本文件是 aispace-kanban 的本地化改写版(贴本仓的三平面结构与常驻服务特性)。
 
 ## 何时使用
 

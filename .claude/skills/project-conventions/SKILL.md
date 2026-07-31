@@ -1,6 +1,6 @@
 ---
 name: project-conventions
-description: 在 workspace-dashboard 里新建文件、不确定代码该放哪个平面 / 该叫什么名字、或准备提交时使用 —— 目录分层、命名、路径别名、平面边界与提交前清单。
+description: 在 aispace-kanban 里新建文件、不确定代码该放哪个平面 / 该叫什么名字、或准备提交时使用 —— 目录分层、命名、路径别名、平面边界与提交前清单。
 ---
 
 # 项目约定(Project Conventions)
@@ -43,7 +43,7 @@ description: 在 workspace-dashboard 里新建文件、不确定代码该放哪�
 **通用**
 
 - 常量 `UPPER_SNAKE` 放文件顶部(`SKIP` / `MIME` / `DEFAULT_PORT` / `LAST_PROJECT_KEY`)
-- localStorage key 一律 `workspace-dashboard:<用途>` 前缀
+- localStorage key 一律 `aispace-kanban:<用途>` 前缀
 - 环境变量一律 `PMWORK_` 前缀(`PMWORK_DASHBOARD_PORT` / `PMWORK_API_PORT` / `PMWORK_TEMPLATE_ROOT`)
 
 ## 语言与注释

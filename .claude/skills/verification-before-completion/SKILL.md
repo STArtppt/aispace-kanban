@@ -1,12 +1,12 @@
 ---
 name: verification-before-completion
-description: 在 workspace-dashboard 中准备说「做完了 / 修好了 / 能跑了」之前使用 —— 没有刚跑出来的证据不许下完成结论;本仓服务端无类型检查无测试,typecheck 绿不等于做完。
+description: 在 aispace-kanban 中准备说「做完了 / 修好了 / 能跑了」之前使用 —— 没有刚跑出来的证据不许下完成结论;本仓服务端无类型检查无测试,typecheck 绿不等于做完。
 ---
 
 # 交付前验证(Verification Before Completion)
 
 > 上游来源:[obra/superpowers · verification-before-completion](https://github.com/obra/superpowers/tree/main/skills/verification-before-completion)。
-> 本文件是 workspace-dashboard 的本地化改写版,与本仓三道闸对齐。
+> 本文件是 aispace-kanban 的本地化改写版,与本仓三道闸对齐。
 
 ## 何时使用
 
