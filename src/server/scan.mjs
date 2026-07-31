@@ -69,12 +69,15 @@ function describeConverted(root, abs) {
     ...stat(isDir ? manifest : abs),
   };
   if (isDir) {
-    const children = listFiles(abs, { recursive: false });
-    const sheets = children
+    // 顶层文件：html 原型只看一层；csv 递归（点表分册在 分册/*.csv）
+    const topFiles = listFiles(abs, { recursive: false });
+    const allFiles = listFiles(abs, { recursive: true });
+    const sheets = allFiles
       .filter((f) => /\.(csv|tsv)$/i.test(f))
-      .sort((a, b) => a.localeCompare(b))
+      .sort((a, b) => a.localeCompare(b, 'zh'))
       .map((f) => {
-        const name = path.basename(f);
+        // 用相对转换目录的路径当显示名，区分 测点主表.csv 与 分册/xx.csv
+        const name = path.relative(abs, f).split(path.sep).join('/');
         const ext = path.extname(f).toLowerCase();
         return {
           path: rel(root, f),
@@ -87,8 +90,12 @@ function describeConverted(root, abs) {
       });
     item.sheets = sheets;
 
+    // 点表等产物常带 sqlite 供 SQL 检索；只记路径，看板不读二进制
+    const sqlite = allFiles.find((f) => /\.sqlite$/i.test(f));
+    if (sqlite) item.sqlitePath = rel(root, sqlite);
+
     // 单文件 HTML 原型包：目录内保留 .html + _manifest.md
-    const htmlFiles = children
+    const htmlFiles = topFiles
       .filter((f) => /\.html?$/i.test(f))
       .sort((a, b) => a.localeCompare(b));
     if (htmlFiles.length) {
@@ -99,12 +106,19 @@ function describeConverted(root, abs) {
       item.size = stat(htmlAbs).size + (fs.existsSync(manifest) ? stat(manifest).size : 0);
     } else {
       item.size = sheets.reduce((sum, s) => sum + s.size, 0);
+      // 有 csv 的目录型产物（xlsx 拆表 / 点表）按表格读；摘要在 _manifest.md
+      if (sheets.length) item.reader = 'table';
     }
   }
   // frontmatter 里带着溯源信息，是这个看板最有价值的部分
   if (fs.existsSync(manifest) && manifest.endsWith('.md')) {
     const { meta, body } = parseFrontmatter(readTextSafe(manifest));
     item.source = meta.source || '';
+    // 点表这类产物汇总整个目录（几百个源文件 → 一份主表），source 记的是目录。
+    // 这两个字段告诉扫描器该目录下哪些扩展名已被消费，见 scanInput 的 pending 计算。
+    item.sourceIsDir = String(meta.source_is_dir || '') === 'true';
+    item.sourceKinds = String(meta.source_kinds || '')
+      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
     item.sourceSha256 = meta.source_sha256 || '';
     item.convertedBy = meta.converted_by || '';
     item.convertedAt = meta.converted_at || '';
@@ -174,7 +188,15 @@ function scanInput(root) {
 
   // 哪些原始资料还没转换 —— 这是 PM 最该先看到的缺口
   const convertedSources = new Set(converted.map((c) => c.source).filter(Boolean));
-  const pending = raw.filter((r) => !convertedSources.has(r.path));
+  // 目录型产物（点表：几百个源文件汇总成一份主表）按「目录前缀 + 已消费的扩展名」覆盖。
+  // 只按目录一刀切会把目录里真没处理的文件（如 .bak）也藏起来，那就看不见缺口了。
+  const coveredDirs = converted
+    .filter((c) => c.sourceIsDir && c.source)
+    .map((c) => ({ prefix: c.source + '/', kinds: c.sourceKinds }));
+  const isCovered = (r) =>
+    convertedSources.has(r.path) ||
+    coveredDirs.some((d) => r.path.startsWith(d.prefix) && d.kinds.includes(r.ext));
+  const pending = raw.filter((r) => !isCovered(r));
 
   const indexPath = path.join(inputDir, 'INDEX.md');
   return {

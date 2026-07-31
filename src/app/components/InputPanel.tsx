@@ -1,14 +1,170 @@
-import { AppWindow, FileText, FolderOpen, Image, Table } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { AppWindow, FileText, FolderOpen, Image, Search, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { EmptyState, Row, SectionTitle, Stat } from '@/components/Primitives';
+import { Input } from '@/components/ui/input';
+import { EmptyState, ListPager, Row, SectionTitle, Stat } from '@/components/Primitives';
 import { api, type ConvertedItem, type FileItem, type Scan } from '@/lib/api';
 import { formatBytes, formatRelative, formatWords } from '@/lib/format';
+
+/** 待转换 / 转换产物列表一页条数 */
+const LIST_PAGE_SIZE = 12;
 
 function KindIcon({ item }: { item: { reader: string; isDir?: boolean } }) {
   if (item.reader === 'html') return <AppWindow className="size-4 text-muted-foreground" />;
   if (item.isDir || item.reader === 'table') return <Table className="size-4 text-muted-foreground" />;
   if (item.reader === 'image') return <Image className="size-4 text-muted-foreground" />;
   return <FileText className="size-4 text-muted-foreground" />;
+}
+
+/** 展示相对 raw/ 的路径，同名文件在不同子目录时能区分 */
+function pendingLabel(item: FileItem): string {
+  const prefix = 'input/raw/';
+  if (item.path.startsWith(prefix)) {
+    const rel = item.path.slice(prefix.length);
+    return rel || item.name;
+  }
+  return item.name;
+}
+
+/** 名称模糊：空格分词，每段都要在标题/文件名/来源/路径里出现（大小写不敏感） */
+function matchConverted(item: ConvertedItem, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [item.title, item.name, item.source, item.path, item.convertedBy]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase();
+  return q.split(/\s+/).every((part) => hay.includes(part));
+}
+
+function useListPage(total: number, pageSize: number, resetKey: string) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    setPage(0);
+  }, [resetKey]);
+
+  useEffect(() => {
+    setPage((p) => Math.min(p, totalPages - 1));
+  }, [totalPages]);
+
+  return { page, setPage, totalPages };
+}
+
+function PendingList({
+  items,
+  projectId,
+  openPath,
+  onOpen,
+}: {
+  items: FileItem[];
+  projectId: string;
+  openPath: string;
+  onOpen: (item: FileItem) => void;
+}) {
+  const { page, setPage } = useListPage(items.length, LIST_PAGE_SIZE, String(items.length));
+  const pageItems = items.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      {pageItems.map((item) => (
+        <Row key={item.path} onClick={() => onOpen(item)} active={openPath === item.path}>
+          <KindIcon item={item} />
+          <span className="min-w-0 flex-1 truncate text-sm" title={item.path}>
+            {pendingLabel(item)}
+          </span>
+          <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
+          <span
+            role="button"
+            tabIndex={-1}
+            title="在访达中显示"
+            className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+            onClick={(event) => {
+              event.stopPropagation();
+              void api.reveal(projectId, item.path);
+            }}
+          >
+            <FolderOpen className="size-3.5" />
+          </span>
+        </Row>
+      ))}
+      <ListPager page={page} pageSize={LIST_PAGE_SIZE} total={items.length} onPageChange={setPage} />
+    </div>
+  );
+}
+
+function ConvertedList({
+  items,
+  openPath,
+  onOpen,
+}: {
+  items: ConvertedItem[];
+  openPath: string;
+  onOpen: (item: FileItem) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const filtered = useMemo(() => items.filter((item) => matchConverted(item, query)), [items, query]);
+  const { page, setPage } = useListPage(filtered.length, LIST_PAGE_SIZE, `${query}\0${items.length}`);
+  const pageItems = filtered.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
+  const searching = query.trim().length > 0;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {/* 标题左、搜索右：同一行，避免搜索再占一整行高度 */}
+      <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0 shrink">
+          <SectionTitle count={items.length}>转换产物</SectionTitle>
+        </div>
+        <div className="relative w-[12rem] shrink-0 sm:w-[14rem]">
+          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="按名称搜索…"
+            className="h-8 pl-8 text-xs"
+            aria-label="搜索转换产物"
+          />
+        </div>
+      </div>
+      {searching ? (
+        <p className="text-xs text-muted-foreground">
+          {filtered.length ? `匹配 ${filtered.length} 项` : '没有匹配的转换产物'}
+        </p>
+      ) : null}
+      {filtered.length ? (
+        <div className="overflow-hidden rounded-lg border border-border">
+          {pageItems.map((item) => (
+            <Row key={item.path} onClick={() => onOpen(item)} active={openPath === item.path}>
+              <KindIcon item={item} />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex items-center gap-2">
+                  <span className="truncate text-sm">{item.title || item.name}</span>
+                </div>
+                <span className="truncate text-xs text-muted-foreground">
+                  {item.source || item.name}
+                  {item.convertedBy ? ` · ${item.convertedBy}` : ''}
+                  {item.reader === 'html' ? ' · HTML 原型' : ''}
+                  {item.sheets?.length ? ` · ${item.sheets.length} 张表` : ''}
+                  {item.sqlitePath ? ' · 可 SQL 检索' : ''}
+                  {item.extractedImages ? ` · ${item.extractedImages} 张图` : ''}
+                </span>
+              </div>
+              <span className="shrink-0 text-xs text-muted-foreground">{formatWords(item.words)}</span>
+            </Row>
+          ))}
+          <ListPager
+            page={page}
+            pageSize={LIST_PAGE_SIZE}
+            total={filtered.length}
+            onPageChange={setPage}
+          />
+        </div>
+      ) : searching ? (
+        <EmptyState title="没有匹配的转换产物" hint="试试更短的关键词，或清空搜索" />
+      ) : null}
+    </div>
+  );
 }
 
 export function InputPanel({
@@ -54,58 +210,26 @@ export function InputPanel({
             </code>
             即可。
           </p>
-          <div className="overflow-hidden rounded-lg border border-border">
-            {input.pending.map((item) => (
-              <Row key={item.path} onClick={() => onOpen(item)} active={openPath === item.path}>
-                <KindIcon item={item} />
-                <span className="min-w-0 flex-1 truncate text-sm">{item.name}</span>
-                <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
-                <span
-                  role="button"
-                  tabIndex={-1}
-                  title="在访达中显示"
-                  className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    void api.reveal(projectId, item.path);
-                  }}
-                >
-                  <FolderOpen className="size-3.5" />
-                </span>
-              </Row>
-            ))}
-          </div>
+          <PendingList
+            items={input.pending}
+            projectId={projectId}
+            openPath={openPath}
+            onOpen={onOpen}
+          />
         </section>
       ) : null}
 
       <section className="flex flex-col gap-2">
-        <SectionTitle count={input.converted.length}>转换产物</SectionTitle>
         {input.converted.length ? (
-          <div className="overflow-hidden rounded-lg border border-border">
-            {input.converted.map((item: ConvertedItem) => (
-              <Row key={item.path} onClick={() => onOpen(item)} active={openPath === item.path}>
-                <KindIcon item={item} />
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate text-sm">{item.title || item.name}</span>
-                  </div>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {item.source || item.name}
-                    {item.convertedBy ? ` · ${item.convertedBy}` : ''}
-                    {item.reader === 'html' ? ' · HTML 原型' : ''}
-                    {item.sheets?.length ? ` · ${item.sheets.length} 张表` : ''}
-                    {item.extractedImages ? ` · ${item.extractedImages} 张图` : ''}
-                  </span>
-                </div>
-                <span className="shrink-0 text-xs text-muted-foreground">{formatWords(item.words)}</span>
-              </Row>
-            ))}
-          </div>
+          <ConvertedList items={input.converted} openPath={openPath} onOpen={onOpen} />
         ) : (
-          <EmptyState
-            title="还没有转换产物"
-            hint="把资料放进 input/raw/，然后在工作空间里跑 scripts/ingest.py"
-          />
+          <>
+            <SectionTitle count={0}>转换产物</SectionTitle>
+            <EmptyState
+              title="还没有转换产物"
+              hint="把资料放进 input/raw/，然后在工作空间里跑 scripts/ingest.py"
+            />
+          </>
         )}
       </section>
 

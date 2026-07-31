@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
+import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import {
   addProject,
@@ -19,6 +20,9 @@ import { scanWorkspace } from './scan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '../../dist');
+
+/** 大 CSV 行数缓存：key = abs + mtime，避免翻页时反复全量扫 */
+const tableRowCountCache = new Map();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -63,6 +67,60 @@ function resolveInside(root, relPath) {
     throw err;
   }
   return abs;
+}
+
+/**
+ * 按行分页读 CSV/TSV，不把整文件塞进 JSON。
+ * 点表主表常有数十 MB / 十几万行，整文接口会 413；看板只需要摘要 + 一页样例。
+ * 不做完整 CSV 引号态机：测点表无跨行字段，按行切片后前端再用 Papa 解析当页。
+ */
+async function readCsvPage(abs, { offset = 0, limit = 50 } = {}) {
+  const stats = fs.statSync(abs);
+  const cacheKey = `${abs}\0${stats.mtimeMs}`;
+  const cachedTotal = tableRowCountCache.get(cacheKey);
+
+  const stream = fs.createReadStream(abs, { encoding: 'utf8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+
+  let headerLine = '';
+  let totalRows = 0;
+  const lines = [];
+  let seenHeader = false;
+
+  for await (const raw of rl) {
+    const line = seenHeader ? raw : raw.replace(/^\uFEFF/, '');
+    if (!line.trim()) continue;
+    if (!seenHeader) {
+      headerLine = line;
+      seenHeader = true;
+      continue;
+    }
+    if (totalRows >= offset && lines.length < limit) lines.push(line);
+    totalRows += 1;
+    // 行数已知且本页已凑齐 → 提前结束，翻页不再扫完全文件
+    if (cachedTotal !== undefined && lines.length >= limit && totalRows >= offset + limit) {
+      rl.close();
+      break;
+    }
+  }
+
+  const finalTotal = cachedTotal !== undefined ? cachedTotal : totalRows;
+  if (cachedTotal === undefined) tableRowCountCache.set(cacheKey, finalTotal);
+  // 缓存膨胀时丢掉最旧的一批（本机看板场景极少触发）
+  if (tableRowCountCache.size > 64) {
+    const first = tableRowCountCache.keys().next().value;
+    tableRowCountCache.delete(first);
+  }
+
+  return {
+    headerLine,
+    lines,
+    totalRows: finalTotal,
+    offset,
+    limit,
+    size: stats.size,
+    mtime: stats.mtime.toISOString(),
+  };
 }
 
 /** 跑模板仓的初始化脚本，把它的 JSON 输出捞回来。 */
@@ -236,13 +294,38 @@ async function handleApi(req, res, url) {
       return fs.createReadStream(abs).pipe(res);
     }
     const stats = fs.statSync(abs);
-    if (stats.size > 4 * 1024 * 1024) return json(res, 413, { error: '文件太大，请用系统程序打开' });
+    // 大 CSV 请走 /table 分页；其它大文本仍建议系统打开，避免一次 JSON 几十 MB
+    if (stats.size > 4 * 1024 * 1024) {
+      if (ext === '.csv' || ext === '.tsv') {
+        return json(res, 413, {
+          error: '表格文件较大，请用分页预览接口打开',
+          code: 'USE_TABLE_API',
+        });
+      }
+      return json(res, 413, { error: '文件太大，请用系统程序打开' });
+    }
     return json(res, 200, {
       path: url.searchParams.get('path'),
       size: stats.size,
       mtime: stats.mtime.toISOString(),
       content: fs.readFileSync(abs, 'utf8'),
     });
+  }
+
+  // 表格分页：点表主表等大 CSV 只返回表头 + 一页行，附总行数
+  if (head === 'projects' && id && action === 'table') {
+    const project = requireProject(id);
+    const relPath = url.searchParams.get('path') || '';
+    const abs = resolveInside(project.root, relPath);
+    if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return json(res, 404, { error: '文件不存在' });
+    const ext = path.extname(abs).toLowerCase();
+    if (ext !== '.csv' && ext !== '.tsv') {
+      return json(res, 400, { error: '只支持预览 .csv / .tsv 表格' });
+    }
+    const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
+    const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    const page = await readCsvPage(abs, { offset, limit });
+    return json(res, 200, { path: relPath, ...page });
   }
 
   // 交给系统：在访达里定位，或用默认程序打开原始文档

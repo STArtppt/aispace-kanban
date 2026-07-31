@@ -19,12 +19,26 @@ export interface ConvertedItem extends FileItem {
   /** html 原型包：目录内可预览的 .html 相对路径 */
   htmlPath?: string;
   htmlName?: string;
+  /** 点表等产物的 sqlite 路径（看板只展示路径/SQL 指南，不读二进制） */
+  sqlitePath?: string;
   source?: string;
   sourceSha256?: string;
   convertedBy?: string;
   convertedAt?: string;
   warning?: string;
   extractedImages?: number;
+}
+
+/** /api/projects/:id/table 分页预览大 CSV，不把整文件塞进 JSON */
+export interface TablePage {
+  path: string;
+  headerLine: string;
+  lines: string[];
+  totalRows: number;
+  offset: number;
+  limit: number;
+  size: number;
+  mtime: string;
 }
 
 export interface PrototypeItem {
@@ -154,6 +168,17 @@ export const api = {
     request<{ path: string; size: number; mtime: string; content: string }>(
       `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,
     ),
+  /** 大 CSV/TSV 分页预览（点表主表等），默认每页 50 行 */
+  table: (id: string, path: string, opts?: { offset?: number; limit?: number }) => {
+    const offset = opts?.offset ?? 0;
+    const limit = opts?.limit ?? 50;
+    const q = new URLSearchParams({
+      path,
+      offset: String(offset),
+      limit: String(limit),
+    });
+    return request<TablePage>(`/api/projects/${id}/table?${q}`);
+  },
   fileUrl: (id: string, path: string) => `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,
   reveal: (id: string, path: string, mode: 'reveal' | 'open' = 'reveal') =>
     request<{ ok: boolean }>(`/api/projects/${id}/reveal`, {

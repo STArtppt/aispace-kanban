@@ -4,6 +4,7 @@ import {
   ArrowLeftToLine,
   ArrowRightFromLine,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   FolderOpen,
   SquareArrowOutUpRight,
@@ -12,11 +13,21 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
 import { api, type ConvertedItem, type FileItem } from '@/lib/api';
 import { formatBytes, formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
+
+/** 表格预览每页行数（不含表头）；大点表只拉一页，避免整文件进内存 */
+const TABLE_PAGE_SIZE = 50;
 
 /** 只做展示用的 frontmatter 拆分，和服务端那份保持一致的宽松规则。 */
 function splitFrontmatter(text: string): { meta: [string, string][]; body: string } {
@@ -91,41 +102,172 @@ function SourceBar({ meta }: { meta: [string, string][] }) {
   );
 }
 
-function CsvTable({ text }: { text: string }) {
-  const rows = useMemo(() => {
-    const parsed = Papa.parse<string[]>(text.trim(), { skipEmptyLines: true });
-    return parsed.data;
-  }, [text]);
-  if (!rows.length) return <p className="text-sm text-muted-foreground">这张表是空的。</p>;
-  const [head, ...body] = rows;
-  if (!head?.length) return <p className="text-sm text-muted-foreground">这张表是空的。</p>;
+function CsvGrid({
+  head,
+  body,
+  totalRows,
+  page,
+  pageSize,
+  size,
+  onPageChange,
+}: {
+  head: string[];
+  body: string[][];
+  totalRows: number;
+  page: number;
+  pageSize: number;
+  size?: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (!head.length) return <p className="text-sm text-muted-foreground">这张表是空的。</p>;
+  const totalPages = Math.max(1, Math.ceil(totalRows / pageSize));
+  const from = totalRows === 0 ? 0 : page * pageSize + 1;
+  const to = Math.min(totalRows, (page + 1) * pageSize);
+  const showPager = totalRows > pageSize;
+
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <table className="w-full border-collapse text-sm">
-        <thead className="bg-muted/60">
-          <tr>
-            {head.map((cell, i) => (
-              <th key={i} className="border-b border-border px-3 py-2 text-left text-xs font-medium whitespace-nowrap">
-                {cell}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {body.map((row, i) => (
-            <tr key={i} className="hover:bg-accent/50">
-              {head.map((_, j) => (
-                <td key={j} className="border-b border-border px-3 py-2 align-top whitespace-pre-wrap">
-                  {row[j] ?? ''}
-                </td>
+    <div className="overflow-hidden rounded-lg border border-border">
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-sm">
+          <thead className="bg-muted/60">
+            <tr>
+              {head.map((cell, i) => (
+                <th
+                  key={i}
+                  className="border-b border-border px-3 py-2 text-left text-xs font-medium whitespace-nowrap"
+                >
+                  {cell}
+                </th>
               ))}
             </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="border-t border-border px-3 py-1.5 text-xs text-muted-foreground">
-        {body.length} 行 × {head.length} 列
+          </thead>
+          <tbody>
+            {body.length ? (
+              body.map((row, i) => (
+                <tr key={i} className="hover:bg-accent/50">
+                  {head.map((_, j) => (
+                    <td key={j} className="border-b border-border px-3 py-2 align-top whitespace-pre-wrap">
+                      {row[j] ?? ''}
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : (
+              <tr>
+                <td colSpan={head.length} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                  这一页没有数据。
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border bg-muted/30 px-3 py-2">
+        <span className="text-xs text-muted-foreground">
+          {totalRows === 0
+            ? '0 行'
+            : showPager
+              ? `第 ${from}–${to} 行，共 ${totalRows.toLocaleString('zh-CN')} 行 × ${head.length} 列`
+              : `${totalRows.toLocaleString('zh-CN')} 行 × ${head.length} 列`}
+          {size ? ` · ${formatBytes(size)}` : ''}
+        </span>
+        {showPager ? (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={page <= 0}
+              aria-label="上一页"
+              onClick={() => onPageChange(Math.max(0, page - 1))}
+            >
+              <ChevronLeft className="size-3.5" />
+              上一页
+            </Button>
+            <span className="min-w-[4.5rem] text-center text-xs text-muted-foreground">
+              {page + 1} / {totalPages}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              disabled={page >= totalPages - 1}
+              aria-label="下一页"
+              onClick={() => onPageChange(Math.min(totalPages - 1, page + 1))}
+            >
+              下一页
+              <ChevronRight className="size-3.5" />
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** 走 /table 分页接口；大点表也不会再撞「文件太大」。 */
+function PaginatedCsvTable({ projectId, path }: { projectId: string; path: string }) {
+  const [page, setPage] = useState(0);
+  const [head, setHead] = useState<string[]>([]);
+  const [body, setBody] = useState<string[][]>([]);
+  const [totalRows, setTotalRows] = useState(0);
+  const [size, setSize] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setPage(0);
+  }, [path]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    api
+      .table(projectId, path, { offset: page * TABLE_PAGE_SIZE, limit: TABLE_PAGE_SIZE })
+      .then((res) => {
+        if (cancelled) return;
+        const chunk = [res.headerLine, ...res.lines].filter((l) => l != null && l !== '').join('\n');
+        const parsed = Papa.parse<string[]>(chunk, { skipEmptyLines: true });
+        const rows = parsed.data;
+        const nextHead = rows[0] || [];
+        const nextBody = rows.slice(1);
+        setHead(nextHead);
+        setBody(nextBody);
+        setTotalRows(res.totalRows);
+        setSize(res.size);
+        setLoading(false);
+      })
+      .catch((err: Error) => {
+        if (cancelled) return;
+        setHead([]);
+        setBody([]);
+        setTotalRows(0);
+        setError(err.message);
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, path, page]);
+
+  if (loading && !head.length) {
+    return <p className="text-sm text-muted-foreground">读取表格中…</p>;
+  }
+  if (error) return <p className="text-sm text-destructive">{error}</p>;
+
+  return (
+    <div className="flex flex-col gap-2">
+      {loading ? <p className="text-xs text-muted-foreground">翻页加载中…</p> : null}
+      <CsvGrid
+        head={head}
+        body={body}
+        totalRows={totalRows}
+        page={page}
+        pageSize={TABLE_PAGE_SIZE}
+        size={size}
+        onPageChange={setPage}
+      />
     </div>
   );
 }
@@ -216,7 +358,7 @@ function useFileContent(projectId: string, path: string | null) {
   return { content: displayContent, loading, error: aligned ? error : '' };
 }
 
-/** 多 sheet（xlsx 拆目录）或单 csv/tsv 表格预览。 */
+/** 多 sheet（xlsx 拆目录 / 点表分册）或单 csv/tsv；一律走分页接口。 */
 function TableReader({
   projectId,
   item,
@@ -224,48 +366,65 @@ function TableReader({
 }: {
   projectId: string;
   item: FileItem;
-  sheets: { path: string; name: string }[];
+  sheets: { path: string; name: string; size?: number }[];
 }) {
   const multi = sheets.length > 1;
   const firstPath = sheets[0]?.path || item.path;
   const [active, setActive] = useState(firstPath);
-  const { content, loading, error } = useFileContent(projectId, active || null);
 
   useEffect(() => {
     setActive(firstPath);
   }, [item.path, firstPath]);
 
   if (!multi) {
-    return (
-      <>
-        {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
-        {error ? <p className="text-sm text-destructive">{error}</p> : null}
-        {content && !error ? <CsvTable text={content} /> : null}
-      </>
-    );
+    return <PaginatedCsvTable projectId={projectId} path={firstPath} />;
   }
 
+  const byPath = useMemo(() => new Map(sheets.map((s) => [s.path, s])), [sheets]);
+  const activeSheet = byPath.get(active);
+
   return (
-    <Tabs value={active} onValueChange={(v) => setActive(String(v))} className="gap-3">
-      <TabsList variant="line" className="px-0">
-        {sheets.map((sheet) => (
-          <TabsTrigger key={sheet.path} value={sheet.path} title={sheet.name}>
-            {sheetLabel(sheet.name)}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-      {sheets.map((sheet) => (
-        <TabsContent key={sheet.path} value={sheet.path} className="min-h-0 min-w-0">
-          {active === sheet.path ? (
-            <>
-              {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
-              {content && !error ? <CsvTable text={content} /> : null}
-            </>
-          ) : null}
-        </TabsContent>
-      ))}
-    </Tabs>
+    <div className="flex flex-col gap-3">
+      {/*
+        单行 Select + label 横排：是业务侧布局组合，不是 Select 组件变体。
+        真源默认已是单行（不传 description）；水平「标签+控件」用 flex 即可，不必上行加 variant。
+      */}
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+        <span className="shrink-0 text-xs text-muted-foreground">数据表</span>
+        <Select
+          value={active}
+          onValueChange={(value) => {
+            if (typeof value === 'string' && value) setActive(value);
+          }}
+        >
+          <SelectTrigger
+            className="h-9 min-h-9 w-auto min-w-[12rem] max-w-md flex-1 py-0"
+            aria-label="选择数据表"
+          >
+            <SelectValue>
+              {(value: string | null) => {
+                const sheet = value ? byPath.get(value) : undefined;
+                if (!sheet) return null;
+                return sheetLabel(sheet.name);
+              }}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent>
+            {sheets.map((sheet) => (
+              <SelectItem key={sheet.path} value={sheet.path}>
+                {sheetLabel(sheet.name)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      {activeSheet && typeof activeSheet.size === 'number' && activeSheet.size > 4 * 1024 * 1024 ? (
+        <p className="text-xs text-muted-foreground">
+          此表较大（{formatBytes(activeSheet.size)}），下方仅分页预览；完整检索请用摘要里的 SQL 示例。
+        </p>
+      ) : null}
+      <PaginatedCsvTable key={active} projectId={projectId} path={active} />
+    </div>
   );
 }
 
@@ -290,9 +449,9 @@ export function Reader({
 }) {
   const sheets = useMemo(() => {
     if (isConverted(item) && item.sheets?.length) {
-      return item.sheets.map((s) => ({ path: s.path, name: s.name }));
+      return item.sheets.map((s) => ({ path: s.path, name: s.name, size: s.size }));
     }
-    return [] as { path: string; name: string }[];
+    return [] as { path: string; name: string; size?: number }[];
   }, [item]);
 
   // 目录型转换产物：csv → 表格；html 原型 → iframe；否则读 _manifest.md
@@ -305,7 +464,9 @@ export function Reader({
       : item.reader === 'html'
         ? item.path
         : '';
+  const sqlitePath = isConverted(item) ? item.sqlitePath : undefined;
 
+  // 目录里有 csv 就按表格包处理（含点表）；item.reader 也可能已是 table
   const mode: 'markdown' | 'table' | 'text' | 'image' | 'html' | 'external' = multiSheet
     ? 'table'
     : item.reader;
@@ -320,7 +481,7 @@ export function Reader({
   // 表格内容由 TableReader 自行拉取；此处只负责 md / 纯文本
   const { content, loading, error } = useFileContent(projectId, contentPath);
 
-  // 多 sheet / html 原型：manifest 做溯源与「校验说明」页
+  // 目录型表格包 / html 原型：manifest 做摘要、SQL 指南、校验说明
   const { content: manifestContent, loading: manifestLoading, error: manifestError } = useFileContent(
     projectId,
     (multiSheet || mode === 'html') && isDir ? manifestPath : null,
@@ -334,8 +495,15 @@ export function Reader({
 
   const base = dirOf(mode === 'markdown' && isDir ? manifestPath : item.path);
   const [htmlTab, setHtmlTab] = useState<'preview' | 'manifest'>('preview');
+  // 点表等大包默认先看摘要（规模分布 / SQL），再按需翻数据
+  const [tableTab, setTableTab] = useState<'summary' | 'data'>('summary');
 
-  // markdown 目录：放在滚动区外；条目来自渲染后 DOM，与锚点严格一致
+  useEffect(() => {
+    setTableTab('summary');
+    setHtmlTab('preview');
+  }, [item.path]);
+
+  // markdown / 表格摘要目录：放在滚动区外；条目来自渲染后 DOM，与锚点严格一致
   const mdScrollRef = useRef<HTMLDivElement>(null);
   const [tocState, setTocState] = useState<{ path: string; items: TocItem[] }>({
     path: item.path,
@@ -345,7 +513,11 @@ export function Reader({
   if (tocState.path !== item.path) {
     setTocState({ path: item.path, items: [] });
   }
-  const tocItems = mode === 'markdown' && tocState.path === item.path ? tocState.items : [];
+  // 点表等目录型表格的「摘要」也是长 markdown，同样挂目录
+  const showDocToc =
+    mode === 'markdown' || (mode === 'table' && isDir && multiSheet && tableTab === 'summary');
+  const tocItems = showDocToc && tocState.path === item.path ? tocState.items : [];
+  const tablePackage = mode === 'table' && isDir && multiSheet;
 
   return (
     <aside
@@ -395,9 +567,8 @@ export function Reader({
       </header>
 
       {/*
-        markdown：正文可滚 + 右侧目录
+        带目录的文档面：markdown 正文，以及表格包的「摘要」页。
         目录 absolute 贴预览右缘：展开/收起时位置固定，不参与 flex 分宽（避免左右摇摆）
-        宽屏 markdown 始终预留右轨，避免标题解析后目录突然出现把正文挤一下
       */}
       {mode === 'markdown' ? (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -426,16 +597,79 @@ export function Reader({
             ) : null}
           </div>
 
-          {/* 宽屏常驻右轨：「目录」标题始终在；无标题时 DocumentToc 内显示「暂无目录」 */}
           <div
             className={cn(
-              // 贴右绝对定位：预览变宽时右缘不动，目录不跟着正文 reflow 摇摆
               'absolute inset-y-0 right-0 hidden w-[200px] flex-col bg-background px-3 py-4 xl:w-[220px]',
               'min-[900px]:flex',
             )}
           >
             <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
           </div>
+        </div>
+      ) : tablePackage ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div className="shrink-0 border-b border-border px-4 pt-3 sm:px-6">
+            <Tabs
+              value={tableTab}
+              onValueChange={(v) => setTableTab(v === 'data' ? 'data' : 'summary')}
+            >
+              <TabsList variant="line" className="px-0">
+                <TabsTrigger value="summary">摘要</TabsTrigger>
+                <TabsTrigger value="data">数据</TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          {tableTab === 'summary' ? (
+            <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+              <div
+                ref={mdScrollRef}
+                data-reader-scroll
+                className={cn(
+                  'h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5',
+                  'min-[900px]:pr-[calc(200px+0.75rem)] xl:pr-[calc(220px+0.75rem)]',
+                )}
+              >
+                {manifestLoading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
+                {manifestError ? <p className="text-sm text-destructive">{manifestError}</p> : null}
+                {manifestContent && !manifestError ? (
+                  <div className="mx-auto w-full max-w-[76ch]">
+                    <SourceBar meta={meta} />
+                    {sqlitePath ? (
+                      <p className="mb-4 rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+                        SQL 库：{sqlitePath}
+                        <span className="mt-1 block font-sans text-xs">
+                          精确检索用下方示例命令查 sqlite，看板只展示摘要与分页样例，不加载全表。
+                        </span>
+                      </p>
+                    ) : null}
+                    <Markdown
+                      key={`${item.path}-table-manifest`}
+                      onHeadingsChange={(items) => setTocState({ path: item.path, items })}
+                    >
+                      {body}
+                    </Markdown>
+                  </div>
+                ) : !manifestLoading && !manifestError ? (
+                  <p className="text-sm text-muted-foreground">
+                    这个转换目录没有 _manifest.md，可直接切到「数据」看表。
+                  </p>
+                ) : null}
+              </div>
+              <div
+                className={cn(
+                  'absolute inset-y-0 right-0 hidden w-[200px] flex-col bg-background px-3 py-4 xl:w-[220px]',
+                  'min-[900px]:flex',
+                )}
+              >
+                <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
+              </div>
+            </div>
+          ) : (
+            <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
+              <TableReader projectId={projectId} item={item} sheets={sheets} />
+            </ScrollArea>
+          )}
         </div>
       ) : (
         <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
@@ -450,14 +684,11 @@ export function Reader({
           ) : null}
 
           {mode === 'table' ? (
-            <>
-              {multiSheet && meta.length ? <SourceBar meta={meta} /> : null}
-              <TableReader
-                projectId={projectId}
-                item={item}
-                sheets={multiSheet ? sheets : [{ path: item.path, name: item.name }]}
-              />
-            </>
+            <TableReader
+              projectId={projectId}
+              item={item}
+              sheets={multiSheet ? sheets : [{ path: item.path, name: item.name, size: item.size }]}
+            />
           ) : null}
 
           {mode === 'image' ? (

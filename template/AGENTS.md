@@ -20,7 +20,7 @@ input/  →  （分析）  →  output/  →  prototypes/
 | --- | --- | --- |
 | `project.yaml` | 项目元信息：背景目标、干系人、里程碑、成果要求、约束 | 由 `pm-project-meta` 增量维护，见下文 |
 | `input/raw/` | 人类给的原始资料（docx / PDF / xlsx / pptx） | **只读**。永不改动、永不删除，它是溯源的终点。**默认禁止读取**（见下文） |
-| `input/converted/` | 转换后的 `.md` / `.csv` | 由 `scripts/ingest.py` 生成，**不要手改**（重跑会覆盖） |
+| `input/converted/` | 转换后的 `.md` / `.csv`；点表另出主表 + sqlite | 由 `scripts/ingest.py` 和 `scripts/pointtable.py` 生成，**不要手改**（重跑会覆盖） |
 | `input/assets/` | 从文档里抽出的图片 | 脚本生成。看图请直接读图片文件 |
 | `input/INDEX.md` | 资料台账 | 表格由脚本生成；人工判断写在「人工批注」区 |
 | `output/analysis/` | 分析中间产物（现状基线、需求拆解、澄清问题清单） | 自由写 |
@@ -104,9 +104,51 @@ MinerU 需要 `MINERU_API_KEY`（`.env` 里配，脚本会自己读）。**没�
 会自动退回本地 markitdown，只是版式和表格还原差一些——遇到这种情况提醒用户可以配 key 提升质量。
 Token 在 <https://mineru.net/apiManage> 创建，免费额度 1000 页/天，单文件上限 200MB / 200 页。
 
-`.doc` / `.xls` / `.ppt` 等老格式脚本不支持，需要请用户先另存为新格式。
+`.doc` / `.ppt` / `.wps` 等老格式脚本不支持，需要请用户先另存为新格式
+（`.xls` 是例外：点表场景由 `pointtable.py` 直接读，见下节）。
 产物 frontmatter 里带 `warning` 的说明内容几乎是空的（扫描件且 OCR 也没识别出来），
 要提醒用户这份资料实际不可用，不要当它已经进来了。
+
+## 阶段一之二：点表批量归一
+
+电力 / 工控项目常会收到**成百上千个同构的点表小文件**（测点清单）。这类资料逐个转换没有意义——
+价值在于汇总后**能按测点检索**：「棉花滩所有水位测点是哪些」翻几百个 csv 是答不出来的。
+所以点表走单独的管线：
+
+```bash
+python3 scripts/pointtable.py                  # 自动发现 input/raw/ 下的点表目录（幂等）
+python3 scripts/pointtable.py --dry-run        # 先看识别结果
+python3 scripts/pointtable.py input/raw/集控点表 # 只处理指定目录
+python3 scripts/pointtable.py --force          # 强制重建
+```
+
+支持两类形态，靠**内容**识别而不是扩展名（parser 可插拔，见脚本里的 `PARSERS`）：
+
+| parser | 形态 | 典型来源 |
+| --- | --- | --- |
+| `hydro_xls` | 表格型 `.xls`/`.xlsx`，首行表头 + 数据行，设备层级来自**目录路径** | 南瑞水电集控（模拟量/开关量/SOE量/温度量） |
+| `scada_ini` | 分段型 `.txt`，`[RTU]`/`[遥信]`/`[遥测]` 分段，GBK 与 UTF-8 混杂 | 风电 / 光伏集中监控 |
+
+产物在 `input/converted/<点表集名>/`：
+
+- **`_manifest.md`** — 轻量台账（规模分布、字段说明、已知局限）。**看板预览点这个**
+- `测点主表.csv` — 全量统一 18 列，含溯源列（源文件 + 源行号）
+- `分册/<厂站>.csv` — 按厂站拆分，便于预览、也便于单独发给某厂站对接人核对
+- `测点.sqlite` — 建好索引，**按测点检索一律走 SQL，不要把主表读进上下文**
+
+```bash
+sqlite3 input/converted/集控点表/测点.sqlite \
+  "SELECT 厂站,设备分区,测点描述,测点地址 FROM 测点
+   WHERE 测点描述 LIKE '%水位%' AND 是否备用='' LIMIT 20;"
+```
+
+两个脚本会自动分流：`ingest.py` 识别到点表就让路（打一行汇总日志并记进 INDEX 台账），
+点表目录里的普通表格（如跨系统指标清单）仍由 `ingest.py` 按 sheet 转 CSV。
+
+**边界**：脚本只做格式归一，**不做**设备树绑定、间隔匹配、测点编码生成——那些依赖每个厂站
+一份的业务规则表（通常随点表附一份 `*-测点解析规则.md`），属于工程侧数据接入范畴，不是需求分析的输入。
+分段型点表的「设备名」是内容启发式推断的，写进正式文档前要按解析规则文档核对，
+并按溯源要求标 `[推断]`。
 
 ## 阶段四：原型
 
@@ -131,6 +173,7 @@ Token 在 <https://mineru.net/apiManage> 创建，免费额度 1000 页/天，�
 ## 不要做的事
 
 - **不要主动读取 `input/raw/` 下的原始文件**（除非用户明确要求）。分析、写文档、追溯一律优先用 `input/converted/` 和 `input/INDEX.md`。原始文件（尤其 PDF / docx / xlsx）体积大、进上下文烧 token，且内容已由 `scripts/ingest.py` 转成可读文本——默认读转换产物即可。用户说「打开原件」「对照 raw 里的某某」「看一下原始 PDF」时才读 `input/raw/`。
+- **不要把 `测点主表.csv` 整个读进上下文**（动辄十几万行）。查测点走 `测点.sqlite` 的 SQL，只把命中的几十行拿回来；要看全局分布读 `_manifest.md`。
 - 不要修改或删除 `input/raw/` 里的任何文件。
 - 不要手改 `input/converted/` 的产物，改脚本或在 `output/analysis/` 里记录修正。
 - 不要在 `prototypes/` 下建文件。

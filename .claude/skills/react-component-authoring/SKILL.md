@@ -15,10 +15,10 @@ description: 在 aispace-kanban 中新建或重构 React 组件 / 面板 / 视�
 动手写之前按顺序查一遍,能复用就别造:
 
 1. **`components/Primitives.tsx`** —— `Stat`(统计块)、`SectionTitle`(带计数的小标题)、
-   `EmptyState`(空态)、`Row`(可点击列表行)。看板里 80% 的排版需求都在这四个里。
+   `EmptyState`(空态)、`Row`(可点击列表行)、`ListPager`(列表底部分页)。看板里 80% 的排版需求都在这里。
 2. **`components/ui/**`** —— startist registry copy-in 的通用件:
    `Button`(`primary|secondary|outline|ghost|danger|surface` × `sm|md|lg|icon`)、
-   `Badge`(`default|secondary|outline|muted` × `sm|md`)、`Input`、`Dialog`、`Tabs`、
+   `Badge`(`default|secondary|outline|muted` × `sm|md`)、`Input`、`Select`、`Dialog`、`Tabs`、
    `Tooltip`、`ScrollArea`。
 3. **registry 上有但本仓还没拉的** —— 用 `shadcn add` 拉,别手写第二遍:
    ```bash

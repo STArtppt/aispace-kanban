@@ -1,4 +1,6 @@
 import type { ReactNode } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 /** 统计数字块。层级靠边框和灰底，不靠阴影，不上彩色。 */
@@ -72,5 +74,57 @@ export function Row({
     >
       {children}
     </button>
+  );
+}
+
+/** 列表底部分页条：不足一页时不渲染。 */
+export function ListPager({
+  page,
+  pageSize,
+  total,
+  onPageChange,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  onPageChange: (page: number) => void;
+}) {
+  if (total <= pageSize) return null;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : page * pageSize + 1;
+  const to = Math.min(total, (page + 1) * pageSize);
+  return (
+    <div className="flex items-center justify-between gap-2 border-t border-border bg-muted/30 px-3 py-2">
+      <span className="text-xs text-muted-foreground">
+        第 {from}–{to} 项，共 {total} 项
+      </span>
+      <div className="flex items-center gap-1">
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={page <= 0}
+          aria-label="上一页"
+          onClick={() => onPageChange(Math.max(0, page - 1))}
+        >
+          <ChevronLeft className="size-3.5" />
+          上一页
+        </Button>
+        <span className="min-w-[4.5rem] text-center text-xs text-muted-foreground">
+          {page + 1} / {totalPages}
+        </span>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          disabled={page >= totalPages - 1}
+          aria-label="下一页"
+          onClick={() => onPageChange(Math.min(totalPages - 1, page + 1))}
+        >
+          下一页
+          <ChevronRight className="size-3.5" />
+        </Button>
+      </div>
+    </div>
   );
 }

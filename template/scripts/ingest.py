@@ -7,6 +7,7 @@ docx/odt/rtf → pandoc（顺带抽图）　　PDF/pptx → MinerU 在线 API（
 xlsx/xlsm → 每 sheet 一个 csv（自带 OOXML 解析）
 html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（不转 md 正文）
 纯文本 → 原样拷贝　　图片 → assets/
+**点表**（成百上千个同构小文件）→ 让给 scripts/pointtable.py 汇总成测点主表，本脚本不逐个转
 
 设计原则
 --------
@@ -104,6 +105,22 @@ def slugify(name: str) -> str:
 
 def has_cli(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+def is_pointtable(src: Path) -> bool:
+    """这个文件是不是该由 scripts/pointtable.py 处理的点表？
+
+    点表是成百上千个同构小文件，逐个转换没有意义（价值在汇总后可检索），
+    所以交给专门的 pointtable.py。这里复用它的格式探测，保证两边判断一致。
+    """
+    try:
+        import pointtable
+    except ImportError:
+        return False
+    try:
+        return pointtable.detect(src) is not None
+    except (OSError, ValueError):
+        return False
 
 
 def frontmatter(source: Path, digest: str, tool: str, extra: dict | None = None) -> str:
@@ -777,7 +794,11 @@ def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
     for src in files:
         ext = src.suffix.lower()
         slug = slugify(src.stem)
-        if ext in SPREADSHEET:
+        if is_pointtable(src):
+            # 点表由 scripts/pointtable.py 汇总成测点主表，这里让路：
+            # 否则 .xls 会刷一屏「老格式不支持」，分段型 .txt 会被当纯文本拷进 converted/。
+            out.append((src, "pointtable", Path()))
+        elif ext in SPREADSHEET:
             out.append((src, "spreadsheet", CONVERTED / slug))
         elif ext in HTML_PROTOTYPE:
             out.append((src, "html", CONVERTED / slug))
@@ -879,8 +900,13 @@ def main() -> int:
     records: list[dict] = []
     failures = 0
     deferred: list[tuple[Path, str, Path]] = []   # MinerU 的任务攒起来一批提交
+    pointtable_dirs: dict[str, int] = {}          # 点表按目录汇总，不逐个刷屏
     for src, how, target in tasks:
         rel = src.relative_to(REPO) if src.is_relative_to(REPO) else src
+        if how == "pointtable":
+            top = rel.parts[2] if len(rel.parts) > 2 else rel.name   # input/raw/<点表集>/...
+            pointtable_dirs[top] = pointtable_dirs.get(top, 0) + 1
+            continue
         if how == "legacy":
             log(f"⚠ 跳过 {rel}：老格式不受支持，请先另存为 .{LEGACY[src.suffix.lower()]}")
             records.append({"source": str(rel), "kind": src.suffix.lstrip("."), "target": "",
@@ -963,6 +989,17 @@ def main() -> int:
             log(f"✓ {rel}  →  {out.relative_to(REPO)}{img}")
             records.append({"source": str(rel), "kind": "mineru",
                             "target": str(out.relative_to(CONVERTED.parent)), "status": "✓ 已转换"})
+
+    for name, count in sorted(pointtable_dirs.items()):
+        converted = CONVERTED / slugify(name)
+        done = (converted / "_manifest.md").is_file()
+        log(f"· 点表 input/raw/{name}/：{count} 个文件交给 scripts/pointtable.py"
+            + ("" if done else "（尚未处理，请运行 python3 scripts/pointtable.py）"))
+        records.append({
+            "source": f"input/raw/{name}/", "kind": f"点表 ×{count}",
+            "target": f"converted/{slugify(name)}/_manifest.md" if done else "",
+            "status": "✓ 已汇总为测点主表" if done else "⚠ 待运行 pointtable.py",
+        })
 
     write_index(records)
     log(f"\n台账已更新：{INDEX.relative_to(REPO)}")
