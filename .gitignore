@@ -4,11 +4,14 @@ dist/
 *.local
 .env
 
-# template/ 里那套示例工作空间：只入库转换后的 md，原件和抽出的配图都不入库。
-# 原因有两个：原件 15MB、抽图另有 15MB，仓库扛不住；且配图是真实产品截图与真实地形影像，
-# 不适合公开。转换稿里对应位置已改成文字描述，看板预览和溯源链路都不受影响。
-# 想在本地复现完整转换：把原件放回 template/input/raw/ 后跑 scripts/ingest.py --force。
+# template/ 是空骨架，不带任何示例内容 —— 新建工作空间从它铺出来，
+# 带了示例就会跟着复制过去（init_workspace.py 的 render_project_yaml 就是拿它当骨架的）。
+# 完整示例改成 Releases 里的 zip 单独发。
+# 下面两条是防呆：本地往模板里丢资料试脚本时，别顺手提交进来。
 template/input/raw/*
 !template/input/raw/.gitkeep
 template/input/assets/*
 !template/input/assets/.gitkeep
+
+# 打给 Releases 的产物 + 示例资料原件（含真实截图，不入库）
+release/
