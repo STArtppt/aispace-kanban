@@ -5,7 +5,6 @@ import { SectionTitle, Stat } from '@/components/Primitives';
 import { Completeness, MetaView } from '@/components/MetaView';
 import type { FileItem, Scan } from '@/lib/api';
 import { formatRelative, formatWords } from '@/lib/format';
-import { cn } from '@/lib/utils';
 
 type Stage = { key: string; title: string; hint: string; done: boolean; current: boolean };
 
@@ -37,13 +36,10 @@ export function OverviewPanel({
   scan,
   onOpen,
   onGoto,
-  compact = false,
 }: {
   scan: Scan;
   onOpen: (item: FileItem) => void;
   onGoto: (view: 'input' | 'output' | 'prototypes') => void;
-  /** 预览打开时看板变窄，顶部卡片 2 列换行 */
-  compact?: boolean;
 }) {
   const stages = inferStages(scan);
   const { meta } = scan;
@@ -52,7 +48,8 @@ export function OverviewPanel({
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-col gap-1">
-        <h1 className={cn('font-display', compact ? 'text-xl' : 'text-2xl')}>{title}</h1>
+        {/* 标题字号固定：预览开合时不缩放，避免顶部高度跳动 */}
+        <h1 className="font-display text-2xl">{title}</h1>
         <p className="font-mono text-xs text-muted-foreground break-all">{scan.project.root}</p>
       </div>
 
@@ -60,12 +57,8 @@ export function OverviewPanel({
         <div className="rounded-lg border border-destructive/40 px-4 py-3 text-sm text-destructive">{meta.error}</div>
       ) : null}
 
-      <div
-        className={cn(
-          'grid gap-2 sm:gap-3',
-          compact ? 'grid-cols-2' : 'grid-cols-2 lg:grid-cols-4',
-        )}
-      >
+      {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
+      <div className="grid grid-cols-3 gap-2">
         {meta.stats ? (
           <Completeness meta={meta} />
         ) : (
@@ -81,11 +74,6 @@ export function OverviewPanel({
               : '资料侧没有待处理项'
           }
           tone={scan.input.stats.pending + scan.input.stats.warnings ? 'attention' : 'default'}
-        />
-        <Stat
-          label="最近更新"
-          value={scan.output.stats.lastUpdated ? formatRelative(scan.output.stats.lastUpdated) : '—'}
-          hint={scan.prototypes.items.length ? `${scan.prototypes.items.length} 个原型页面` : '还没有原型'}
         />
       </div>
 

@@ -225,8 +225,6 @@ export function DocumentToc({
     };
   }, []);
 
-  if (items.length < 2) return null;
-
   const scrollTo = (item: TocItem) => {
     const container = scrollContainerRef.current;
     const el = findHeadingEl(container, item);
@@ -245,52 +243,61 @@ export function DocumentToc({
     container.scrollTo({ top: Math.max(0, nextTop), behavior: 'smooth' });
   };
 
+  // 「目录」标题常驻；不足 2 个标题时显示空态，右轨宽度始终占位
+  const empty = items.length < 2;
+
   return (
     <nav
       aria-label="目录"
       className={cn('relative flex h-full min-h-0 w-full select-none flex-col py-1 text-sm', className)}
     >
       <div className="mb-3 shrink-0 pl-4 text-[13px] font-semibold text-foreground">目录</div>
-      <div className="pointer-events-none absolute top-[38px] bottom-2 left-0 w-0.5 rounded-full bg-border" />
+      {!empty ? (
+        <div className="pointer-events-none absolute top-[38px] bottom-2 left-0 w-0.5 rounded-full bg-border" />
+      ) : null}
 
-      <div
-        ref={listRef}
-        onScroll={markScrollActive}
-        className={cn(
-          'relative z-10 min-h-0 flex-1 overflow-y-auto pr-1',
-          '[scrollbar-width:thin]',
-          isScrolling
-            ? '[&::-webkit-scrollbar-thumb]:bg-muted-foreground/30'
-            : '[&::-webkit-scrollbar-thumb]:bg-transparent',
-        )}
-      >
-        <div className="relative flex flex-col gap-0.5 pb-4">
-          {items.map((item) => {
-            const isActive = activeId === item.id;
-            return (
-              <button
-                key={`${item.id}-${item.index}`}
-                type="button"
-                data-toc-id={item.id}
-                title={item.text}
-                onClick={() => scrollTo(item)}
-                className={cn(
-                  'relative w-full truncate py-1.5 pr-2 text-left text-xs transition-colors hover:text-foreground',
-                  isActive ? 'font-medium text-foreground' : 'text-muted-foreground',
-                  item.level === 1 && 'mt-0.5 pl-4 text-[13px]',
-                  item.level === 2 && 'pl-7',
-                  item.level >= 3 && 'pl-10',
-                )}
-              >
-                {isActive ? (
-                  <span className="absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
-                ) : null}
-                {item.text}
-              </button>
-            );
-          })}
+      {empty ? (
+        <p className="px-4 text-xs text-muted-foreground">暂无目录</p>
+      ) : (
+        <div
+          ref={listRef}
+          onScroll={markScrollActive}
+          className={cn(
+            'relative z-10 min-h-0 flex-1 overflow-y-auto pr-1',
+            '[scrollbar-width:thin]',
+            isScrolling
+              ? '[&::-webkit-scrollbar-thumb]:bg-muted-foreground/30'
+              : '[&::-webkit-scrollbar-thumb]:bg-transparent',
+          )}
+        >
+          <div className="relative flex flex-col gap-0.5 pb-4">
+            {items.map((item) => {
+              const isActive = activeId === item.id;
+              return (
+                <button
+                  key={`${item.id}-${item.index}`}
+                  type="button"
+                  data-toc-id={item.id}
+                  title={item.text}
+                  onClick={() => scrollTo(item)}
+                  className={cn(
+                    'relative w-full truncate py-1.5 pr-2 text-left text-xs transition-colors hover:text-foreground',
+                    isActive ? 'font-medium text-foreground' : 'text-muted-foreground',
+                    item.level === 1 && 'mt-0.5 pl-4 text-[13px]',
+                    item.level === 2 && 'pl-7',
+                    item.level >= 3 && 'pl-10',
+                  )}
+                >
+                  {isActive ? (
+                    <span className="absolute top-1/2 left-0 h-4 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
+                  ) : null}
+                  {item.text}
+                </button>
+              );
+            })}
+          </div>
         </div>
-      </div>
+      )}
     </nav>
   );
 }

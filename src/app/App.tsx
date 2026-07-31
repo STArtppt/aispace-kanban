@@ -30,6 +30,57 @@ import { cn } from '@/lib/utils';
 
 type View = 'overview' | 'input' | 'output' | 'prototypes';
 
+/** 预览挂载/离场时长，需与下方 transition duration 一致 */
+const PREVIEW_MOTION_MS = 320;
+/** 宽屏断点（与 Tailwind min-[900px] 对齐） */
+const WIDE_MQ = '(min-width: 900px)';
+/** 宽屏有预览时看板宽 = 2× 侧栏 w-56 */
+const BOARD_COMPACT = '28rem';
+
+/**
+ * 控制预览进出场：关闭时先播离场再卸载，切换文档时只换内容不重播。
+ * visible 只驱动看板 width；预览用 flex-1 吃剩余空间，由浏览器逐帧填满，避免 JS 设双宽度打架。
+ */
+function usePreviewPresence(openFile: FileItem | null) {
+  const [mountedFile, setMountedFile] = useState<FileItem | null>(openFile);
+  const [visible, setVisible] = useState(Boolean(openFile));
+
+  useEffect(() => {
+    if (openFile) {
+      setMountedFile(openFile);
+      // 双 rAF：先以「看板 100% + 预览 0」挂载，再切到打开态，width transition 才能触发
+      let inner = 0;
+      const outer = requestAnimationFrame(() => {
+        inner = requestAnimationFrame(() => setVisible(true));
+      });
+      return () => {
+        cancelAnimationFrame(outer);
+        cancelAnimationFrame(inner);
+      };
+    }
+    setVisible(false);
+    const t = window.setTimeout(() => setMountedFile(null), PREVIEW_MOTION_MS);
+    return () => window.clearTimeout(t);
+  }, [openFile]);
+
+  return { mountedFile, visible };
+}
+
+/** 宽屏断点（与 Tailwind min-[900px] 对齐） */
+function useIsWide() {
+  const [wide, setWide] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia(WIDE_MQ).matches : true,
+  );
+  useEffect(() => {
+    const mq = window.matchMedia(WIDE_MQ);
+    const onChange = () => setWide(mq.matches);
+    onChange();
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  return wide;
+}
+
 const NAV: { key: View; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'overview', label: '概览', icon: LayoutDashboard },
   { key: 'input', label: '输入资料', icon: FolderInput },
@@ -176,7 +227,11 @@ function SidebarBody({
   return (
     <>
       <div className="flex items-center justify-between px-1">
-        <span className="font-display text-base">工作空间看板</span>
+        <span className="flex min-w-0 items-center gap-1.5">
+          {/* 黑字 logo：深色模式反相成白字，避免融进背景 */}
+          <img src="/logo-ai.png" alt="" className="h-5 w-auto shrink-0 dark:invert" />
+          <span className="font-display truncate text-base">工作空间看板</span>
+        </span>
         <div className="flex items-center gap-0.5">
           <Button variant="ghost" size="icon" title="切换主题" onClick={toggleTheme}>
             {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
@@ -275,25 +330,35 @@ export default function App() {
   const { scan, loading, error, reload, refreshedAt } = useScan(activeId);
   const [view, setView] = useState<View>('overview');
   const [openFile, setOpenFile] = useState<FileItem | null>(null);
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const [settingsFor, setSettingsFor] = useState<Project | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const { dark, toggle } = useTheme();
+  const { mountedFile, visible: previewVisible } = usePreviewPresence(openFile);
+  const isWide = useIsWide();
+  // 布局侧：真正打开中（含离场动画期）
+  const previewActive = Boolean(mountedFile);
 
   useEffect(() => {
     setOpenFile(null);
+    setPreviewExpanded(false);
   }, [activeId]);
 
-  // 窄屏浮层打开时锁住背景滚动
+  // 预览卸载后再清展开态，避免离场途中侧栏/看板突然弹回
   useEffect(() => {
-    if (!openFile && !navOpen) return;
-    const mq = window.matchMedia('(max-width: 899px)');
-    if (!mq.matches) return;
+    if (!mountedFile) setPreviewExpanded(false);
+  }, [mountedFile]);
+
+  // 窄屏浮层打开时锁住背景滚动（含离场动画期）
+  useEffect(() => {
+    if (!previewActive && !navOpen) return;
+    if (isWide) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [openFile, navOpen]);
+  }, [previewActive, navOpen, isWide]);
 
   const afterRegistryChange = async () => {
     await reloadProjects();
@@ -359,28 +424,21 @@ export default function App() {
       {scan && scan.available !== false ? (
         <>
           {view === 'overview' ? (
-            <OverviewPanel
-              scan={scan}
-              onOpen={setOpenFile}
-              onGoto={setView}
-              compact={Boolean(openFile)}
-            />
+            <OverviewPanel scan={scan} onOpen={setOpenFile} onGoto={setView} />
           ) : null}
           {view === 'input' ? (
             <InputPanel
               scan={scan}
               projectId={activeId}
-              openPath={openFile?.path || ''}
+              openPath={openFile?.path || mountedFile?.path || ''}
               onOpen={setOpenFile}
-              compact={Boolean(openFile)}
             />
           ) : null}
           {view === 'output' ? (
             <OutputPanel
               scan={scan}
-              openPath={openFile?.path || ''}
+              openPath={openFile?.path || mountedFile?.path || ''}
               onOpen={setOpenFile}
-              compact={Boolean(openFile)}
             />
           ) : null}
           {view === 'prototypes' ? <PrototypePanel prototypes={scan.prototypes} /> : null}
@@ -393,11 +451,21 @@ export default function App() {
     /*
       布局契约（只认 900px 一个断点；类名必须是完整字面量，否则 Tailwind 扫不到）：
         宽屏 ≥900：侧栏(w-56) | 看板(有预览时 2×侧栏 = w-[28rem]) | 预览(flex-1)
+                  预览「向左展开」后：侧栏+看板收为 0，预览占满
+                  进出场：看板与预览宽度像素联动（同步压缩/伸开）
         窄屏 <900：顶栏 + 看板全屏；侧栏抽屉；预览全屏浮层
     */
     <div className="flex h-dvh w-full max-w-[100vw] overflow-hidden">
-      {/* ── 宽屏固定侧栏 ── */}
-      <nav className="hidden h-full w-56 shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-muted/30 px-3 py-4 min-[900px]:flex">
+      {/* ── 宽屏固定侧栏（展开全屏时收宽；勿在内层再写死 w-56，会把 px 内边距挤爆） ── */}
+      <nav
+        className={cn(
+          'hidden h-full shrink-0 flex-col gap-4 border-r border-border bg-muted/30 min-[900px]:flex',
+          'transition-[width,padding,opacity,border-color] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
+          previewActive && previewExpanded
+            ? 'pointer-events-none w-0 overflow-hidden border-transparent py-4 opacity-0'
+            : 'w-56 overflow-y-auto px-3 py-4 opacity-100',
+        )}
+      >
         <SidebarBody {...sidebarProps} />
       </nav>
 
@@ -429,41 +497,72 @@ export default function App() {
           </Button>
         </header>
 
-        {/* 看板 + 预览行 */}
+        {/*
+          看板 + 预览行（宽屏）：
+            只动画看板 width（100% ↔ 28rem ↔ 0），预览用 flex-1 吃剩余——
+            由浏览器在 CSS 动画每一帧自动填满，不再用 ResizeObserver 双边设宽（易跳闪）。
+          窄屏：预览 fixed 浮层，看板隐藏。
+        */}
         <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
-          {/*
-            看板：
-              无预览 → flex-1 全宽
-              有预览 + 宽屏 → 2×侧栏宽（w-56 × 2 = 28rem）
-              有预览 + 窄屏 → 隐藏（浮层预览盖住）
-          */}
           <section
             className={cn(
-              'min-h-0 min-w-0 overflow-hidden',
-              openFile
-                ? 'hidden w-[28rem] shrink-0 min-[900px]:flex min-[900px]:flex-col'
-                : 'flex min-w-0 flex-1 flex-col',
+              'flex min-h-0 min-w-0 flex-col overflow-hidden',
+              'transition-[width,opacity] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
+              // 窄屏有预览：让位给浮层
+              !isWide && previewActive && 'hidden',
+              !isWide && !previewActive && 'min-w-0 flex-1',
+              // 宽屏无预览
+              isWide && !previewActive && 'min-w-0 flex-1',
+              // 宽屏有预览：width 走 style 插值；展开时淡出
+              isWide && previewActive && 'shrink-0',
+              isWide && previewActive && previewVisible && previewExpanded && 'pointer-events-none opacity-0',
             )}
+            style={
+              // 只动画看板 width；预览 flex-1 自动吃剩余，避免双边 JS 设宽跳闪
+              isWide && previewActive
+                ? {
+                    width: !previewVisible ? '100%' : previewExpanded ? 0 : BOARD_COMPACT,
+                  }
+                : undefined
+            }
           >
             <ScrollArea
               className="h-full min-h-0 w-full"
-              viewportClassName={cn(
-                'px-4 py-4',
-                openFile ? 'sm:px-4 sm:py-4' : 'sm:px-6 sm:py-5 lg:px-8 lg:py-6',
-              )}
+              // 内边距固定：不随预览开合切换 sm/lg 档，避免顶部空白突变导致整页跳动
+              viewportClassName="px-4 py-4 sm:px-5 sm:py-4"
             >
               {boardContent}
             </ScrollArea>
           </section>
 
-          {/*
-            预览：
-              窄屏 → fixed 全屏浮层
-              宽屏 → 文档流内 flex-1 占剩余宽度
-          */}
-          {openFile ? (
-            <section className="fixed inset-0 z-30 flex min-h-0 min-w-0 flex-col overflow-hidden bg-background min-[900px]:static min-[900px]:z-auto min-[900px]:flex-1">
-              <Reader projectId={activeId} item={openFile} onClose={() => setOpenFile(null)} />
+          {mountedFile ? (
+            <section
+              className={cn(
+                'flex min-h-0 min-w-0 flex-col overflow-hidden bg-background',
+                // 窄屏浮层
+                !isWide && [
+                  'fixed inset-0 z-30',
+                  'transition-[opacity,transform] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
+                  previewVisible
+                    ? 'translate-y-0 opacity-100'
+                    : 'pointer-events-none translate-y-3 opacity-0',
+                ],
+                // 宽屏：可见时 flex-1 吃剩余；关闭态 w-0，不抢空间
+                isWide && [
+                  'transition-[opacity] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
+                  previewVisible
+                    ? 'min-w-0 flex-1 opacity-100'
+                    : 'w-0 min-w-0 shrink-0 grow-0 opacity-0',
+                ],
+              )}
+            >
+              <Reader
+                projectId={activeId}
+                item={mountedFile}
+                onClose={() => setOpenFile(null)}
+                expanded={previewExpanded}
+                onToggleExpand={() => setPreviewExpanded((v) => !v)}
+              />
             </section>
           ) : null}
         </div>

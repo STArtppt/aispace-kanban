@@ -18,30 +18,31 @@ export function OutputPanel({
   scan,
   openPath,
   onOpen,
-  compact = false,
 }: {
   scan: Scan;
   openPath: string;
   onOpen: (item: FileItem) => void;
-  /** 预览打开时看板变窄，顶部卡片 2 列换行 */
-  compact?: boolean;
 }) {
   const { output } = scan;
 
   return (
     <div className="flex flex-col gap-6">
-      <div
-        className={
-          compact ? 'grid grid-cols-2 gap-2 sm:gap-3' : 'grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4'
-        }
-      >
+      {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
+      <div className="grid grid-cols-3 gap-2">
         <Stat label="产出文件" value={output.stats.total} hint={formatWords(output.stats.words)} />
         <Stat label="分析产物" value={output.stats.analysis} />
-        <Stat label="交付文档" value={output.stats.docs} />
         <Stat
-          label="最近更新"
-          value={output.stats.lastUpdated ? formatRelative(output.stats.lastUpdated) : '—'}
-          hint={output.stats.decisions ? `${output.stats.decisions} 条决策记录` : '还没有决策记录'}
+          label="交付文档"
+          value={output.stats.docs}
+          hint={
+            output.stats.lastUpdated
+              ? `更新于 ${formatRelative(output.stats.lastUpdated)}${
+                  output.stats.decisions ? ` · ${output.stats.decisions} 条决策` : ''
+                }`
+              : output.stats.decisions
+                ? `${output.stats.decisions} 条决策记录`
+                : undefined
+          }
         />
       </div>
 

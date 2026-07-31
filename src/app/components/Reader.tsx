@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
-import { ChevronDown, ChevronRight, FolderOpen, SquareArrowOutUpRight, X } from 'lucide-react';
+import {
+  ArrowLeftToLine,
+  ArrowRightFromLine,
+  ChevronDown,
+  ChevronRight,
+  FolderOpen,
+  SquareArrowOutUpRight,
+  X,
+} from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -217,10 +225,16 @@ export function Reader({
   projectId,
   item,
   onClose,
+  expanded = false,
+  onToggleExpand,
 }: {
   projectId: string;
   item: FileItem;
   onClose: () => void;
+  /** 宽屏下预览是否已向左展开至主区全宽 */
+  expanded?: boolean;
+  /** 宽屏提供；窄屏预览本就是全屏，不传则不显示展开按钮 */
+  onToggleExpand?: () => void;
 }) {
   const sheets = useMemo(() => {
     if (isConverted(item) && item.sheets?.length) {
@@ -273,16 +287,40 @@ export function Reader({
     setTocState({ path: item.path, items: [] });
   }
   const tocItems = mode === 'markdown' && tocState.path === item.path ? tocState.items : [];
-  const showToc = tocItems.length >= 2;
 
   return (
-    <aside className="flex h-full min-h-0 min-w-0 flex-col border-l border-border bg-background max-[899px]:border-l-0">
+    <aside
+      className={cn(
+        'flex h-full min-h-0 min-w-0 flex-col bg-background max-[899px]:border-l-0',
+        // 展开全屏后去掉左分割线
+        expanded ? 'border-l-0' : 'border-l border-border',
+        'transition-[border-color] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
+      )}
+    >
       <header className="flex shrink-0 items-start gap-2 border-b border-border px-3 py-3 sm:px-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="truncate text-sm font-medium">{item.title || item.name}</span>
           <span className="truncate font-mono text-[11px] text-muted-foreground">{item.path}</span>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          {onToggleExpand ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              // 窄屏本就是全屏浮层，展开无意义
+              className="hidden min-[900px]:inline-flex"
+              title={expanded ? '向右收起' : '向左展开'}
+              aria-label={expanded ? '向右收起' : '向左展开'}
+              aria-pressed={expanded}
+              onClick={onToggleExpand}
+            >
+              {expanded ? (
+                <ArrowRightFromLine className="size-4" />
+              ) : (
+                <ArrowLeftToLine className="size-4" />
+              )}
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
@@ -298,15 +336,20 @@ export function Reader({
       </header>
 
       {/*
-        markdown：正文可滚 + 右侧固定目录（不随正文翻滚，对齐 pentou）
-        其它类型：整块 ScrollArea
+        markdown：正文可滚 + 右侧目录
+        目录 absolute 贴预览右缘：展开/收起时位置固定，不参与 flex 分宽（避免左右摇摆）
+        宽屏 markdown 始终预留右轨，避免标题解析后目录突然出现把正文挤一下
       */}
       {mode === 'markdown' ? (
-        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
           <div
             ref={mdScrollRef}
             data-reader-scroll
-            className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5"
+            className={cn(
+              'h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5',
+              // 与目录轨同宽，加载前后布局高度/宽度稳定
+              'min-[900px]:pr-[calc(200px+0.75rem)] xl:pr-[calc(220px+0.75rem)]',
+            )}
           >
             {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
@@ -324,17 +367,16 @@ export function Reader({
             ) : null}
           </div>
 
-          {showToc ? (
-            <div
-              className={cn(
-                // 预览面板够宽才显示；与正文之间不画分割线
-                'hidden h-full min-h-0 w-[200px] shrink-0 flex-col bg-background px-3 py-4 xl:w-[220px]',
-                'min-[900px]:flex',
-              )}
-            >
-              <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
-            </div>
-          ) : null}
+          {/* 宽屏常驻右轨：「目录」标题始终在；无标题时 DocumentToc 内显示「暂无目录」 */}
+          <div
+            className={cn(
+              // 贴右绝对定位：预览变宽时右缘不动，目录不跟着正文 reflow 摇摆
+              'absolute inset-y-0 right-0 hidden w-[200px] flex-col bg-background px-3 py-4 xl:w-[220px]',
+              'min-[900px]:flex',
+            )}
+          >
+            <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
+          </div>
         </div>
       ) : (
         <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
