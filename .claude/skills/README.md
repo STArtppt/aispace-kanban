@@ -43,6 +43,9 @@
 - `project-conventions` —— 目录 / 命名 / 别名 / 平面边界 / 提交前清单
 - `react-component-authoring` —— 新建或重构 React 组件
 - `design-tokens` —— 令牌、主题、"orange 只给需要注意"的配色硬约束
+- `design-system-loop` —— 与上游 [startist-ui](../../../startist-ui) 的消费闭环:
+  `shadcn add` 的来源与命令、vendored 快照不可 fork、缺口回流真源再 re-add
+  (真源侧有对称技能 `startist-ui/skills/design-system-loop/`,两端契约一致)
 
 **上游方法论适配(精选子集,本地化改写 —— 非整包引入):**
 

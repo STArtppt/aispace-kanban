@@ -20,12 +20,8 @@ description: 在 aispace-kanban 中新建或重构 React 组件 / 面板 / 视�
    `Button`(`primary|secondary|outline|ghost|danger|surface` × `sm|md|lg|icon`)、
    `Badge`(`default|secondary|outline|muted` × `sm|md`)、`Input`、`Select`、`Dialog`、`Tabs`、
    `Tooltip`、`ScrollArea`。
-3. **registry 上有但本仓还没拉的** —— 用 `shadcn add` 拉,别手写第二遍:
-   ```bash
-   cd ../startist-ui && npm run registry:build
-   python3 -m http.server 5199 --directory public &      # 临时喂给 shadcn
-   cd ../aispace-kanban && npx shadcn@latest add @startist/<组件名> --yes
-   ```
+3. **registry 上有但本仓还没拉的**(`drawer` / `confirm-dialog` / `field` / `switch` …)
+   —— 用 `shadcn add` 拉,别手写第二遍。add 的来源、命令与注意事项见 [[design-system-loop]]。
    **`components/ui/**` 是 vendored 快照**:不做与上游分叉的语义修改
    (透传 `className` 做局部微调可以)。需要改行为就上行改 startist-ui。
 

@@ -182,6 +182,7 @@ aispace-kanban/
 | [`disciplined-coding`](.claude/skills/disciplined-coding/SKILL.md) | 写第一行代码前:先想再写、最小实现 |
 | [`react-component-authoring`](.claude/skills/react-component-authoring/SKILL.md) | 新建或重构 React 组件 |
 | [`design-tokens`](.claude/skills/design-tokens/SKILL.md) | 动颜色 / 字体 / 间距 / 主题 |
+| [`design-system-loop`](.claude/skills/design-system-loop/SKILL.md) | 从 startist-ui 拉 / 升级组件、发现缺口回流真源 |
 | [`systematic-debugging`](.claude/skills/systematic-debugging/SKILL.md) | 查 bug、构建报错、行为不符预期 |
 | [`verification-before-completion`](.claude/skills/verification-before-completion/SKILL.md) | 准备说「做完了」之前 |
 
