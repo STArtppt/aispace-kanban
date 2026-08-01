@@ -15,6 +15,7 @@ import {
   suggestRelinkCandidates,
   updateProject,
 } from './config.mjs';
+import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { probeOrigin, scanPrototypes } from './prototypes.mjs';
 import { scanWorkspace } from './scan.mjs';
 
@@ -123,14 +124,10 @@ async function readCsvPage(abs, { offset = 0, limit = 50 } = {}) {
   };
 }
 
-/** 跑模板仓的初始化脚本，把它的 JSON 输出捞回来。 */
-function runInit(templateRoot, name, target) {
+/** 用指定解释器跑一次初始化脚本。解释器不在 PATH 上时返回 missing，交给外层换下一个。 */
+function runInitOnce(bin, args, cwd) {
   return new Promise((resolve) => {
-    const child = spawn(
-      'python3',
-      [path.join(templateRoot, 'scripts', 'init_workspace.py'), '--name', name, '--path', target, '--json'],
-      { cwd: templateRoot },
-    );
+    const child = spawn(bin, args, { cwd });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => {
@@ -139,7 +136,10 @@ function runInit(templateRoot, name, target) {
     child.stderr.on('data', (chunk) => {
       stderr += chunk;
     });
-    child.on('error', (err) => resolve({ ok: false, error: `启动初始化脚本失败：${err.message}` }));
+    child.on('error', (err) => {
+      if (err.code === 'ENOENT') return resolve({ missing: true });
+      resolve({ ok: false, error: `启动初始化脚本失败：${err.message}` });
+    });
     child.on('close', () => {
       try {
         const parsed = JSON.parse(stdout.trim() || stderr.trim());
@@ -149,6 +149,20 @@ function runInit(templateRoot, name, target) {
       }
     });
   });
+}
+
+/** 跑模板仓的初始化脚本，把它的 JSON 输出捞回来。解释器名各平台不同，挨个试。 */
+async function runInit(templateRoot, name, target) {
+  const script = [path.join(templateRoot, 'scripts', 'init_workspace.py'), '--name', name, '--path', target, '--json'];
+  for (const [bin, ...prefix] of PYTHON_CANDIDATES) {
+    const result = await runInitOnce(bin, [...prefix, ...script], templateRoot);
+    if (!result.missing) return result;
+  }
+  return {
+    ok: false,
+    error: '找不到 Python 3。新建工作空间要靠模板的 init_workspace.py，'
+      + '请先装 Python 3（Windows 装完用 py 或 python，macOS / Linux 用 python3），再试一次。',
+  };
 }
 
 function requireProject(id) {
@@ -199,11 +213,22 @@ function serveStatic(req, res, urlPath) {
   fs.createReadStream(abs).pipe(res);
 }
 
+/** 路径段可能是百分号编码的 —— 项目 id 取自目录名，中文目录很常见。坏编码就按原样用。 */
+function decodeSegment(segment) {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 async function handleApi(req, res, url) {
-  const segments = url.pathname.split('/').filter(Boolean).slice(1); // 去掉 'api'
+  const segments = url.pathname.split('/').filter(Boolean).slice(1).map(decodeSegment); // 去掉 'api'
   const [head, id, action] = segments;
 
-  if (head === 'health') return json(res, 200, { ok: true });
+  // platform 给前端定文案用（"在访达中显示" 还是 "在文件资源管理器中显示"）——
+  // 定位动作发生在**服务所在的机器**上，所以不能拿浏览器的 navigator 判断。
+  if (head === 'health') return json(res, 200, { ok: true, platform: process.platform });
 
   if (head === 'projects' && !id) {
     if (req.method === 'GET') {
@@ -334,11 +359,7 @@ async function handleApi(req, res, url) {
     const body = await readBody(req);
     const abs = resolveInside(project.root, body.path);
     if (!fs.existsSync(abs)) return json(res, 404, { error: '文件不存在' });
-    const args = body.mode === 'open' ? [abs] : ['-R', abs];
-    if (process.platform !== 'darwin') {
-      return json(res, 501, { error: '这个功能目前只在 macOS 上可用', path: abs });
-    }
-    spawn('open', args, { detached: true, stdio: 'ignore' }).unref();
+    revealInSystem(abs, body.mode);
     return json(res, 200, { ok: true, path: abs });
   }
 

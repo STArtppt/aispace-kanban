@@ -7,26 +7,53 @@ PM 接手项目工作空间（模板见 [`template/`](./template)）的**只读�
 
 ## 用法
 
+一条命令起服务，浏览器会自动打开（macOS / Windows / Linux 都一样，只要有 **Node.js ≥ 20**）：
+
+```bash
+npx -y @startist/aispace-kanban@latest
+```
+
+然后在界面上「添加工作空间」指一个目录就行。也可以用命令登记：
+
+```bash
+npx -y @startist/aispace-kanban@latest add ~/work/某个工作空间
+npx -y @startist/aispace-kanban@latest list
+```
+
+serve 的选项：`--port <n>`（默认 5180，被占用时自动往上顺延至多 10 个）、
+`--host <addr>`（默认 127.0.0.1，只有本机能连）、`--no-open`（不自动开浏览器）。
+
+只有「新建工作空间」这一个功能要 **Python 3**（它调模板的 `init_workspace.py`）——
+Windows 上装完能跑 `py` 或 `python`，macOS / Linux 上是 `python3`。不用这个功能可以不装。
+
+<details>
+<summary>从源码跑</summary>
+
 ```bash
 pnpm install
 pnpm build                                  # 构建前端（首次必须）
 
 node bin/cli.mjs add ~/work/某个工作空间     # 登记一个工作空间
-node bin/cli.mjs list                       # 看已登记的
 node bin/cli.mjs serve                      # 起服务 → http://localhost:5180
 ```
 
-登记条目认的是**目录绝对路径**。在访达里改了文件夹名或挪了位置，看板就扫不到内容了 ——
-侧栏那条会标上橙色警告，点进去填新路径即可（也可以 `node bin/cli.mjs relink <id> <新目录>`）。
+开发时用 `pnpm dev`：同时起接口服务（5180）和 Vite（5181），改前端代码即时热更，
+浏览器开 <http://localhost:5181>（dev 模式不自动开浏览器，因为 Vite 还要几秒才起得来）。
+
+打包发布：`pnpm build:npm && pnpm pack:npm && pnpm smoke:npm`（最后一步在干净目录
+装上真跑一遍）。推 `v*` tag 由 CI 自动发 npm —— 完整流程见 [`docs/发布与CI.md`](./docs/发布与CI.md)。
+
+</details>
+
+登记条目认的是**目录绝对路径**。在文件管理器里改了文件夹名或挪了位置，看板就扫不到内容了 ——
+侧栏那条会标上橙色警告，点进去填新路径即可（也可以 `relink <id> <新目录>`）。
 `id`、显示名、登记时间都保留，不用重新加一遍。
 
 不想在看板里看到某个工作空间（比如已归档），在设置弹窗里「移出看板」。
 **只删登记信息，本地目录和文件一个都不动。**
 
-开发时用 `pnpm dev`：同时起接口服务（5180）和 Vite（5181），改前端代码即时热更，
-浏览器开 <http://localhost:5181>。
-
-登记信息存在 `~/.pmwork/dashboard/projects.json`（和 Axhub Make 的 `~/.axhub/make/projects.json` 一个套路）。
+登记信息存在 `~/.pmwork/dashboard/projects.json`（Windows 在 `%USERPROFILE%\.pmwork\`，
+和 Axhub Make 的 `~/.axhub/make/projects.json` 一个套路）。
 
 ## 想先看看长什么样
 
@@ -48,7 +75,8 @@ node bin/cli.mjs serve                      # 起服务 → http://localhost:518
 | 原型 | 自动读 `prototypes/.axhub/`，列出 Axhub Make 里的原型并跳转 |
 
 内置阅读器支持 Markdown（frontmatter 折叠成溯源条、相对图片路径自动解析）、CSV 表格、图片；
-docx/PDF/xlsx 这类原始格式不在网页里渲染，点「用默认程序打开」或「在访达中显示」交给系统。
+docx/PDF/xlsx 这类原始格式不在网页里渲染，点「用默认程序打开」或「在访达 / 文件资源管理器中显示」
+交给系统（按钮文案跟着服务所在的操作系统走）。
 
 ## 它怎么拿到数据
 

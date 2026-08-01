@@ -13,6 +13,7 @@ import {
   DialogBackdrop,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { useFileManagerName } from '@/hooks/useFileManager';
 import { api, type Project, type RelinkCandidate } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -40,6 +41,7 @@ export function WorkspaceDialog({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState(false);
+  const fileManager = useFileManagerName();
 
   // 每次打开都从当前登记信息重置，避免上一次的半截编辑残留
   useEffect(() => {
@@ -107,7 +109,7 @@ export function WorkspaceDialog({
                 className="h-9 font-mono text-xs"
               />
               <span className="text-[11px] text-muted-foreground">
-                在访达里改了文件夹名或挪了位置，把新路径填这里就能接回来。历史记录和当前选中状态都保留。
+                在{fileManager}里改了文件夹名或挪了位置，把新路径填这里就能接回来。历史记录和当前选中状态都保留。
               </span>
             </label>
 
@@ -183,6 +185,7 @@ export function UnavailableWorkspace({
   onRelinked: () => void;
 }) {
   const [candidates, setCandidates] = useState<RelinkCandidate[]>([]);
+  const fileManager = useFileManagerName();
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
@@ -221,7 +224,7 @@ export function UnavailableWorkspace({
             <h2 className="text-sm font-medium">「{project.name}」的目录找不到了</h2>
             <p className="mt-1 text-xs text-muted-foreground">
               {reasons.length ? reasons.join('、') : '目录不存在'}
-              —— 多半是在访达里改了文件夹名，或者把它挪到别处了。看板只按登记的绝对路径找工作空间，
+              —— 多半是在{fileManager}里改了文件夹名，或者把它挪到别处了。看板只按登记的绝对路径找工作空间，
               路径变了就得告诉它新位置。
             </p>
             <p className="mt-2 break-all font-mono text-[11px] text-muted-foreground">

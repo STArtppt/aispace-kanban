@@ -22,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
+import { useFileManagerName } from '@/hooks/useFileManager';
 import { api, type ConvertedItem, type FileItem } from '@/lib/api';
 import { formatBytes, formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -447,6 +448,7 @@ export function Reader({
   /** 宽屏提供；窄屏预览本就是全屏，不传则不显示展开按钮 */
   onToggleExpand?: () => void;
 }) {
+  const fileManager = useFileManagerName();
   const sheets = useMemo(() => {
     if (isConverted(item) && item.sheets?.length) {
       return item.sheets.map((s) => ({ path: s.path, name: s.name, size: s.size }));
@@ -555,7 +557,7 @@ export function Reader({
           <Button
             variant="ghost"
             size="icon"
-            title="在访达中显示"
+            title={`在${fileManager}中显示`}
             onClick={() => void api.reveal(projectId, item.path)}
           >
             <FolderOpen className="size-4" />
@@ -735,7 +737,7 @@ export function Reader({
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => void api.reveal(projectId, htmlPath)}>
                           <FolderOpen className="size-3.5" />
-                          在访达中显示
+                          在{fileManager}中显示
                         </Button>
                       </div>
                     </div>
@@ -771,7 +773,7 @@ export function Reader({
                 </Button>
                 <Button variant="ghost" size="sm" onClick={() => void api.reveal(projectId, item.path)}>
                   <FolderOpen className="size-3.5" />
-                  在访达中显示
+                  在{fileManager}中显示
                 </Button>
               </div>
             </div>

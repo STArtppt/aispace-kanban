@@ -151,6 +151,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  /**
+   * platform 是服务**所在机器**的 process.platform，用来定「在访达中显示」这类文案。
+   * 可选：老服务进程不返回它，缺了就按 macOS 的说法走（改动前的行为）。
+   */
+  health: () => request<{ ok: boolean; platform?: string }>('/api/health'),
   projects: () => request<{ projects: Project[]; activeProjectId: string }>('/api/projects'),
   addProject: (root: string, name?: string) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ root, name }) }),

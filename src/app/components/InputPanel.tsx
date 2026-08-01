@@ -3,6 +3,7 @@ import { AppWindow, FileText, FolderOpen, Image, Search, Table } from 'lucide-re
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { EmptyState, ListPager, Row, SectionTitle, Stat } from '@/components/Primitives';
+import { useFileManagerName } from '@/hooks/useFileManager';
 import { api, type ConvertedItem, type FileItem, type Scan } from '@/lib/api';
 import { formatBytes, formatRelative, formatWords } from '@/lib/format';
 
@@ -65,6 +66,7 @@ function PendingList({
 }) {
   const { page, setPage } = useListPage(items.length, LIST_PAGE_SIZE, String(items.length));
   const pageItems = items.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
+  const fileManager = useFileManagerName();
 
   return (
     <div className="overflow-hidden rounded-lg border border-border">
@@ -78,7 +80,7 @@ function PendingList({
           <span
             role="button"
             tabIndex={-1}
-            title="在访达中显示"
+            title={`在${fileManager}中显示`}
             className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
             onClick={(event) => {
               event.stopPropagation();

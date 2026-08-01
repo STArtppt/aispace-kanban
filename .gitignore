@@ -1,5 +1,8 @@
 node_modules/
 dist/
+# npm 组包暂存目录（scripts/build-npm-package.mjs 每次重建）
+npm-package/
+*.tgz
 .DS_Store
 *.local
 .env

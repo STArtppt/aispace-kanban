@@ -39,7 +39,9 @@
 - 包管理器 **pnpm**;**无 ESLint、无测试框架**(闸门见第 4 节)
 
 引入新依赖前先确认:它是给前端平面还是服务端平面用?给服务端用的必须进 `dependencies`
-(`bin/` 会被当 CLI 直接跑,拿不到 devDependencies)。
+(`bin/` 会被当 CLI 直接跑,拿不到 devDependencies)。发 npm 包时
+`scripts/build-npm-package.mjs` **按 `src/server` + `bin` 的 import 图重算依赖**,
+服务端引了不在 `dependencies` 里的包,组包会直接报错拦下。
 
 ---
 
@@ -55,7 +57,8 @@ aispace-kanban/
 │   │   ├── scan.mjs        #   工作空间扫描 → 结构化 JSON(只读)
 │   │   ├── meta.mjs        #   project.yaml 解析 + 完整度统计
 │   │   ├── frontmatter.mjs #   frontmatter / 标题 / 字数
-│   │   └── prototypes.mjs  #   读 prototypes/.axhub/ → 原型清单
+│   │   ├── prototypes.mjs  #   读 prototypes/.axhub/ → 原型清单
+│   │   └── platform.mjs    #   ★ 三平台差异只写在这:开浏览器 / 定位文件 / 找 python
 │   └── app/                # 平面 3 · 前端 SPA(TS,`@/` 指向这里)
 │       ├── App.tsx         #   外壳:侧栏 + 四视图路由 + 主题
 │       ├── components/     #   业务面板(*Panel.tsx)、阅读器、通用小件
@@ -63,6 +66,10 @@ aispace-kanban/
 │       ├── hooks/          #   useProjects / useScan(含 SSE 订阅)
 │       ├── lib/api.ts      #   ★ 前后端契约:接口封装 + 全部响应类型
 │       └── styles/globals.css  # ★ 设计令牌唯一源头
+├── scripts/                # 平面外 · 仓库工具
+│   ├── build-npm-package.mjs  #   组 npm 包(pnpm build:npm),产出 npm-package/
+│   └── smoke-package.mjs      #   ★ 装包冒烟(pnpm smoke:npm),CI 三平台跑的就是它
+├── .github/workflows/      # 平面外 · CI:ci.yml(日常闸门) + release.yml(推 v* tag 发版)
 ├── template/               # 平面外 · 工作空间模板,看板代码不 import 它
 │   ├── scripts/init_workspace.py  #   ★ 唯一被看板调用的入口(runInit)
 │   ├── .claude/skills/     #   pm-* 业务技能(会随新建工作空间一起铺过去)
@@ -98,6 +105,8 @@ aispace-kanban/
 | 只起常驻服务(5180,伺服 `dist/`) | `pnpm serve` |
 | 构建前端 | `pnpm build` |
 | 类型检查 | `pnpm typecheck` |
+| 组 npm 包(发布用) | `pnpm build:npm` → `npm-package/` |
+| 打 tgz + 装包冒烟 | `pnpm pack:npm && pnpm smoke:npm` |
 
 **交付闸门(缺一不可):**
 
@@ -166,6 +175,29 @@ aispace-kanban/
 - **接口响应新增字段一律可选**,前端缺字段时**退回改动前的行为**;
   宁可少显示一块,不能白屏或报错。`Scan.available?` 的注释就是这条规则的实例。
 - 前端不要假设新字段一定存在;服务端不要删已有字段(先加新的、旧的留一版)。
+
+### 5.6 三平台与 npm 包(改服务端 / 改模板时的硬约束)
+
+看板发成 `@startist/aispace-kanban`,在 macOS / Windows / Linux 上都要能跑。要求 **Node ≥ 20**
+(Linux 上 `fs.watch` 的递归监听 —— 也就是 SSE 自动刷新 —— 从 20 才有)。
+
+- **平台差异只写在 `src/server/platform.mjs`**:开浏览器、在文件管理器里定位、
+  找 Python 解释器。别在别处再写第二次 `spawn('open', ...)`,那是本仓踩过的坑
+  (reveal 接口曾经在非 macOS 上直接返 501)。
+- **界面上跟操作系统有关的文案**(「在访达中显示」)从 `/api/health` 的 `platform` 取,
+  经 `hooks/useFileManager.ts`;**不能用浏览器的 `navigator`** —— 定位动作发生在**服务所在的机器**上。
+- **npm 打包会吃掉两类东西**,模板里有就得绕:
+  - 任何叫 `.gitignore` 的文件(`files` 字段也救不回来)→ 组包时改名存成 `gitignore`,
+    由 `template/scripts/init_workspace.py` 认回来;
+  - 软链接 → `template/skills` 不进包,新建工作空间时由 `init_workspace.py` 现建**相对**链接
+    (Windows 建不了就复制一份实体目录)。
+- 包里**没有前端源码和 devDependencies**,所以 `serve --dev` 在包里会明确报错;
+  `dist/` 必须是刚 `pnpm build` 出来的,否则装的人看到的是旧界面。
+- 发布前的冒烟不能只在源码仓跑,但**不用手工点** —— `pnpm smoke:npm`
+  (`scripts/smoke-package.mjs`)会在干净目录装 tgz 起服务,把新建工作空间、扫描、
+  路径穿越拦截等 8 件事验一遍;CI 在 ubuntu / windows / macOS 上跑的就是它。
+  它给子进程换了假 `HOME`,不会污染你自己的注册表。
+- **发版与 CI 的完整流程见 [`docs/发布与CI.md`](docs/发布与CI.md)**(推 `v*` tag 自动发 npm)。
 
 ---
 

@@ -1,0 +1,78 @@
+name: release
+
+# 推一个 v* tag 就发布到 npm。版本号**以 tag 为准**（注入给组包脚本），
+# 所以 tag 一旦推上去就是要发的那个版本，别拿 tag 当草稿。
+# 前置：仓库 Settings → Secrets 里配好 NPM_TOKEN（对 @startist 有发布权限的 automation token）。
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  # 复用日常闸门：三平台冒烟全过才往下走，绝不发一个没装过的包
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: 发布到 npm
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 建 Release 用
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 取版本号（去掉 tag 的 v 前缀），并核对仓库里的版本号
+        id: ver
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          in_repo=$(node -p "require('./package.json').version")
+          if [ "$version" != "$in_repo" ]; then
+            echo "::error::tag 是 v$version，但 package.json 里写的是 $in_repo。"
+            echo "::error::先把 package.json 的 version 改成 $version 提交，再重新打 tag。"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: 构建 + 组包（版本号来自 tag）
+        run: |
+          pnpm build
+          node scripts/build-npm-package.mjs --version "${{ steps.ver.outputs.version }}"
+
+      - name: 打 tgz
+        working-directory: npm-package
+        run: npm pack
+
+      # 发之前再装一次跑一遍：这个 tgz 才是真正要推上 npm 的那个文件
+      - name: 发布前冒烟
+        run: node scripts/smoke-package.mjs
+
+      - name: npm publish
+        working-directory: npm-package
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: 建 GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: npm-package/*.tgz
+          body: |
+            ```bash
+            npx -y @startist/aispace-kanban@${{ steps.ver.outputs.version }}
+            ```

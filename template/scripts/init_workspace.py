@@ -19,7 +19,8 @@ from pathlib import Path
 TEMPLATE = Path(__file__).resolve().parent.parent
 
 # 骨架要带过去的东西：约定、技能、脚本。资料和产出一律不带。
-COPY_ENTRIES = ["AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", ".env.example", "scripts", ".claude", "skills"]
+# skills 不在这里 —— 它是 .claude/skills 的别名，由 link_skills() 单独建，理由见那里。
+COPY_ENTRIES = ["AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", ".env.example", "scripts", ".claude"]
 EMPTY_DIRS = [
     "input/raw",
     "input/converted",
@@ -37,19 +38,39 @@ def log(msg: str) -> None:
 
 def copy_entry(name: str, target: Path) -> None:
     src = TEMPLATE / name
+    if name == ".gitignore" and not src.exists():
+        # 模板被打进 npm 包时 .gitignore 会被 npm 无条件剔除（不管 files 怎么写），
+        # 所以包里另存了一份 gitignore（无点）。两边都找一下，找不到就算了。
+        src = TEMPLATE / "gitignore"
     if not src.exists():
         return
     dst = target / name
-    if src.is_symlink():
-        # skills 是指向 .claude/skills 的软链接，照原样复制链接本身
-        link = src.readlink()
-        if dst.exists() or dst.is_symlink():
-            dst.unlink()
-        dst.symlink_to(link)
-    elif src.is_dir():
+    if src.is_dir():
         shutil.copytree(src, dst, dirs_exist_ok=True, symlinks=True)
     else:
         shutil.copy2(src, dst)
+
+
+def link_skills(target: Path) -> None:
+    """
+    建 skills/ —— .claude/skills 的别名。AGENTS.md 里的技能链接都写的 skills/<名字>/，
+    少了它非 Claude 的 agent 就找不到技能。
+
+    不从模板里复制那条软链接，而是在目标目录现建一条**相对**链接：
+      - 模板里那条是绝对路径，复制过去会指回模板所在的机器；
+      - npm 打包会把软链接整个丢掉，包里根本没有它。
+    Windows 上没开开发者模式建不了软链接，退化成复制一份实体目录（内容一样，只是不会跟着变）。
+    """
+    real = target / ".claude" / "skills"
+    if not real.is_dir():
+        return
+    dst = target / "skills"
+    if dst.is_symlink() or dst.exists():
+        return
+    try:
+        dst.symlink_to(Path(".claude") / "skills", target_is_directory=True)
+    except OSError:
+        shutil.copytree(real, dst, dirs_exist_ok=True)
 
 
 def render_project_yaml(name: str) -> str:
@@ -84,6 +105,7 @@ def main() -> int:
     target.mkdir(parents=True, exist_ok=True)
     for name in COPY_ENTRIES:
         copy_entry(name, target)
+    link_skills(target)
     for rel in EMPTY_DIRS:
         d = target / rel
         d.mkdir(parents=True, exist_ok=True)

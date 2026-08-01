@@ -1,0 +1,80 @@
+name: ci
+
+# 日常闸门：每次推 main / 开 PR 都跑。
+# 前两道闸（typecheck / build）只覆盖前端，服务端和 CLI 没有任何静态检查 ——
+# 所以真正兜底的是第三步：把包装进一个干净目录，在三个平台各起一遍服务。
+# 详见 docs/发布与CI.md。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # release.yml 发版前会复用整套闸门
+  workflow_call:
+
+jobs:
+  build:
+    name: 类型检查 + 构建 + 组包
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 类型检查（只覆盖 src/app）
+        run: pnpm typecheck
+
+      - name: 构建前端
+        run: pnpm build
+
+      - name: 组 npm 包
+        run: node scripts/build-npm-package.mjs
+
+      - name: 打 tgz
+        working-directory: npm-package
+        run: npm pack
+
+      # 后面三个平台的冒烟都装这一个产物，保证测的和发的是同一个包
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-tgz
+          path: npm-package/*.tgz
+          retention-days: 7
+
+  smoke:
+    name: 装包冒烟 ${{ matrix.os }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # 「新建工作空间」要调模板的 init_workspace.py，三个平台的解释器名不一样，
+      # 冒烟脚本会挨个试（Windows 上是 py / python）
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: package-tgz
+          path: pkg
+
+      - name: 干净目录装包并跑一遍
+        shell: bash
+        run: node scripts/smoke-package.mjs "$(ls pkg/*.tgz | head -1)"
