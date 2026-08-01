@@ -158,8 +158,8 @@ RE-ADD 后 `git diff src/app/components/ui/<name>.tsx`:**应该只有真源的�
 
 ## 当前快照
 
-- **已 copy-in**:`badge` `button` `dialog` `input` `scroll-area` `select` `tabs` `tooltip`
-- **registry 上还有**:`alert` `checkbox` `code-block` `confirm-dialog` `drawer` `field`
+- **已 copy-in**:`badge` `button` `code-block` `dialog` `input` `lightbox` `scroll-area` `select` `tabs` `tooltip`
+- **registry 上还有**:`alert` `checkbox` `confirm-dialog` `drawer` `field`
   `label` `sonner` `switch` `textarea` `theme`
 
 拉了新的就把这两行更新掉 —— 这份清单是给下一个 Agent 省一次 `ls` 的。

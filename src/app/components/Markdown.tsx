@@ -1,14 +1,20 @@
 import {
+  Children,
+  cloneElement,
+  isValidElement,
   useLayoutEffect,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ComponentProps,
+  type ReactElement,
   type RefObject,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MarkdownCodeBlock } from '@/components/MarkdownCodeBlock';
+import { MermaidBlock } from '@/components/MermaidBlock';
 import { useScrollActivity } from '@/hooks/useScrollActivity';
 import { cn } from '@/lib/utils';
 
@@ -103,25 +109,34 @@ function buildComponents(): ComponentProps<typeof ReactMarkdown>['components'] {
       />
     ),
     code: ({ className, children, ...props }) => {
-      const isBlock = String(className || '').includes('language-');
+      // pre 会把 isBlock 透传下来；带 language-* 的也是围栏块
+      const { isBlock: isBlockProp, ...rest } = props as {
+        isBlock?: boolean;
+      } & typeof props;
+      const isBlock = Boolean(isBlockProp) || String(className || '').includes('language-');
       if (isBlock) {
-        return (
-          <code className={cn('block font-mono text-xs leading-6', className)} {...props}>
-            {children}
-          </code>
-        );
+        const language = className?.match(/language-(\S+)/)?.[1];
+        if (language === 'mermaid') {
+          return <MermaidBlock source={String(children).replace(/\n$/, '')} />;
+        }
+        return <MarkdownCodeBlock className={className}>{children}</MarkdownCodeBlock>;
       }
       return (
-        <code className={cn('rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]', className)} {...props}>
+        <code className={cn('rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]', className)} {...rest}>
           {children}
         </code>
       );
     },
-    pre: ({ className, ...props }) => (
-      <pre
-        className={cn('my-4 overflow-x-auto rounded-lg border border-border bg-muted/50 p-4', className)}
-        {...props}
-      />
+    // CodeBlock 自带外壳；pre 只负责把子 code 标成块级，避免双重边框
+    pre: ({ children }) => (
+      <>
+        {Children.map(children, (child) => {
+          if (isValidElement(child)) {
+            return cloneElement(child as ReactElement<{ isBlock?: boolean }>, { isBlock: true });
+          }
+          return child;
+        })}
+      </>
     ),
     table: ({ className, ...props }) => (
       <div className="my-4 overflow-x-auto rounded-lg border border-border">
