@@ -44,9 +44,19 @@ export interface TablePage {
 export interface PrototypeItem {
   itemKey: string;
   title: string;
+  /** 看板伺服的入口地址，新窗口打开 */
   url: string;
+  /** folder = 已解压目录；zip = 由看板缓存解压。可选：旧服务进程没有 */
+  kind?: 'folder' | 'zip';
+  sourcePath?: string;
+  mtime?: string;
 }
 
+/**
+ * prototypes/ 下的 HTML 导出包清单。
+ * clientReady / serverRunning / origin 是旧 Axhub 开发服务时代的字段，
+ * 新逻辑里 clientReady≈有可预览包、serverRunning 同义、origin 常为空 —— 都保留作兼容。
+ */
 export interface Prototypes {
   clientReady: boolean;
   serverRunning: boolean;

@@ -16,7 +16,7 @@ import {
   updateProject,
 } from './config.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
-import { probeOrigin, scanPrototypes } from './prototypes.mjs';
+import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
 import { scanWorkspace } from './scan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -27,9 +27,12 @@ const tableRowCountCache = new Map();
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
+  '.htm': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.png': 'image/png',
@@ -38,7 +41,15 @@ const MIME = {
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.bmp': 'image/bmp',
+  '.woff': 'font/woff',
   '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.txt': 'text/plain; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.ts': 'text/plain; charset=utf-8',
+  '.tsx': 'text/plain; charset=utf-8',
+  '.wasm': 'application/wasm',
 };
 
 function json(res, status, payload) {
@@ -178,7 +189,8 @@ function requireProject(id) {
 /** 监听工作空间的资料与产出目录，变了就通过 SSE 推给前端。 */
 function watchWorkspace(root, onChange) {
   const watchers = [];
-  for (const dir of ['input', 'output', 'prototypes/.axhub']) {
+  // prototypes/ 整树：HTML 包增删或 zip 替换后要推 SSE 刷新
+  for (const dir of ['input', 'output', 'prototypes']) {
     const abs = path.join(root, dir);
     if (!fs.existsSync(abs)) continue;
     try {
@@ -299,10 +311,35 @@ async function handleApi(req, res, url) {
 
   if (head === 'projects' && id && action === 'prototypes') {
     const project = requireProject(id);
-    const data = scanPrototypes(project.root);
-    data.serverRunning = await probeOrigin(data.origin);
-    if (data.origin && !data.serverRunning) data.note = 'Axhub Make 服务没在运行，链接暂时打不开';
-    return json(res, 200, data);
+    return json(res, 200, scanPrototypes(project.root, project.id));
+  }
+
+  // 伺服 axhub-make 导出的 HTML 包（文件夹或已解压到缓存的 zip）
+  // 路径：/api/projects/:id/proto/:slug[/...相对路径]
+  if (head === 'projects' && id && action === 'proto') {
+    const project = requireProject(id);
+    const slug = segments[3] || '';
+    if (!slug) return json(res, 400, { error: '缺少原型包标识' });
+    const serveDir = resolvePrototypeServeDir(project.root, slug);
+    if (!serveDir) return json(res, 404, { error: '找不到这个原型包' });
+    const relParts = segments.slice(4);
+    const relFile = relParts.length ? relParts.join('/') : 'index.html';
+    // 挡 ../ 穿越：只能落在 serveDir 内
+    const abs = path.resolve(serveDir, relFile);
+    const base = path.resolve(serveDir);
+    if (abs !== base && !abs.startsWith(base + path.sep)) {
+      return json(res, 403, { error: '路径超出原型包范围' });
+    }
+    if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
+      return json(res, 404, { error: '文件不存在' });
+    }
+    const ext = path.extname(abs).toLowerCase();
+    const mime = MIME[ext] || 'application/octet-stream';
+    res.writeHead(200, {
+      'content-type': mime,
+      'cache-control': 'no-cache',
+    });
+    return fs.createReadStream(abs).pipe(res);
   }
 
   // 读文件正文：md / csv / txt 走这里，图片也走这里（按 MIME 直出）

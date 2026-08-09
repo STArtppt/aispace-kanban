@@ -250,6 +250,6 @@ export function scanWorkspace(project, status = { ok: true, reasons: [] }) {
     meta: readMeta(root),
     input: scanInput(root),
     output: scanOutput(root),
-    prototypes: scanPrototypes(root),
+    prototypes: scanPrototypes(root, project.id),
   };
 }
