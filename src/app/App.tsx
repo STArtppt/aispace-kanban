@@ -258,8 +258,10 @@ function SidebarBody({
             <div
               key={project.id}
               className={cn(
-                'group flex items-center gap-1 rounded-md pr-1 transition-colors hover:bg-accent',
-                project.id === activeId && 'bg-secondary text-secondary-foreground',
+                // border-transparent 常驻：选中时才上色，避免多出 1px 让行错位
+                'group flex items-center gap-1 rounded-md border border-transparent pr-1 transition-colors hover:bg-accent',
+                // 选中态同概览页「进行中」阶段：浅灰底 + 细深色描边
+                project.id === activeId && 'border-foreground/40 bg-muted hover:bg-muted',
               )}
             >
               <button
@@ -269,7 +271,10 @@ function SidebarBody({
                   onNavigate?.();
                 }}
                 title={broken ? `目录找不到了：${project.root}` : project.root}
-                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-sm"
+                className={cn(
+                  'flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-sm',
+                  project.id === activeId && 'font-medium',
+                )}
               >
                 {broken ? <AlertTriangle className="size-3.5 shrink-0 text-destructive" /> : null}
                 <span className="truncate">{project.name}</span>
@@ -302,8 +307,8 @@ function SidebarBody({
               onNavigate?.();
             }}
             className={cn(
-              'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent',
-              view === key && 'bg-secondary text-secondary-foreground',
+              'flex items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent',
+              view === key && 'border-foreground/40 bg-muted font-medium hover:bg-muted',
             )}
           >
             <Icon className="size-4" />
@@ -484,19 +489,8 @@ export default function App() {
         </div>
       ) : null}
 
-      {/* ── 主区：窄屏顶栏 + (看板 | 预览) ── */}
+      {/* ── 主区：看板 | 预览（窄屏的菜单/主题按钮并进看板抬头，不再单开一栏） ── */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        {/* 窄屏顶栏 */}
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3 min-[900px]:hidden">
-          <Button variant="ghost" size="icon" title="打开菜单" onClick={() => setNavOpen(true)}>
-            <Menu className="size-4" />
-          </Button>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{headerTitle}</span>
-          <Button variant="ghost" size="icon" title="切换主题" onClick={toggle}>
-            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
-        </header>
-
         {/*
           看板 + 预览行（宽屏）：
             只动画看板 width（100% ↔ 28rem ↔ 0），预览用 flex-1 吃剩余——
@@ -526,8 +520,51 @@ export default function App() {
                 : undefined
             }
           >
+            {/*
+              项目抬头常驻在滚动区外：切视图、滚动都看得见当前是哪个工作空间。
+              窄屏时它同时兼顶栏（菜单 + 主题都在这一栏里），所以哪怕还没扫描结果也要渲染，
+              否则抽屉侧栏就没有入口了；宽屏没结果时才收起来。
+            */}
+            <header
+              className={cn(
+                'flex shrink-0 items-center gap-2 border-b border-border bg-background px-3 py-2.5 sm:px-5 sm:py-3',
+                !scan && 'min-[900px]:hidden',
+              )}
+            >
+              <Button
+                variant="ghost"
+                size="icon"
+                title="打开菜单"
+                className="shrink-0 min-[900px]:hidden"
+                onClick={() => setNavOpen(true)}
+              >
+                <Menu className="size-4" />
+              </Button>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <h1 className="font-display truncate text-lg leading-tight sm:text-xl" title={headerTitle}>
+                  {headerTitle}
+                </h1>
+                {scan ? (
+                  <p
+                    className="truncate font-mono text-xs text-muted-foreground"
+                    title={scan.project.root}
+                  >
+                    {scan.project.root}
+                  </p>
+                ) : null}
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                title="切换主题"
+                className="shrink-0 min-[900px]:hidden"
+                onClick={toggle}
+              >
+                {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+              </Button>
+            </header>
             <ScrollArea
-              className="h-full min-h-0 w-full"
+              className="min-h-0 w-full flex-1"
               // 内边距固定：不随预览开合切换 sm/lg 档，避免顶部空白突变导致整页跳动
               viewportClassName="px-4 py-4 sm:px-5 sm:py-4"
             >

@@ -1,7 +1,7 @@
 import { FileText, ScrollText, Stamp } from 'lucide-react';
-import { EmptyState, Row, SectionTitle, Stat } from '@/components/Primitives';
+import { CopyButton, EmptyState, Row, SectionTitle, Stat } from '@/components/Primitives';
 import type { FileItem, Scan } from '@/lib/api';
-import { datePrefix, formatRelative, formatWords } from '@/lib/format';
+import { datePrefix, formatRelative, formatWords, markdownLink } from '@/lib/format';
 
 const GROUPS = [
   {
@@ -59,12 +59,16 @@ export function OutputPanel({
                     <Icon className="size-4 text-muted-foreground" />
                     <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span className="truncate text-sm">{item.title || item.name}</span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {item.name}
+                      {/* 文档自身的相对路径，方便直接喂给 AI / 命令行 */}
+                      <span className="truncate text-xs text-muted-foreground" title={item.path}>
+                        {item.path}
                         {datePrefix(item.name) ? '' : ` · ${formatRelative(item.mtime)}`}
                       </span>
                     </div>
-                    <span className="shrink-0 text-xs text-muted-foreground">{formatWords(item.words)}</span>
+                    <CopyButton
+                      value={markdownLink(item.title || item.name, item.path)}
+                      label="复制 Markdown 链接"
+                    />
                   </Row>
                 ))}
               </div>

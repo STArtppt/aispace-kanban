@@ -43,16 +43,10 @@ export function OverviewPanel({
 }) {
   const stages = inferStages(scan);
   const { meta } = scan;
-  const title = meta.data?.identity?.项目名称 || meta.data?.workspace?.name || scan.project.name;
 
+  // 标题 + 工作空间路径已经常驻在 App 的看板抬头里，这里不再重复一遍
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-1">
-        {/* 标题字号固定：预览开合时不缩放，避免顶部高度跳动 */}
-        <h1 className="font-display text-2xl">{title}</h1>
-        <p className="font-mono text-xs text-muted-foreground break-all">{scan.project.root}</p>
-      </div>
-
       {meta.error ? (
         <div className="rounded-lg border border-destructive/40 px-4 py-3 text-sm text-destructive">{meta.error}</div>
       ) : null}

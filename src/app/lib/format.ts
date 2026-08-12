@@ -33,6 +33,17 @@ export function formatWords(words?: number): string {
   return words >= 10000 ? `${(words / 10000).toFixed(1)} 万字` : `${words} 字`;
 }
 
+/**
+ * 复制给 AI / 文档用的 Markdown 链接：[标题](相对路径)。
+ * 路径带空格或括号时用尖括号包起来（CommonMark 的 <destination> 写法），
+ * 否则 `原型 (10)` 这类名字会把链接截断。
+ */
+export function markdownLink(label: string, path: string): string {
+  const text = label.replace(/([[\]])/g, '\\$1');
+  const dest = /[\s()<>]/.test(path) ? `<${path}>` : path;
+  return `[${text}](${dest})`;
+}
+
 /** 文件名前缀日期：2026-07-30-xxx.md → 2026-07-30 */
 export function datePrefix(name: string): string {
   const m = /^(\d{4}-\d{2}-\d{2})[-_]/.exec(name);

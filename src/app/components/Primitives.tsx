@@ -1,5 +1,5 @@
-import type { ReactNode } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { Check, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -74,6 +74,76 @@ export function Row({
     >
       {children}
     </button>
+  );
+}
+
+async function writeClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // 落到下面的兜底
+    }
+  }
+  // 从别的机器用 http 访问看板时没有 clipboard API，退回 execCommand
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+  } catch {
+    ok = false;
+  }
+  document.body.removeChild(area);
+  return ok;
+}
+
+/**
+ * 复制文本的小图标按钮。
+ * 列表行本身是 <button>，按钮不能嵌套，所以这里用 span + role="button"。
+ */
+export function CopyButton({
+  value,
+  label = '复制',
+  className,
+}: {
+  value: string;
+  label?: string;
+  className?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+
+  return (
+    <span
+      role="button"
+      tabIndex={-1}
+      title={copied ? '已复制' : label}
+      aria-label={copied ? '已复制' : label}
+      className={cn(
+        'shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground',
+        className,
+      )}
+      onClick={(event) => {
+        event.stopPropagation();
+        void writeClipboard(value).then((ok) => {
+          if (ok) setCopied(true);
+        });
+      }}
+    >
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+    </span>
   );
 }
 

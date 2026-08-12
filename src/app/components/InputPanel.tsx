@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { AppWindow, FileText, FolderOpen, Image, Search, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { EmptyState, ListPager, Row, SectionTitle, Stat } from '@/components/Primitives';
+import { CopyButton, EmptyState, ListPager, Row, SectionTitle, Stat } from '@/components/Primitives';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { api, type ConvertedItem, type FileItem, type Scan } from '@/lib/api';
-import { formatBytes, formatRelative, formatWords } from '@/lib/format';
+import { formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
 
 /** 待转换 / 转换产物列表一页条数 */
 const LIST_PAGE_SIZE = 12;
@@ -77,6 +77,10 @@ function PendingList({
             {pendingLabel(item)}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
+          <CopyButton
+            value={markdownLink(pendingLabel(item), item.path)}
+            label="复制 Markdown 链接"
+          />
           <span
             role="button"
             tabIndex={-1}
@@ -143,16 +147,19 @@ function ConvertedList({
                 <div className="flex items-center gap-2">
                   <span className="truncate text-sm">{item.title || item.name}</span>
                 </div>
-                <span className="truncate text-xs text-muted-foreground">
-                  {item.source || item.name}
-                  {item.convertedBy ? ` · ${item.convertedBy}` : ''}
+                {/* 产物自身的相对路径：单文件产物到文件，目录型产物到目录 */}
+                <span className="truncate text-xs text-muted-foreground" title={item.path}>
+                  {item.path}
                   {item.reader === 'html' ? ' · HTML 原型' : ''}
                   {item.sheets?.length ? ` · ${item.sheets.length} 张表` : ''}
                   {item.sqlitePath ? ' · 可 SQL 检索' : ''}
                   {item.extractedImages ? ` · ${item.extractedImages} 张图` : ''}
                 </span>
               </div>
-              <span className="shrink-0 text-xs text-muted-foreground">{formatWords(item.words)}</span>
+              <CopyButton
+                value={markdownLink(item.title || item.name, item.path)}
+                label="复制 Markdown 链接"
+              />
             </Row>
           ))}
           <ListPager
