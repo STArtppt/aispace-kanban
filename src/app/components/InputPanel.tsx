@@ -77,10 +77,7 @@ function PendingList({
             {pendingLabel(item)}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
-          <CopyButton
-            value={markdownLink(pendingLabel(item), item.path)}
-            label="复制 Markdown 链接"
-          />
+          <CopyButton value={markdownLink(pendingLabel(item), item.path)} />
           <span
             role="button"
             tabIndex={-1}
@@ -156,10 +153,7 @@ function ConvertedList({
                   {item.extractedImages ? ` · ${item.extractedImages} 张图` : ''}
                 </span>
               </div>
-              <CopyButton
-                value={markdownLink(item.title || item.name, item.path)}
-                label="复制 Markdown 链接"
-              />
+              <CopyButton value={markdownLink(item.title || item.name, item.path)} />
             </Row>
           ))}
           <ListPager

@@ -65,10 +65,7 @@ export function OutputPanel({
                         {datePrefix(item.name) ? '' : ` · ${formatRelative(item.mtime)}`}
                       </span>
                     </div>
-                    <CopyButton
-                      value={markdownLink(item.title || item.name, item.path)}
-                      label="复制 Markdown 链接"
-                    />
+                    <CopyButton value={markdownLink(item.title || item.name, item.path)} />
                   </Row>
                 ))}
               </div>

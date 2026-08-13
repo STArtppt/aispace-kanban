@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.33.0",
-  "description": "PM 工作空间看板 —— 常驻服务，指向 pmwork 工作空间目录，只读展示项目概览、输入资料、输出产物与原型入口",
+  "description": "AI 协作工作空间看板 —— 常驻服务，指向工作空间目录，只读展示概览、输入资料、输出产物与原型入口",
   "bin": {
     "aispace-kanban": "./bin/cli.mjs"
   },

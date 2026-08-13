@@ -1,6 +1,12 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 
 /** 统计数字块。层级靠边框和灰底，不靠阴影，不上彩色。 */
@@ -106,17 +112,10 @@ async function writeClipboard(text: string): Promise<boolean> {
 
 /**
  * 复制文本的小图标按钮。
- * 列表行本身是 <button>，按钮不能嵌套，所以这里用 span + role="button"。
+ * 列表行本身是 <button>，按钮不能嵌套，所以触发器渲染成 span + role="button"。
+ * 提示文案固定「复制路径」，复制成功只用图标反馈（✓），不改文案。
  */
-export function CopyButton({
-  value,
-  label = '复制',
-  className,
-}: {
-  value: string;
-  label?: string;
-  className?: string;
-}) {
+export function CopyButton({ value, className }: { value: string; className?: string }) {
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -126,24 +125,32 @@ export function CopyButton({
   }, [copied]);
 
   return (
-    <span
-      role="button"
-      tabIndex={-1}
-      title={copied ? '已复制' : label}
-      aria-label={copied ? '已复制' : label}
-      className={cn(
-        'shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground',
-        className,
-      )}
-      onClick={(event) => {
-        event.stopPropagation();
-        void writeClipboard(value).then((ok) => {
-          if (ok) setCopied(true);
-        });
-      }}
-    >
-      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-    </span>
+    <TooltipProvider delay={300}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="button"
+              tabIndex={-1}
+              aria-label="复制路径"
+              className={cn(
+                'shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground',
+                className,
+              )}
+              onClick={(event: MouseEvent) => {
+                event.stopPropagation();
+                void writeClipboard(value).then((ok) => {
+                  if (ok) setCopied(true);
+                });
+              }}
+            />
+          }
+        >
+          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+        </TooltipTrigger>
+        <TooltipContent>复制路径</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
