@@ -18,8 +18,9 @@ python3 scripts/ingest.py                             # 转换
   评审时被质疑「这条需求哪来的」，答案必须能落到这里的某个文件。
 - **`converted/`** — 脚本产物，**不要手改**（重跑会覆盖）。发现转换质量有问题，
   改脚本或在 `output/analysis/` 里记录修正，不要改产物。
-- **`assets/`** — 从文档里抽出来的图片。Claude 用 Read 工具可以直接看图，
-  流程图、界面截图这类信息量很大的资料别漏掉。
+- **`assets/`** — 图片资料，按来源分目录：`assets/<文档名>/` 是从那份文档里抽出来的图，
+  `assets/未分类/` 是直接放进 `raw/` 的单张图片（附 `_manifest.md` 记来源）。
+  Claude 用 Read 工具可以直接看图，流程图、界面截图这类信息量很大的资料别漏掉。
 
 ## 支持的格式
 
@@ -30,7 +31,7 @@ python3 scripts/ingest.py                             # 转换
 | `.msg` | 一个 `.md` | markitdown |
 | `.xlsx` `.xlsm` | 一个目录：每个 sheet 一个 `.csv` + `_manifest.md` 导航 | 脚本自带解析 |
 | `.md` `.csv` `.json` `.txt` `.yaml` `.xml` | 原样拷贝 | — |
-| `.png` `.jpg` `.gif` `.webp` | 拷到 `assets/` | — |
+| `.png` `.jpg` `.gif` `.webp` | 拷到 `assets/未分类/` | — |
 
 **老格式不支持**：`.doc` `.xls` `.ppt` `.wps` `.et` `.dps` 会被跳过并在台账里标记，
 请先用 Office / WPS 另存为新格式。

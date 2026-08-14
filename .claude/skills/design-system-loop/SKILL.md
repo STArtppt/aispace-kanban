@@ -151,6 +151,7 @@ RE-ADD 后 `git diff src/app/components/ui/<name>.tsx`:**应该只有真源的�
 | "移出看板"这类确认 | `confirm-dialog`(registry 有,本仓未拉),别用 `window.confirm` |
 | 新建工作空间的路径表单 | `field` + `input` |
 | 原型 / 图片全屏预览 | `lightbox`(z=60),不是 Dialog 抬 z-index |
+| 一摞图的入口卡(图片资料) | `gallery-stack`(封面+垫卡,`count` 决定厚度、`size` 控卡片宽度);缩略图墙是调用方自己的网格 |
 | 侧滑详情或筛选 | `drawer`,不是 Dialog |
 | 阅读器里的代码块 | `code-block` |
 | 操作结果提示 | `sonner` / `alert`,别自己写浮层 |
@@ -158,8 +159,9 @@ RE-ADD 后 `git diff src/app/components/ui/<name>.tsx`:**应该只有真源的�
 
 ## 当前快照
 
-- **已 copy-in**:`badge` `button` `code-block` `dialog` `input` `lightbox` `scroll-area` `select` `tabs` `tooltip`
-- **registry 上还有**:`alert` `checkbox` `confirm-dialog` `drawer` `field`
+- **已 copy-in**:`badge` `button` `code-block` `dialog` `gallery-stack` `input` `lightbox`
+  `scroll-area` `select` `tabs` `tooltip`
+- **registry 上还有**:`alert` `checkbox` `collapsible` `confirm-dialog` `drawer` `field`
   `label` `sonner` `switch` `textarea` `theme`
 
 拉了新的就把这两行更新掉 —— 这份清单是给下一个 Agent 省一次 `ls` 的。

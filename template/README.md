@@ -44,7 +44,7 @@ claude
 input/            阶段一：资料入库与格式转换
   raw/              原始文档（只读，溯源终点）
   converted/        转换后的 .md / .csv
-  assets/           从文档抽出的图片
+  assets/           图片资料（按来源分目录，单张图进 未分类/）
   INDEX.md          资料台账（脚本生成 + 人工批注）
 output/           阶段三：产出
   analysis/         现状基线、需求拆解、澄清问题清单

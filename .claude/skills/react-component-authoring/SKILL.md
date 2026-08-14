@@ -15,12 +15,19 @@ description: 在 aispace-kanban 中新建或重构 React 组件 / 面板 / 视�
 动手写之前按顺序查一遍,能复用就别造:
 
 1. **`components/Primitives.tsx`** —— `Stat`(统计块)、`SectionTitle`(带计数的小标题)、
-   `EmptyState`(空态)、`Row`(可点击列表行)、`ListPager`(列表底部分页)。看板里 80% 的排版需求都在这里。
+   `EmptyState`(空态)、`Row`(可点击列表行)、`ListPager`(列表底部分页)、
+   `CopyButton`(复制路径的小图标,能压在列表行/缩略图里)、`writeClipboard`(自己拼按钮时用)。
+   看板里 80% 的排版需求都在这里。
+   图片相关的组合件另有三个:`ImageLightbox`(多图灯箱,支持缩放/翻页/复制路径)、
+   `AssetGalleryStack`(把 `AssetGroup` 映射到 `ui/gallery-stack`)、
+   `AssetGalleryReader`(预览区缩略图墙)。
 2. **`components/ui/**`** —— startist registry copy-in 的通用件:
    `Button`(`primary|secondary|outline|ghost|danger|surface` × `sm|md|lg|icon`)、
    `Badge`(`default|secondary|outline|muted` × `sm|md`)、`Input`、`Select`、`Dialog`、`Tabs`、
    `Tooltip`、`ScrollArea`、`CodeBlock`（文档围栏代码走 `MarkdownCodeBlock` 适配）、
-   `Lightbox`（mermaid 全屏等媒体预览）。
+   `Lightbox`（mermaid 全屏等媒体预览）、
+   `GalleryStack`（一摞图的入口卡：`cover` / `count` / `size` / `selected`，
+   卡片自己限宽，别再在调用方排列数）。
 3. **registry 上有但本仓还没拉的**(`drawer` / `confirm-dialog` / `field` / `switch` …)
    —— 用 `shadcn add` 拉,别手写第二遍。add 的来源、命令与注意事项见 [[design-system-loop]]。
    **`components/ui/**` 是 vendored 快照**:不做与上游分叉的语义修改

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 'react';
-import { ChevronLeft, ChevronRight, Minus, Plus, RotateCcw, X } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Copy, Minus, Plus, RotateCcw, X } from 'lucide-react';
 
+import { writeClipboard } from '@/components/Primitives';
 import {
   Lightbox,
   LightboxBackdrop,
@@ -17,6 +18,8 @@ import {
 export interface ImageLightboxItem {
   src: string;
   alt?: string;
+  /** 有值时工具条出现复制按钮（图片资料复制的是工作空间内相对路径） */
+  copyValue?: string;
 }
 
 export function ImageLightbox({
@@ -36,6 +39,7 @@ export function ImageLightbox({
   );
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [copied, setCopied] = useState(false);
 
   const total = items.length;
   const multi = total >= 2;
@@ -58,7 +62,14 @@ export function ImageLightbox({
 
   useEffect(() => {
     resetView();
+    setCopied(false);
   }, [index, resetView]);
+
+  useEffect(() => {
+    if (!copied) return undefined;
+    const timer = window.setTimeout(() => setCopied(false), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
 
   // Escape 交给 lightbox。方向键必须 capture：Base UI Popup 会在冒泡阶段拦掉 ArrowLeft/Right。
   useEffect(() => {
@@ -170,6 +181,21 @@ export function ImageLightbox({
             >
               <RotateCcw className="size-4" />
             </button>
+            {current.copyValue ? (
+              <button
+                type="button"
+                onClick={() => {
+                  void writeClipboard(current.copyValue as string).then((ok) => {
+                    if (ok) setCopied(true);
+                  });
+                }}
+                className="rounded p-2 hover:bg-white/10"
+                aria-label="复制路径"
+                title="复制路径"
+              >
+                {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+              </button>
+            ) : null}
             <button
               type="button"
               onMouseDown={(event) => {

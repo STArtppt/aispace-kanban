@@ -21,7 +21,7 @@ input/  →  （分析）  →  output/  →  prototypes/
 | `project.yaml` | 项目元信息：背景目标、干系人、里程碑、成果要求、约束 | 由 `pm-project-meta` 增量维护，见下文 |
 | `input/raw/` | 人类给的原始资料（docx / PDF / xlsx / pptx） | **只读**。永不改动、永不删除，它是溯源的终点。**默认禁止读取**（见下文） |
 | `input/converted/` | 转换后的 `.md` / `.csv`；点表另出主表 + sqlite | 由 `scripts/ingest.py` 和 `scripts/pointtable.py` 生成，**不要手改**（重跑会覆盖） |
-| `input/assets/` | 从文档里抽出的图片 | 脚本生成。看图请直接读图片文件 |
+| `input/assets/` | 图片资料：`<文档名>/` 是那份文档抽出的图，`未分类/` 是直接放进 raw/ 的单图 | 脚本生成。看图请直接读图片文件 |
 | `input/INDEX.md` | 资料台账 | 表格由脚本生成；人工判断写在「人工批注」区 |
 | `output/analysis/` | 分析中间产物（现状基线、需求拆解、澄清问题清单） | 自由写 |
 | `output/docs/` | 对外交付文档（PRD、需求规格、评审材料） | 自由写 |
@@ -100,7 +100,7 @@ python3 scripts/ingest.py --pdf-engine markitdown   # 不调在线接口，强�
 xlsx/xlsm 按 sheet 拆成 CSV；**html/htm 作为 PM 互传的单文件可点击原型**——不转成
 Markdown 正文，而是拷到 `input/converted/<名>/` 保留可预览 HTML，并生成配套
 `_manifest.md`（结构摘要 + 可访问性/安全等校验，形态对齐 xlsx 的目录 + manifest）；
-纯文本原样拷贝，图片进 `assets/`。
+纯文本原样拷贝，图片进 `assets/未分类/`。
 
 MinerU 需要 `MINERU_API_KEY`（`.env` 里配，脚本会自己读）。**没配 key 不会报错**，
 会自动退回本地 markitdown，只是版式和表格还原差一些——遇到这种情况提醒用户可以配 key 提升质量。

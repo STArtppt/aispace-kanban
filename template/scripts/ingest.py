@@ -6,7 +6,7 @@
 docx/odt/rtf → pandoc（顺带抽图）　　PDF/pptx → MinerU 在线 API（没配 key 时退回 markitdown）
 xlsx/xlsm → 每 sheet 一个 csv（自带 OOXML 解析）
 html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（不转 md 正文）
-纯文本 → 原样拷贝　　图片 → assets/
+纯文本 → 原样拷贝　　图片 → assets/未分类/（附 _manifest.md 记溯源）
 **点表**（成百上千个同构小文件）→ 让给 scripts/pointtable.py 汇总成测点主表，本脚本不逐个转
 
 设计原则
@@ -50,6 +50,8 @@ REPO = Path(__file__).resolve().parent.parent
 RAW = REPO / "input" / "raw"
 CONVERTED = REPO / "input" / "converted"
 ASSETS = REPO / "input" / "assets"
+# 直接放在 input/raw/ 里的图片没有「所属文档」，统一归到这一堆，看板里就是「未分类」图库
+UNSORTED = ASSETS / "未分类"
 INDEX = REPO / "input" / "INDEX.md"
 
 # 直接原样拷贝的格式：已经是 AI 可读的文本
@@ -770,9 +772,84 @@ def convert_passthrough(src: Path, digest: str) -> Path:
 
 
 def convert_image(src: Path, digest: str) -> Path:
-    target = ASSETS / f"{slugify(src.stem)}{src.suffix.lower()}"
+    """图片没有文本产物，原样拷进 assets/未分类/；溯源记在同目录 _manifest.md。"""
+    UNSORTED.mkdir(parents=True, exist_ok=True)
+    target = UNSORTED / f"{slugify(src.stem)}{src.suffix.lower()}"
     shutil.copy2(src, target)
+    # 老版本把图拷在 assets/ 根下。同名且内容与源文件一致，就是那份旧拷贝——
+    # 留着会让同一张图在图库里出现两遍，所以只在能证明是旧拷贝时才删。
+    legacy = ASSETS / target.name
+    if legacy.is_file() and legacy.stat().st_size == src.stat().st_size and sha256(legacy) == digest:
+        legacy.unlink()
     return target
+
+
+def read_manifest_sources(manifest: Path) -> list[str]:
+    """读回 _manifest.md frontmatter 里的 sources 列表（只认 `sources:` + `  - 路径`）。"""
+    if not manifest.is_file():
+        return []
+    try:
+        text = manifest.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    if not text.startswith("---"):
+        return []
+    end = text.find("\n---", 3)
+    if end == -1:
+        return []
+    out, in_list = [], False
+    for line in text[: end].splitlines():
+        if line.startswith("sources:"):
+            in_list = True
+            continue
+        if in_list:
+            item = re.match(r"\s+-\s+(.*)$", line)
+            if item:
+                out.append(item.group(1).strip())
+                continue
+            in_list = False
+    return out
+
+
+def write_assets_manifest(records: list[dict]) -> None:
+    """记下「哪些原始图片已经拷进 assets/未分类/」。
+
+    图片没有 .md 产物，看板只看 converted/ 的话会把它们永远算成「待转换」——
+    文件明明已经入库，界面还在催人转换。这份清单就是给看板认账用的。
+    只跑了部分文件时不能把别人的记录冲掉，所以与已有清单取并集；
+    源文件已经不在了的记录顺手清掉，免得清单越攒越脏。
+    """
+    manifest = UNSORTED / "_manifest.md"
+    fresh = [r["source"] for r in records if r["kind"] == "image" and r["target"]]
+    sources = sorted({*read_manifest_sources(manifest), *fresh})
+    sources = [s for s in sources if (REPO / s).is_file()]
+    if not sources:
+        return
+    now = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    lines = [
+        "---",
+        "kind: assets",
+        "group: 未分类",
+        "converted_by: copy",
+        f"converted_at: {now}",
+        "sources:",
+        *(f"  - {s}" for s in sources),
+        "---",
+        "",
+        "# 未分类图片",
+        "",
+        "直接放在 `input/raw/` 里的图片（不属于任何文档）拷到本目录。",
+        "**不要手改本文件**，重跑 `scripts/ingest.py` 会覆盖。",
+        "",
+        "| 原始文件 | 图片 |",
+        "| --- | --- |",
+    ]
+    for s in sources:
+        name = f"{slugify(Path(s).stem)}{Path(s).suffix.lower()}"
+        lines.append(f"| `{s}` | [`{name}`](./{name}) |")
+    lines.append("")
+    UNSORTED.mkdir(parents=True, exist_ok=True)
+    manifest.write_text("\n".join(lines), encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #
@@ -812,7 +889,7 @@ def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
             # .txt 实际输出为 .md，其余纯文本保留原扩展名
             out.append((src, "copy", CONVERTED / f"{slug}.md" if ext == ".txt" else CONVERTED / f"{slug}{ext}"))
         elif ext in IMAGES:
-            out.append((src, "image", ASSETS / f"{slug}{ext}"))
+            out.append((src, "image", UNSORTED / f"{slug}{ext}"))
         elif ext in LEGACY:
             out.append((src, "legacy", Path()))
         else:
@@ -1001,6 +1078,7 @@ def main() -> int:
             "status": "✓ 已汇总为测点主表" if done else "⚠ 待运行 pointtable.py",
         })
 
+    write_assets_manifest(records)
     write_index(records)
     log(f"\n台账已更新：{INDEX.relative_to(REPO)}")
     if failures:

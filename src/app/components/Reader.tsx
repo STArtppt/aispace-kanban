@@ -21,9 +21,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
 import { useFileManagerName } from '@/hooks/useFileManager';
-import { api, type ConvertedItem, type FileItem } from '@/lib/api';
+import { api, type AssetGroup, type ConvertedItem, type FileItem } from '@/lib/api';
 import { formatBytes, formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -433,6 +434,11 @@ function isConverted(item: FileItem): item is ConvertedItem {
   return 'isDir' in item || 'sheets' in item;
 }
 
+/** 图库不是文件而是一摞图，images 就是判据（同 isConverted 的写法）。 */
+function isGallery(item: FileItem): item is AssetGroup {
+  return 'images' in item;
+}
+
 export function Reader({
   projectId,
   item,
@@ -469,7 +475,7 @@ export function Reader({
   const sqlitePath = isConverted(item) ? item.sqlitePath : undefined;
 
   // 目录里有 csv 就按表格包处理（含点表）；item.reader 也可能已是 table
-  const mode: 'markdown' | 'table' | 'text' | 'image' | 'html' | 'external' = multiSheet
+  const mode: 'markdown' | 'table' | 'text' | 'image' | 'html' | 'external' | 'gallery' = multiSheet
     ? 'table'
     : item.reader;
 
@@ -691,6 +697,10 @@ export function Reader({
               item={item}
               sheets={multiSheet ? sheets : [{ path: item.path, name: item.name, size: item.size }]}
             />
+          ) : null}
+
+          {mode === 'gallery' && isGallery(item) ? (
+            <AssetGalleryReader group={item} projectId={projectId} />
           ) : null}
 
           {mode === 'image' ? (

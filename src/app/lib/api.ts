@@ -1,4 +1,12 @@
-export type ReaderKind = 'markdown' | 'table' | 'image' | 'text' | 'html' | 'external';
+export type ReaderKind =
+  | 'markdown'
+  | 'table'
+  | 'image'
+  | 'text'
+  | 'html'
+  | 'external'
+  /** 一摞图片（input/assets/ 下的一个图库），预览区排缩略图，不是单个文件 */
+  | 'gallery';
 
 /**
  * 产出正文里的标注计数（约定见 template 的 pm-project-handover 技能）：
@@ -47,6 +55,15 @@ export interface ConvertedItem extends FileItem {
    * 退回改动前的行为。
    */
   referencedBy?: string[];
+}
+
+/**
+ * input/assets/ 下按首层目录聚成的一个图库：一份文档抽出的图算一堆，
+ * 没有归属的图归到「未分类」。path 指向图库所在目录，name 是目录名，
+ * title 优先用来源文档的标题。
+ */
+export interface AssetGroup extends FileItem {
+  images: FileItem[];
 }
 
 /** /api/projects/:id/table 分页预览大 CSV，不把整文件塞进 JSON */
@@ -115,6 +132,11 @@ export interface Scan {
     raw: FileItem[];
     converted: ConvertedItem[];
     assets: FileItem[];
+    /**
+     * assets 按图库分好的样子。可选：旧服务进程不返回它，
+     * 缺了就退回改动前的行为 —— 所有图片平铺成一个网格。
+     */
+    assetGroups?: AssetGroup[];
     pending: FileItem[];
     indexPath: string;
     /**

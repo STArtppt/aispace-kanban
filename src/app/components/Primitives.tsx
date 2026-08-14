@@ -83,7 +83,8 @@ export function Row({
   );
 }
 
-async function writeClipboard(text: string): Promise<boolean> {
+/** 复制到剪贴板；灯箱工具条这类深色壳层不能用 CopyButton，就直接用它自己拼按钮。 */
+export async function writeClipboard(text: string): Promise<boolean> {
   if (navigator.clipboard?.writeText && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text);

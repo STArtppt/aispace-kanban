@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppWindow, FileText, FolderOpen, Image, Loader2, Search, Table } from 'lucide-react';
+import { AppWindow, ArrowUpDown, FileText, FolderOpen, Image, Loader2, Quote, Search, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
+import { AssetGalleryStack } from '@/components/AssetGalleryStack';
 import { ImageLightbox } from '@/components/ImageLightbox';
 import { CopyButton, EmptyState, ListPager, Row, SectionTitle, Stat } from '@/components/Primitives';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { api, type ConvertedItem, type FileItem, type IngestJob, type Scan } from '@/lib/api';
 import { formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 /** 待转换 / 转换产物列表一页条数 */
 const LIST_PAGE_SIZE = 12;
@@ -151,6 +153,25 @@ const REF_FILTERS = {
 
 type RefFilter = keyof typeof REF_FILTERS;
 
+const SORTS = {
+  name: '按名称',
+  mtimeAsc: '按时间正序',
+  mtimeDesc: '按时间倒序',
+} as const;
+
+type SortKey = keyof typeof SORTS;
+
+const CONVERTED_SORT_KEY = 'aispace-kanban:converted-sort';
+
+function readConvertedSort(): SortKey {
+  const raw = localStorage.getItem(CONVERTED_SORT_KEY);
+  return raw === 'name' || raw === 'mtimeAsc' || raw === 'mtimeDesc' ? raw : 'name';
+}
+
+/** 图标选择器：正方形触发器，藏掉默认文案和下拉箭头 */
+const ICON_SELECT_TRIGGER =
+  'size-8 min-h-8 w-8 justify-center gap-0 px-0 py-0 [&_.lucide-chevron-down]:hidden';
+
 function ConvertedList({
   items,
   hasOutputs,
@@ -163,34 +184,72 @@ function ConvertedList({
   onOpen: (item: FileItem) => void;
 }) {
   const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
   const [refFilter, setRefFilter] = useState<RefFilter>('all');
+  const [sortKey, setSortKey] = useState<SortKey>(readConvertedSort);
+
+  useEffect(() => {
+    localStorage.setItem(CONVERTED_SORT_KEY, sortKey);
+  }, [sortKey]);
   // 没产出、或旧服务没给 referencedBy：筛「未被引用」没意义，控件也不出
   const canFilterUnreferenced = hasOutputs && items.some((item) => Array.isArray(item.referencedBy));
   const activeFilter = canFilterUnreferenced ? refFilter : 'all';
-  const filtered = useMemo(
-    () =>
-      items.filter((item) => {
-        if (activeFilter === 'unreferenced' && item.referencedBy?.length !== 0) return false;
-        return matchConverted(item, query);
-      }),
-    [items, query, activeFilter],
-  );
+  const filtered = useMemo(() => {
+    const list = items.filter((item) => {
+      if (activeFilter === 'unreferenced' && item.referencedBy?.length !== 0) return false;
+      return matchConverted(item, query);
+    });
+    return list.sort((a, b) => {
+      if (sortKey === 'name') {
+        return (a.title || a.name).localeCompare(b.title || b.name, 'zh');
+      }
+      const cmp = (a.mtime || '').localeCompare(b.mtime || '');
+      return sortKey === 'mtimeAsc' ? cmp : -cmp;
+    });
+  }, [items, query, activeFilter, sortKey]);
   const { page, setPage } = useListPage(
     filtered.length,
     LIST_PAGE_SIZE,
-    `${query}\0${activeFilter}\0${items.length}`,
+    `${query}\0${activeFilter}\0${sortKey}\0${items.length}`,
   );
   const pageItems = filtered.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
   const searching = query.trim().length > 0;
+  const searchExpanded = searchOpen || searching;
 
   return (
     <div className="flex flex-col gap-2">
-      {/* 标题左、筛选+搜索右：同一行，避免再占一整行高度 */}
+      {/* 标题左、排序+筛选+搜索右：同一行，避免再占一整行高度 */}
       <div className="flex min-w-0 items-center justify-between gap-3">
         <div className="min-w-0 shrink">
           <SectionTitle count={items.length}>转换产物</SectionTitle>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Select
+            value={sortKey}
+            onValueChange={(value) => {
+              if (value === 'name' || value === 'mtimeAsc' || value === 'mtimeDesc') {
+                setSortKey(value);
+              }
+            }}
+          >
+            <SelectTrigger
+              className={ICON_SELECT_TRIGGER}
+              aria-label="排序转换产物"
+              title="排序"
+            >
+              <ArrowUpDown
+                className={cn(
+                  'size-3.5',
+                  sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
+                )}
+              />
+            </SelectTrigger>
+            <SelectContent align="end" className="min-w-36 w-max">
+              <SelectItem value="name">{SORTS.name}</SelectItem>
+              <SelectItem value="mtimeAsc">{SORTS.mtimeAsc}</SelectItem>
+              <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
+            </SelectContent>
+          </Select>
           {canFilterUnreferenced ? (
             <Select
               value={refFilter}
@@ -199,27 +258,41 @@ function ConvertedList({
               }}
             >
               <SelectTrigger
-                className="h-8 min-h-8 w-[7.5rem] py-0 text-xs"
+                className={ICON_SELECT_TRIGGER}
                 aria-label="筛选转换产物"
+                title="筛选引用"
               >
-                <SelectValue>
-                  {(value: string | null) => (value && value in REF_FILTERS ? REF_FILTERS[value as RefFilter] : null)}
-                </SelectValue>
+                <Quote
+                  className={cn(
+                    'size-3.5',
+                    refFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
+                  )}
+                />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent align="end" className="min-w-36 w-max">
                 <SelectItem value="all">{REF_FILTERS.all}</SelectItem>
                 <SelectItem value="unreferenced">{REF_FILTERS.unreferenced}</SelectItem>
               </SelectContent>
             </Select>
           ) : null}
-          <div className="relative w-[12rem] sm:w-[14rem]">
-            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+          <div
+            className={cn(
+              'relative h-8 transition-[width] duration-200 ease-out',
+              searchExpanded ? 'w-[12rem] sm:w-[14rem]' : 'w-8',
+            )}
+          >
+            <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
+              <Search className="size-3.5" />
+            </span>
             <Input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="按名称搜索…"
-              className="h-8 pl-8 text-xs"
+              onFocus={() => setSearchOpen(true)}
+              onBlur={() => setSearchOpen(false)}
+              placeholder={searchExpanded ? '按名称搜索…' : ''}
+              className={cn('h-8 text-xs', searchExpanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
               aria-label="搜索转换产物"
+              title="搜索"
             />
           </div>
         </div>
@@ -369,7 +442,10 @@ function IngestControls({ projectId, canIngest }: { projectId: string; canIngest
   );
 }
 
-/** 抽出的图走灯箱，不占右侧预览。切工作空间时关掉，避免串图。 */
+/**
+ * 平铺网格：只在旧服务进程没给 assetGroups 时兜底（改动前的行为）。
+ * 有图库分组时走 AssetGalleryStack —— 一份 PDF 几十张图全摞在一起没法找。
+ */
 function AssetGrid({ items, projectId }: { items: FileItem[]; projectId: string }) {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const openIndex = openPath ? items.findIndex((item) => item.path === openPath) : -1;
@@ -430,6 +506,8 @@ export function InputPanel({
   const hasOutputs = scan.output.stats.total > 0;
   // 旧服务进程没有 canIngest：整块按钮不出现，只保留终端命令提示
   const canIngest = Boolean(input.canIngest);
+  // 旧服务进程没有 assetGroups：退回平铺网格
+  const galleries = input.assetGroups || [];
 
   return (
     <div className="flex flex-col gap-6">
@@ -506,9 +584,25 @@ export function InputPanel({
       </section>
 
       {input.assets.length ? (
-        <section className="flex flex-col gap-2">
-          <SectionTitle count={input.assets.length}>文档里抽出的图片</SectionTitle>
-          <AssetGrid items={input.assets} projectId={projectId} />
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-col gap-1">
+            <SectionTitle count={input.assets.length}>图片资料</SectionTitle>
+            {galleries.length ? (
+              <p className="text-xs text-muted-foreground">
+                每份文档抽出的图算一摞，直接放进 input/raw/ 的图归到「未分类」。点开在右侧看缩略图。
+              </p>
+            ) : null}
+          </div>
+          {galleries.length ? (
+            <AssetGalleryStack
+              groups={galleries}
+              projectId={projectId}
+              openPath={openPath}
+              onOpen={onOpen}
+            />
+          ) : (
+            <AssetGrid items={input.assets} projectId={projectId} />
+          )}
         </section>
       ) : null}
 

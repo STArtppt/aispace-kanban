@@ -12,6 +12,8 @@ import { scanPrototypes } from './prototypes.mjs';
 const SKIP = new Set(['.git', 'node_modules', '.DS_Store', '.gitkeep']);
 const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.csv', '.tsv', '.json', '.yaml', '.yml', '.xml']);
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
+/** 图片资料的兜底分组：没有归到某份文档名下的图都算这一堆（ingest.py 的落点同名） */
+const UNSORTED_ASSETS = '未分类';
 
 function rel(root, abs) {
   return path.relative(root, abs).split(path.sep).join('/');
@@ -167,6 +169,77 @@ function describeOutput(root, abs) {
   return { item, body };
 }
 
+/**
+ * 把 input/assets/ 下的图片按首层目录聚成「图库」。
+ * 一份 PDF 能抽出几十张图，全摞在一个网格里等于找不到；目录名就是转换产物的 slug，
+ * 所以标题回填成那份文档的标题。直接躺在 assets/ 根下的图（旧版 ingest.py 的落点）
+ * 与 assets/未分类/ 合成同一堆，免得同一批图分裂成两个图库。
+ */
+function groupAssets(root, assets, converted) {
+  const prefix = 'input/assets/';
+  const byKey = new Map();
+  for (const item of assets) {
+    if (!item.path.startsWith(prefix)) continue;
+    const segments = item.path.slice(prefix.length).split('/');
+    const key = segments.length > 1 ? segments[0] : UNSORTED_ASSETS;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(item);
+  }
+
+  const docTitle = (key) => {
+    const doc = converted.find(
+      (c) => c.path === `input/converted/${key}.md` || c.path === `input/converted/${key}`,
+    );
+    return doc ? doc.title || doc.name : '';
+  };
+
+  const groups = [];
+  for (const [key, images] of byKey) {
+    images.sort((a, b) => a.name.localeCompare(b.name, 'zh', { numeric: true }));
+    // 组自己的路径必须真实存在，「在访达中显示」才点得开：旧落点没有 未分类/ 这层目录
+    const dirExists = fs.existsSync(path.join(root, 'input', 'assets', key));
+    groups.push({
+      path: dirExists ? `${prefix}${key}` : 'input/assets',
+      name: key,
+      reader: 'gallery',
+      title: (key === UNSORTED_ASSETS ? '' : docTitle(key)) || key,
+      images,
+      size: images.reduce((sum, i) => sum + i.size, 0),
+      mtime: images.reduce((latest, i) => (i.mtime > latest ? i.mtime : latest), ''),
+    });
+  }
+  // 未分类是兜底堆，排在有出处的文档图库后面
+  groups.sort((a, b) => {
+    if (a.name === UNSORTED_ASSETS) return 1;
+    if (b.name === UNSORTED_ASSETS) return -1;
+    return a.title.localeCompare(b.title, 'zh');
+  });
+  return groups;
+}
+
+/**
+ * 读回「哪些原始图片已经拷进 assets/ 了」（ingest.py 写在 assets/<组>/_manifest.md 的
+ * sources 列表里）。图片没有 .md 产物，光看 converted/ 会让它永远停在待转换列表里 ——
+ * 那是本仓踩过的坑：文件明明已经入库，界面上还在催人转换。
+ * 旧版 ingest.py 不写这份清单，读不到就退回改动前的行为（图片仍算待转换）。
+ */
+function readAssetSources(root) {
+  const assetsDir = path.join(root, 'input', 'assets');
+  const out = new Set();
+  if (!fs.existsSync(assetsDir)) return out;
+  for (const entry of fs.readdirSync(assetsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || SKIP.has(entry.name) || entry.name.startsWith('.')) continue;
+    const manifest = path.join(assetsDir, entry.name, '_manifest.md');
+    if (!fs.existsSync(manifest)) continue;
+    const { meta } = parseFrontmatter(readTextSafe(manifest));
+    const sources = Array.isArray(meta.sources) ? meta.sources : [];
+    for (const src of sources) {
+      if (src) out.add(src);
+    }
+  }
+  return out;
+}
+
 function scanInput(root) {
   const inputDir = path.join(root, 'input');
   const raw = listFiles(path.join(inputDir, 'raw')).map((abs) => ({
@@ -186,13 +259,17 @@ function scanInput(root) {
     }
   }
 
-  const assets = listFiles(path.join(inputDir, 'assets')).map((abs) => ({
-    path: rel(root, abs),
-    name: path.basename(abs),
-    ext: path.extname(abs).toLowerCase(),
-    reader: 'image',
-    ...stat(abs),
-  }));
+  // 只收图片：assets/ 下还有 ingest.py 写的 _manifest.md，它不该出现在图库里
+  const assets = listFiles(path.join(inputDir, 'assets'))
+    .filter((abs) => IMAGE_EXT.has(path.extname(abs).toLowerCase()))
+    .map((abs) => ({
+      path: rel(root, abs),
+      name: path.basename(abs),
+      ext: path.extname(abs).toLowerCase(),
+      reader: 'image',
+      ...stat(abs),
+    }));
+  const assetGroups = groupAssets(root, assets, converted);
 
   // 哪些原始资料还没转换 —— 这是 PM 最该先看到的缺口
   const convertedSources = new Set(converted.map((c) => c.source).filter(Boolean));
@@ -201,8 +278,11 @@ function scanInput(root) {
   const coveredDirs = converted
     .filter((c) => c.sourceIsDir && c.source)
     .map((c) => ({ prefix: c.source + '/', kinds: c.sourceKinds }));
+  // 图片的「产物」就是 assets/ 里那份拷贝，没有 .md，靠图库清单认账
+  const assetSources = readAssetSources(root);
   const isCovered = (r) =>
     convertedSources.has(r.path) ||
+    assetSources.has(r.path) ||
     coveredDirs.some((d) => r.path.startsWith(d.prefix) && d.kinds.includes(r.ext));
   const pending = raw.filter((r) => !isCovered(r));
 
@@ -213,6 +293,7 @@ function scanInput(root) {
     raw,
     converted,
     assets,
+    assetGroups,
     pending,
     indexPath: fs.existsSync(indexPath) ? rel(root, indexPath) : '',
     canIngest,
