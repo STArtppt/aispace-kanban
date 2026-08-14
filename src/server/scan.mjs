@@ -4,6 +4,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { countAnnotations, linkReferences } from './citations.mjs';
 import { countWords, firstHeading, parseFrontmatter } from './frontmatter.mjs';
 import { readMeta } from './meta.mjs';
 import { scanPrototypes } from './prototypes.mjs';
@@ -138,6 +139,10 @@ function describeConverted(root, abs) {
   return item;
 }
 
+/**
+ * 返回 { item, body }：body 只在扫描期内用来反查引用关系，不进 JSON。
+ * 非 markdown 产物没有正文可分析，body 为空串。
+ */
 function describeOutput(root, abs) {
   const ext = path.extname(abs).toLowerCase();
   const item = {
@@ -147,16 +152,19 @@ function describeOutput(root, abs) {
     reader: readerKind(ext),
     ...stat(abs),
   };
-  if (item.reader === 'markdown') {
-    const { meta, body } = parseFrontmatter(readTextSafe(abs));
-    item.title = firstHeading(body) || path.basename(abs, ext);
-    item.words = countWords(body);
-    if (meta.status) item.status = meta.status;
-    if (meta.date) item.date = meta.date;
-  } else {
+  if (item.reader !== 'markdown') {
     item.title = path.basename(abs, ext);
+    return { item, body: '' };
   }
-  return item;
+  const { meta, body } = parseFrontmatter(readTextSafe(abs));
+  item.title = firstHeading(body) || path.basename(abs, ext);
+  item.words = countWords(body);
+  if (meta.status) item.status = meta.status;
+  if (meta.date) item.date = meta.date;
+  // 一条标注都没有时不写这个字段：界面上「0 条」和「旧服务进程没这字段」都是不显示
+  const annotations = countAnnotations(body);
+  if (annotations.total) item.annotations = annotations;
+  return { item, body };
 }
 
 function scanInput(root) {
@@ -199,12 +207,15 @@ function scanInput(root) {
   const pending = raw.filter((r) => !isCovered(r));
 
   const indexPath = path.join(inputDir, 'INDEX.md');
+  // 模板工作空间才有 scripts/ingest.py；自己 mkdir 的只有目录约定，不能在看板里触发转换
+  const canIngest = fs.existsSync(path.join(root, 'scripts', 'ingest.py'));
   return {
     raw,
     converted,
     assets,
     pending,
     indexPath: fs.existsSync(indexPath) ? rel(root, indexPath) : '',
+    canIngest,
     stats: {
       raw: raw.length,
       converted: converted.length,
@@ -217,30 +228,61 @@ function scanInput(root) {
   };
 }
 
+/**
+ * 返回 { output, docs }：docs 是各产出的正文，只供 attachReferences 用，不进 JSON。
+ */
 function scanOutput(root) {
   const outputDir = path.join(root, 'output');
   const groups = {};
+  const docs = [];
   for (const group of ['analysis', 'docs', 'decisions']) {
     groups[group] = listFiles(path.join(outputDir, group))
-      .map((abs) => describeOutput(root, abs))
+      .map((abs) => {
+        const { item, body } = describeOutput(root, abs);
+        if (body) docs.push({ path: item.path, text: body });
+        return item;
+      })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
   }
   const all = Object.values(groups).flat();
+  const annotated = all.filter((f) => f.annotations);
   return {
-    ...groups,
-    stats: {
-      analysis: groups.analysis.length,
-      docs: groups.docs.length,
-      decisions: groups.decisions.length,
-      total: all.length,
-      words: all.reduce((sum, f) => sum + (f.words || 0), 0),
-      lastUpdated: all.length ? all.reduce((a, b) => (a.mtime > b.mtime ? a : b)).mtime : '',
+    output: {
+      ...groups,
+      stats: {
+        analysis: groups.analysis.length,
+        docs: groups.docs.length,
+        decisions: groups.decisions.length,
+        total: all.length,
+        words: all.reduce((sum, f) => sum + (f.words || 0), 0),
+        lastUpdated: all.length ? all.reduce((a, b) => (a.mtime > b.mtime ? a : b)).mtime : '',
+        annotated: annotated.length,
+        annotations: annotated.reduce((sum, f) => sum + f.annotations.total, 0),
+      },
     },
+    docs,
   };
+}
+
+/**
+ * 给每份转换产物挂上「哪些产出引用了它」。
+ *
+ * 一份产出都还没有时，所有资料当然都是零引用 —— 那种情况下 referencedBy 全是空数组，
+ * 由前端决定不提示（刚建的工作空间不该满屏缺口）。服务端不在这里做判断，
+ * 因为「有没有产出」前端本来就知道，放这儿反而多一处要对齐的口径。
+ */
+function attachReferences(input, docs) {
+  const map = linkReferences(input.converted, docs);
+  for (const item of input.converted) {
+    item.referencedBy = map.get(item.path) || [];
+  }
 }
 
 export function scanWorkspace(project, status = { ok: true, reasons: [] }) {
   const root = project.root;
+  const input = scanInput(root);
+  const { output, docs } = scanOutput(root);
+  attachReferences(input, docs);
   return {
     project: { id: project.id, name: project.name, root },
     // 目录被改名/移走时不能扫出一份「什么都没有」的空结果 —— 那和真的空工作空间没法区分
@@ -248,8 +290,8 @@ export function scanWorkspace(project, status = { ok: true, reasons: [] }) {
     unavailableReasons: status.reasons,
     scannedAt: new Date().toISOString(),
     meta: readMeta(root),
-    input: scanInput(root),
-    output: scanOutput(root),
+    input,
+    output,
     prototypes: scanPrototypes(root, project.id),
   };
 }

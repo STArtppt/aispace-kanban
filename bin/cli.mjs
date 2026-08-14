@@ -149,13 +149,18 @@ async function cmdServe(args) {
     });
   }
 
-  const server = createServer();
+  // 非环回监听 = 给同网络只读分享用；会起子进程 / 写盘的接口一律关掉，见 http.mjs
+  const allowMutations = LOOPBACK.has(host);
+  const server = createServer({ allowMutations });
   server.listen(port, host, () => {
     const shown = LOOPBACK.has(host) ? 'localhost' : host;
     const appUrl = dev ? `http://${shown}:${DEV_PORT}` : `http://${shown}:${port}`;
     console.log(`\n  工作空间看板已启动`);
     console.log(`  界面   ${appUrl}`);
     console.log(`  接口   http://${shown}:${port}/api`);
+    if (!allowMutations) {
+      console.log('  模式   只读分享（非本机地址：已禁用新建 / 登记 / 转换资料等写操作）');
+    }
     const { projects } = readProjects();
     console.log(`  已登记 ${projects.length} 个工作空间${projects.length ? '' : '（在界面上「添加工作空间」，或用 add 命令）'}`);
     console.log(`  按 Ctrl+C 停\n`);

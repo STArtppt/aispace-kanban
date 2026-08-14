@@ -25,6 +25,13 @@ const DIST = path.resolve(HERE, '../../dist');
 /** 大 CSV 行数缓存：key = abs + mtime，避免翻页时反复全量扫 */
 const tableRowCountCache = new Map();
 
+/**
+ * 每个项目至多一个进行中的 ingest 任务。
+ * status: running | done | error；日志只保留尾部，避免 PDF 批量转换时撑爆内存。
+ */
+const ingestJobs = new Map();
+const INGEST_LOG_LIMIT = 32 * 1024;
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.htm': 'text/html; charset=utf-8',
@@ -176,6 +183,186 @@ async function runInit(templateRoot, name, target) {
   };
 }
 
+/** 找一个能用的 Python 3。解释器名各平台不同，挨个试到 `--version` 成功为止。 */
+function findPython() {
+  return new Promise((resolve) => {
+    const candidates = [...PYTHON_CANDIDATES];
+    const tryNext = () => {
+      const next = candidates.shift();
+      if (!next) return resolve(null);
+      const [bin, ...prefix] = next;
+      const child = spawn(bin, [...prefix, '--version'], { stdio: 'ignore' });
+      let settled = false;
+      const done = (ok) => {
+        if (settled) return;
+        settled = true;
+        if (ok) resolve([bin, ...prefix]);
+        else tryNext();
+      };
+      child.on('error', () => done(false));
+      child.on('close', (code) => done(code === 0));
+    };
+    tryNext();
+  });
+}
+
+/**
+ * 从脚本输出里提炼人话。ingest.py 自己会打中文日志，优先复用最后几行；
+ * 常见缺依赖场景再补一句「下一步怎么做」。
+ */
+function summarizeIngestLog(log, exitCode) {
+  const text = (log || '').trim();
+  const lines = text ? text.split(/\r?\n/).filter(Boolean) : [];
+  const tail = lines.slice(-8).join('\n');
+  const lower = text.toLowerCase();
+
+  if (/找不到 python|no such file|not found.*python|python was not found/i.test(text)) {
+    return {
+      message: '找不到 Python 3。请先装 Python 3（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。',
+      log: tail,
+    };
+  }
+  if (/mineru|MINERU_API_KEY/i.test(text) && /失败|error|无效|invalid|未配置|缺|401|403|未授权/i.test(text)) {
+    return {
+      message: 'MinerU 转换失败。检查工作空间根目录的 .env 是否配置了 MINERU_API_KEY'
+        + '（可参考 .env.example；token 在 https://mineru.net/apiManage 申请）。'
+        + (tail ? `\n\n${tail}` : ''),
+      log: tail,
+    };
+  }
+  if (/缺少 pandoc/i.test(text)) {
+    return {
+      message: '转换需要 pandoc，请先安装（macOS：`brew install pandoc`），再试一次。'
+        + (tail ? `\n\n${tail}` : ''),
+      log: tail,
+    };
+  }
+  if (/缺少 markitdown/i.test(text)) {
+    return {
+      message: '转换需要 markitdown，请先 `pip install \'markitdown[all]\'`，再试一次。'
+        + (tail ? `\n\n${tail}` : ''),
+      log: tail,
+    };
+  }
+  if (exitCode === 0) {
+    // 没文件 / 台账更新 / 兜底：优先用脚本自己打的中文行
+    const empty = lines.find((l) => l.includes('input/raw/ 里没有文件'));
+    const updated = lines.find((l) => l.includes('台账已更新'));
+    return {
+      message: empty || updated || '转换完成。',
+      log: tail,
+    };
+  }
+  const failLine = [...lines].reverse().find((l) => /失败|有 \d+ 个文件转换失败/.test(l));
+  return {
+    message: failLine
+      || (tail ? `转换脚本异常退出（退出码 ${exitCode}）。\n\n${tail}` : `转换脚本异常退出（退出码 ${exitCode}）。`),
+    log: tail,
+  };
+}
+
+function appendIngestLog(job, chunk) {
+  job.log = (job.log || '') + chunk;
+  if (job.log.length > INGEST_LOG_LIMIT) {
+    job.log = job.log.slice(job.log.length - INGEST_LOG_LIMIT);
+  }
+}
+
+/**
+ * 在工作空间里异步跑 scripts/ingest.py。
+ * 看板只 spawn，真正写 input/converted/ 的是工作空间自己的脚本 —— 与 runInit 同构。
+ * 接口立刻返回，进度靠 GET /ingest 轮询；写盘会被 watchWorkspace 捕获，页面自己刷新。
+ */
+async function startIngest(project) {
+  const existing = ingestJobs.get(project.id);
+  if (existing?.status === 'running') {
+    const err = new Error('这个工作空间正在转换资料，等这轮结束后再试。');
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const script = path.join(project.root, 'scripts', 'ingest.py');
+  if (!fs.existsSync(script)) {
+    const err = new Error(
+      '这个工作空间没有 scripts/ingest.py，看板没法替你转换。'
+        + '用模板新建工作空间会自带转换脚本；自己 mkdir 的目录需要自己装脚本，'
+        + '或在终端里按自己的方式处理 input/raw/。',
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const py = await findPython();
+  if (!py) {
+    const err = new Error(
+      '找不到 Python 3。转换脚本要靠它跑，请先装 Python 3'
+        + '（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。',
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const [bin, ...prefix] = py;
+  const job = {
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    finishedAt: '',
+    exitCode: null,
+    message: '正在转换 input/raw/ … 大 PDF 可能要几分钟。',
+    log: '',
+  };
+  ingestJobs.set(project.id, job);
+
+  const child = spawn(bin, [...prefix, script], {
+    cwd: project.root,
+    env: process.env,
+  });
+
+  child.stdout.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
+  child.stderr.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
+  child.on('error', (err) => {
+    // spawn 异步失败（解释器中途消失等）：不能让未处理的 error 把常驻服务带崩
+    if (job.status !== 'running') return;
+    job.status = 'error';
+    job.finishedAt = new Date().toISOString();
+    job.exitCode = null;
+    job.message = err.code === 'ENOENT'
+      ? '找不到 Python 3。请先装 Python 3（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。'
+      : `启动转换脚本失败：${err.message}`;
+  });
+  child.on('close', (code) => {
+    if (job.status !== 'running') return;
+    const exitCode = code ?? 1;
+    job.exitCode = exitCode;
+    job.finishedAt = new Date().toISOString();
+    const summary = summarizeIngestLog(job.log, exitCode);
+    job.message = summary.message;
+    job.log = summary.log;
+    job.status = exitCode === 0 ? 'done' : 'error';
+  });
+
+  return {
+    status: job.status,
+    startedAt: job.startedAt,
+    message: job.message,
+  };
+}
+
+function ingestStatus(projectId) {
+  const job = ingestJobs.get(projectId);
+  if (!job) {
+    return { status: 'idle', message: '', startedAt: '', finishedAt: '', exitCode: null, log: '' };
+  }
+  return {
+    status: job.status,
+    message: job.message || '',
+    startedAt: job.startedAt || '',
+    finishedAt: job.finishedAt || '',
+    exitCode: job.exitCode,
+    log: job.log || '',
+  };
+}
+
 function requireProject(id) {
   const project = getProject(id);
   if (!project) {
@@ -234,7 +421,21 @@ function decodeSegment(segment) {
   }
 }
 
-async function handleApi(req, res, url) {
+/**
+ * 会起子进程或写盘的接口：监听非环回地址时一律拒绝。
+ * 看板没有鉴权，`--host 0.0.0.0` 是给评审只读分享用的，不能变成局域网里的可执行入口。
+ */
+function rejectIfRemoteWrite(res, allowMutations) {
+  if (allowMutations) return false;
+  json(res, 403, {
+    error: '当前服务监听的不是本机回环地址，已禁用会改动本机状态的操作'
+      + '（新建 / 登记 / 转换资料等）。只读浏览不受影响；'
+      + '要在看板里操作，请用默认的 127.0.0.1 再起一次服务。',
+  });
+  return true;
+}
+
+async function handleApi(req, res, url, { allowMutations = true } = {}) {
   const segments = url.pathname.split('/').filter(Boolean).slice(1).map(decodeSegment); // 去掉 'api'
   const [head, id, action] = segments;
 
@@ -252,6 +453,7 @@ async function handleApi(req, res, url) {
       });
     }
     if (req.method === 'POST') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
       const body = await readBody(req);
       const project = addProject(body.root, body.name);
       return json(res, 200, project);
@@ -259,8 +461,12 @@ async function handleApi(req, res, url) {
   }
 
   if (head === 'projects' && id && !action) {
-    if (req.method === 'DELETE') return json(res, 200, { removed: removeProject(id) });
+    if (req.method === 'DELETE') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      return json(res, 200, { removed: removeProject(id) });
+    }
     if (req.method === 'PATCH') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
       const body = await readBody(req);
       return json(res, 200, updateProject(id, { root: body.root, name: body.name }));
     }
@@ -287,6 +493,7 @@ async function handleApi(req, res, url) {
 
   // 新建工作空间：调模板的 init_workspace.py（默认是本仓 template/），建完自动登记
   if (head === 'workspaces' && req.method === 'POST') {
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
     const body = await readBody(req);
     const name = (body.name || '').trim();
     const target = (body.path || '').trim();
@@ -392,12 +599,27 @@ async function handleApi(req, res, url) {
 
   // 交给系统：在访达里定位，或用默认程序打开原始文档
   if (head === 'projects' && id && action === 'reveal' && req.method === 'POST') {
+    // 起系统进程只在服务所在机器上有意义；远程分享场景禁掉，避免被当成任意 open 入口
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     const abs = resolveInside(project.root, body.path);
     if (!fs.existsSync(abs)) return json(res, 404, { error: '文件不存在' });
     revealInSystem(abs, body.mode);
     return json(res, 200, { ok: true, path: abs });
+  }
+
+  // 触发工作空间自己的 scripts/ingest.py：看板只 spawn，不直接写盘
+  if (head === 'projects' && id && action === 'ingest') {
+    const project = requireProject(id);
+    if (req.method === 'GET') {
+      return json(res, 200, ingestStatus(project.id));
+    }
+    if (req.method === 'POST') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      const started = await startIngest(project);
+      return json(res, 200, started);
+    }
   }
 
   if (head === 'projects' && id && action === 'events') {
@@ -425,11 +647,18 @@ async function handleApi(req, res, url) {
   return json(res, 404, { error: `未知接口：${url.pathname}` });
 }
 
-export function createServer({ devOrigin = '' } = {}) {
+/**
+ * @param {{ devOrigin?: string, allowMutations?: boolean }} [opts]
+ * allowMutations：监听环回地址时为 true（默认）；`--host 0.0.0.0` 时由 CLI 传 false，
+ * 禁掉会起子进程 / 写注册表的接口，只读分享不受影响。
+ */
+export function createServer({ devOrigin = '', allowMutations = true } = {}) {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     try {
-      if (url.pathname.startsWith('/api/')) return await handleApi(req, res, url);
+      if (url.pathname.startsWith('/api/')) {
+        return await handleApi(req, res, url, { allowMutations });
+      }
     } catch (err) {
       return json(res, err.statusCode || 500, { error: err.message });
     }

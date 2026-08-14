@@ -14,6 +14,21 @@ const GROUPS = [
   { key: 'decisions' as const, title: '决策记录', hint: '一个决策一个文件，只追加不改历史', icon: Stamp },
 ];
 
+/**
+ * 这份产出里有多少内容还没有资料支撑。
+ * 中性灰而不是 orange —— 标注是 AI 老实交代的产出，不是要人去修的缺口；
+ * 标红只会让人学会把标注写少，正好跟溯源纪律反着来。
+ */
+function annotationLabel(item: FileItem): string {
+  const marks = item.annotations;
+  if (!marks?.total) return '';
+  const parts: string[] = [];
+  if (marks.inferred) parts.push(`${marks.inferred} 处推断`);
+  if (marks.verbal) parts.push(`${marks.verbal} 处待确认`);
+  if (marks.blank) parts.push(`${marks.blank} 处空白`);
+  return ` · ${parts.join('、')}`;
+}
+
 export function OutputPanel({
   scan,
   openPath,
@@ -24,12 +39,19 @@ export function OutputPanel({
   onOpen: (item: FileItem) => void;
 }) {
   const { output } = scan;
+  // 旧服务进程不返回 annotations，那时候退回只显示字数
+  const marks = output.stats.annotations ?? 0;
+  const wordsHint = formatWords(output.stats.words);
 
   return (
     <div className="flex flex-col gap-6">
       {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
       <div className="grid grid-cols-3 gap-2">
-        <Stat label="产出文件" value={output.stats.total} hint={formatWords(output.stats.words)} />
+        <Stat
+          label="产出文件"
+          value={output.stats.total}
+          hint={marks ? `${wordsHint} · ${marks} 处标注` : wordsHint}
+        />
         <Stat label="分析产物" value={output.stats.analysis} />
         <Stat
           label="交付文档"
@@ -63,6 +85,7 @@ export function OutputPanel({
                       <span className="truncate text-xs text-muted-foreground" title={item.path}>
                         {item.path}
                         {datePrefix(item.name) ? '' : ` · ${formatRelative(item.mtime)}`}
+                        {annotationLabel(item)}
                       </span>
                     </div>
                     <CopyButton value={markdownLink(item.title || item.name, item.path)} />

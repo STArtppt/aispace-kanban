@@ -22,13 +22,18 @@
 **不变量(违反即为 bug,不接受任何"顺手写一下"):**
 
 1. **对工作空间只读。** 服务端只 `read`,不 `write` / `rename` / `unlink` 工作空间里的任何文件。
-   全仓仅两处例外,且都不碰工作空间内容:
-   - 注册表 `~/.pmwork/dashboard/projects.json`(`src/server/config.mjs` 的 `writeProjects`)
+   真正改工作空间内容的,只能是**用户明确发起、由工作空间自己的工具执行**的子进程:
+   - 注册表 `~/.pmwork/dashboard/projects.json`(`src/server/config.mjs` 的 `writeProjects`)—— 不碰工作空间
    - 新建工作空间时调模板仓的 `scripts/init_workspace.py`(`src/server/http.mjs` 的 `runInit`)——
      铺骨架由模板仓负责,看板不自己造目录
+   - 资料转换时调工作空间的 `scripts/ingest.py`(`src/server/http.mjs` 的 `startIngest`)——
+     看板只 `spawn`,写 `input/converted/` 的是脚本本身
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/http.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
+4. **非环回监听时禁写。** `--host` 不是环回地址时,所有会起子进程 / 写注册表的接口一律 403
+   (`createServer({ allowMutations })`,`bin/cli.mjs` 按 `LOOPBACK` 传入)。
+   只读分享(扫目录、读文件、SSE)不受影响。
 
 ---
 

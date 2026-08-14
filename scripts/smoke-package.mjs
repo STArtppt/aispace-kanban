@@ -163,7 +163,22 @@ try {
   const scan = await fetch(`${base}/api/projects/${created.id}/scan`).then((r) => r.json());
   if (scan.available === false) die(`扫描说工作空间不可用：${(scan.unavailableReasons || []).join('、')}`);
   if (!scan.meta?.exists) die('扫描没读到 project.yaml');
-  ok('扫描正常，读到了 project.yaml');
+  if (!scan.input?.canIngest) die('扫描没标 canIngest —— 模板工作空间应有 scripts/ingest.py');
+  ok('扫描正常，读到了 project.yaml，canIngest=true');
+
+  // ── 6b 看板触发转换（立刻返回 + 无 raw 时脚本秒退）────────────────────────
+  const started = await fetch(`${base}/api/projects/${created.id}/ingest`, { method: 'POST' }).then((r) => r.json());
+  if (started.status !== 'running' && started.status !== 'done') {
+    die(`触发转换失败：${started.error || JSON.stringify(started)}`);
+  }
+  const ingestDone = await waitFor(async () => {
+    const st = await fetch(`${base}/api/projects/${created.id}/ingest`).then((r) => r.json());
+    return st.status === 'done' || st.status === 'error' ? st : null;
+  }, { timeout: 30000 });
+  if (ingestDone.status !== 'done') {
+    die(`转换没有成功结束：${ingestDone.message || ingestDone.status}`, ingestDone.log);
+  }
+  ok('POST /ingest 能跑完（空 raw 秒退）');
 
   // ── 7 只读红线：路径穿越必须被挡 ──────────────────────────────────────────
   const traversal = await fetch(`${base}/api/projects/${created.id}/file?path=${encodeURIComponent('../../../etc/passwd')}`);

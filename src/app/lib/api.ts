@@ -1,5 +1,17 @@
 export type ReaderKind = 'markdown' | 'table' | 'image' | 'text' | 'html' | 'external';
 
+/**
+ * 产出正文里的标注计数（约定见 template 的 pm-project-handover 技能）：
+ * 推断 = 资料没写、AI 推出来的；口述待确认 = 来自会议或聊天；空白 = 该有结论但资料里没有。
+ * 这三类是**有意留下的产出**，不是缺陷，所以界面上用中性灰，不上 orange。
+ */
+export interface Annotations {
+  inferred: number;
+  verbal: number;
+  blank: number;
+  total: number;
+}
+
 export interface FileItem {
   path: string;
   name: string;
@@ -11,6 +23,8 @@ export interface FileItem {
   words?: number;
   status?: string;
   date?: string;
+  /** 一条标注都没有时服务端不返回；旧服务进程也没有。缺了就什么都不显示。 */
+  annotations?: Annotations;
 }
 
 export interface ConvertedItem extends FileItem {
@@ -27,6 +41,12 @@ export interface ConvertedItem extends FileItem {
   convertedAt?: string;
   warning?: string;
   extractedImages?: number;
+  /**
+   * 哪些产出文档提到了这份资料（output/ 下的相对路径）。空数组 = 一篇都没提到。
+   * 可选：旧服务进程不返回它，缺字段时前端不显示引用信息、也不报「零引用」，
+   * 退回改动前的行为。
+   */
+  referencedBy?: string[];
 }
 
 /** /api/projects/:id/table 分页预览大 CSV，不把整文件塞进 JSON */
@@ -97,6 +117,11 @@ export interface Scan {
     assets: FileItem[];
     pending: FileItem[];
     indexPath: string;
+    /**
+     * 工作空间里有 scripts/ingest.py 时为 true，前端才显示「开始转换」按钮。
+     * 可选：旧服务进程没有这个字段时退回纯文字提示（改动前的行为）。
+     */
+    canIngest?: boolean;
     stats: {
       raw: number;
       converted: number;
@@ -118,6 +143,9 @@ export interface Scan {
       total: number;
       words: number;
       lastUpdated: string;
+      /** 带标注的产出份数 / 标注总条数。可选：旧服务进程没有这两个字段。 */
+      annotated?: number;
+      annotations?: number;
     };
   };
   prototypes: Prototypes;
@@ -141,6 +169,21 @@ export interface RelinkCandidate {
   root: string;
   name: string;
   mtime: string;
+}
+
+/**
+ * POST/GET /api/projects/:id/ingest 的任务状态。
+ * idle = 这个进程里还没跑过；running 时前端轮询；done/error 时展示 message。
+ */
+export type IngestStatus = 'idle' | 'running' | 'done' | 'error';
+
+export interface IngestJob {
+  status: IngestStatus;
+  message: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number | null;
+  log?: string;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -200,4 +243,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path, mode }),
     }),
+  /** 触发工作空间 scripts/ingest.py；立刻返回，进度用 ingestStatus 轮询 */
+  startIngest: (id: string) =>
+    request<IngestJob>(`/api/projects/${id}/ingest`, { method: 'POST' }),
+  ingestStatus: (id: string) => request<IngestJob>(`/api/projects/${id}/ingest`),
 };
