@@ -12,6 +12,7 @@ import {
   type RefObject,
 } from 'react';
 import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { MarkdownCodeBlock } from '@/components/MarkdownCodeBlock';
 import { MermaidBlock } from '@/components/MermaidBlock';
@@ -61,7 +62,7 @@ function findHeadingEl(container: HTMLElement | null, item: TocItem): HTMLElemen
 }
 
 /**
- * 纯 token 的 markdown 排版。
+ * markdown 排版。
  * 标题 id 不在 render 时分配（StrictMode 会双调组件导致序号错位），
  * 改由 syncHeadingsFromDom 在布局后写入。
  */
@@ -156,8 +157,13 @@ function buildComponents(): ComponentProps<typeof ReactMarkdown>['components'] {
     td: ({ className, ...props }) => (
       <td className={cn('border-b border-border px-3 py-2 align-top last:border-r-0', className)} {...props} />
     ),
-    img: ({ className, ...props }) => (
-      <img className={cn('my-4 max-w-full rounded-lg border border-border', className)} {...props} />
+    img: ({ className, style, ...props }) => (
+      <img
+        className={cn('my-4 h-auto max-w-full rounded-lg border border-border', className)}
+        // pandoc 会带 Word 的固定宽高（如 6.76in）；窄栏下保留高度会把图压扁
+        style={style ? { ...style, height: 'auto' } : undefined}
+        {...props}
+      />
     ),
   };
 }
@@ -348,6 +354,9 @@ export function Markdown({
       <ReactMarkdown
         key={renderKey}
         remarkPlugins={[remarkGfm]}
+        // pandoc 从 docx 转出的图/表是裸 HTML，不是 ![]()；不接 rehype-raw 会被转义掉
+        rehypePlugins={[rehypeRaw]}
+        disallowedElements={['script', 'iframe', 'object', 'embed']}
         components={mdComponents}
         urlTransform={urlTransform}
       >

@@ -33,6 +33,7 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 接口 403 路径超出范围 | `resolveInside` 拦住了(通常是相对路径拼错) | 打出传进去的 `relPath`,它必须是工作空间内的相对路径、`/` 分隔 |
 | 服务端改动"没生效"且不报错 | **`.mjs` 不参与类型检查**,写错的属性名会静默返回 `undefined` | 在服务端 `console.log` 出真实对象,别靠推断 |
 | 只有**某些**工作空间点进去全报"没有登记过的项目" | 那几个的 `id` 里有中文/空格 —— URL 路径段是百分号编码的,服务端忘了解码 | `curl "localhost:5180/api/projects/中文名/scan"` 对比 ASCII 名的;`handleApi` 的 `decodeSegment` 就是修这个的 |
+| markdown 正文图片空白 / 页面上露出裸 `<img>` | pandoc 从 docx 转出的是 HTML 图,不是 `![]()`;`react-markdown` 默认转义 HTML | 打开 converted `.md` 看是 `<img` 还是 `![](`;`Markdown.tsx` 必须接 `rehype-raw` |
 | 装成 npm 包后才出的毛病(白屏 / 新建工作空间失败) | 包里缺东西:`dist/` 没构建、依赖没进 `dependencies`、模板文件被 npm 打包规则吃掉 | `pnpm smoke:npm` —— 它在干净目录装上真跑一遍,比在源码仓怎么试都准 |
 
 排不掉,继续:
