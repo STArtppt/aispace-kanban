@@ -17,7 +17,7 @@ import {
 } from './config.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
-import { scanWorkspace } from './scan.mjs';
+import { scanWorkspace, verifySource } from './scan.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '../../dist');
@@ -595,6 +595,15 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
     const page = await readCsvPage(abs, { offset, limit });
     return json(res, 200, { path: relPath, ...page });
+  }
+
+  // 按需校验溯源：重算原件的 sha256 跟产物记的比。扫描只看 mtime（快但会误报），
+  // 这里是用户点了「校验原件」才跑的坐实手段，一次只算一份。
+  if (head === 'projects' && id && action === 'verify-source') {
+    const project = requireProject(id);
+    const relPath = url.searchParams.get('path') || '';
+    resolveInside(project.root, relPath);
+    return json(res, 200, await verifySource(project.root, relPath));
   }
 
   // 交给系统：在访达里定位，或用默认程序打开原始文档

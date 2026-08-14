@@ -79,6 +79,12 @@ function ConvertedRow({
           {item.sheets?.length ? ` · ${item.sheets.length} 张表` : ''}
           {item.sqlitePath ? ' · 可 SQL 检索' : ''}
           {item.extractedImages ? ` · ${item.extractedImages} 张图` : ''}
+          {/* 转完删原件是正当用法，所以只如实标一句，不上 orange、不催人处理 */}
+          {item.sourceState === 'missing' ? ' · 原件已不在' : ''}
+          {/* 原件动过则产物可能已经不对，这是真要人重转一次的 —— 唯一上 orange 的一处 */}
+          {item.sourceState === 'stale' ? (
+            <span className="text-destructive"> · 原件转换后动过</span>
+          ) : null}
           {referenceLabel(item, hasOutputs)}
         </span>
       </div>
@@ -514,7 +520,20 @@ export function InputPanel({
       {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
       <div className="grid grid-cols-3 gap-2">
         <Stat label="原始资料" value={input.stats.raw} hint={formatBytes(input.stats.bytes)} />
-        <Stat label="已转换" value={input.stats.converted} hint={formatWords(input.stats.words)} />
+        <Stat
+          label="已转换"
+          value={input.stats.converted}
+          // 这格宽度只放得下一句，按「要人动手的排前面」取舍（字数概览页也有）：
+          // stale 是产物可能已经不对，orphaned 只是溯源断了、产物本身还好好的
+          hint={
+            input.stats.stale
+              ? `${input.stats.stale} 份原件动过`
+              : input.stats.orphaned
+                ? `${input.stats.orphaned} 份原件已不在`
+                : formatWords(input.stats.words)
+          }
+          tone={input.stats.stale ? 'attention' : 'default'}
+        />
         <Stat
           label="待转换"
           value={input.stats.pending}

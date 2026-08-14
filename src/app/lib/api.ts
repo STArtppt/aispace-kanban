@@ -44,6 +44,14 @@ export interface ConvertedItem extends FileItem {
   /** 点表等产物的 sqlite 路径（看板只展示路径/SQL 指南，不读二进制） */
   sqlitePath?: string;
   source?: string;
+  /**
+   * 产物记着的原件现在怎么样：'ok' = 还在且没动过，'missing' = 已被删掉或改名（溯源断了），
+   * 'stale' = 还在，但 mtime 晚于产物（转换后动过，产物可能已经不对）。
+   * 可选：产物没记 source 时服务端不返回，旧服务进程也没有 —— 缺了就什么都不显示，
+   * 退回改动前的行为。注意 'missing' 不是错误：转完删原件省空间是正当用法，界面上按中性提示处理；
+   * 'stale' 才要人重转一次，走 orange。它由 mtime 推断，会有误报，要坐实得调 verifySource。
+   */
+  sourceState?: 'ok' | 'missing' | 'stale';
   sourceSha256?: string;
   convertedBy?: string;
   convertedAt?: string;
@@ -150,6 +158,9 @@ export interface Scan {
       assets: number;
       pending: number;
       warnings: number;
+      /** 原件已不在 / 原件转换后动过的产物份数。可选：旧服务进程没有这两个字段，缺了就不显示。 */
+      orphaned?: number;
+      stale?: number;
       words: number;
       bytes: number;
     };
@@ -208,6 +219,22 @@ export interface IngestJob {
   log?: string;
 }
 
+/**
+ * GET /api/projects/:id/verify-source 的结果：重算原件 sha256 跟产物记的比。
+ * 'unknown' = 比不了（没记来源 / 没记 sha256 / 来源是目录），reason 里是中文原因，
+ * 这种情况不要拿扫描的 mtime 结论冒充哈希结论。
+ */
+export interface SourceVerification {
+  path: string;
+  source: string;
+  sourceSha256: string;
+  state: 'ok' | 'stale' | 'missing' | 'unknown';
+  reason?: string;
+  actualSha256?: string;
+  size?: number;
+  checkedAt: string;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -259,6 +286,11 @@ export const api = {
     });
     return request<TablePage>(`/api/projects/${id}/table?${q}`);
   },
+  /** 重算原件 sha256 跟产物记的比对；大文件要算几秒，只在用户点「校验原件」时调 */
+  verifySource: (id: string, path: string) =>
+    request<SourceVerification>(
+      `/api/projects/${id}/verify-source?path=${encodeURIComponent(path)}`,
+    ),
   fileUrl: (id: string, path: string) => `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,
   reveal: (id: string, path: string, mode: 'reveal' | 'open' = 'reveal') =>
     request<{ ok: boolean }>(`/api/projects/${id}/reveal`, {

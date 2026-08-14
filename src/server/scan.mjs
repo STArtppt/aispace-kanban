@@ -2,6 +2,7 @@
  * 工作空间扫描器：把 pmwork 工作空间的目录状态读成一份结构化 JSON。
  * 只读，绝不写工作空间里的任何文件。
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { countAnnotations, linkReferences } from './citations.mjs';
@@ -69,6 +70,9 @@ function describeConverted(root, abs) {
     isDir,
     ext,
     reader: isDir ? 'markdown' : readerKind(ext),
+    // 转换产物用文件名当标题，不用正文一级标题：模板/手册类文档的 h1 经常是
+    // 「文档概述」这类章节名，复制引用时对不上磁盘上的那份文件。
+    title: path.basename(abs, isDir ? '' : ext),
     ...stat(isDir ? manifest : abs),
   };
   if (isDir) {
@@ -127,7 +131,6 @@ function describeConverted(root, abs) {
     item.convertedAt = meta.converted_at || '';
     item.warning = meta.warning || '';
     item.extractedImages = Number(meta.extracted_images || 0);
-    item.title = firstHeading(body);
     item.words = countWords(body);
     // manifest 可写 preview: foo.html，优先用它
     if (item.reader === 'html' && meta.preview) {
@@ -240,6 +243,96 @@ function readAssetSources(root) {
   return out;
 }
 
+/**
+ * 反查产物记着的原件还在不在、动没动过。转换是单向的：产物留着、原件被删掉时，
+ * 光看 converted/ 一切正常，只有 pending 少一项 —— 溯源已经断了却没人知道。
+ *
+ * missing（原件不见了）只标注、不追责：转完删原件省空间是正当用法，所以它不进 warnings 计数，
+ * 界面上也不给 orange。stale（原件在转换后动过）才是真要人重转一次的，走 orange。
+ * source 为空的产物（手写的 md、旧版转换器）不判断，什么都不返回。
+ */
+function attachSourceState(root, converted) {
+  for (const item of converted) {
+    const source = (item.source || '').replace(/\/+$/, '');
+    // 绝对路径和 ../ 一律不碰：frontmatter 是工作空间里的用户内容，不拿它去 stat 工作空间外
+    if (!source || path.isAbsolute(source) || source.split('/').includes('..')) continue;
+    let s;
+    try {
+      s = fs.statSync(path.join(root, source));
+    } catch {
+      item.sourceState = 'missing';
+      continue;
+    }
+    // 目录型 source（点表这类几百个文件汇总成一份的产物）：目录的 mtime 只反映条目增删，
+    // 改文件内容不会动它 —— 判不出「改过」，就只报「还在」，不假装知道。
+    if (s.isDirectory()) {
+      item.sourceState = 'ok';
+      continue;
+    }
+    // 只比 mtime，不算哈希：scan 是 fs.watch 每次都要跑的热路径，几百份资料挨个哈希会把界面拖死。
+    // 代价是 git checkout / 网盘同步这类只动 mtime 不动内容的操作会误报，所以文案只陈述
+    // 「原件在转换后改动过」这个事实，要坐实得点「校验原件」走 sha256（verify-source 接口）。
+    item.sourceState = item.mtime && s.mtime.toISOString() > item.mtime ? 'stale' : 'ok';
+  }
+}
+
+/** 流式算 sha256：大 PDF 有几百 MB，不能整个读进内存。 */
+function sha256File(abs) {
+  return new Promise((resolve, reject) => {
+    const hash = createHash('sha256');
+    const stream = fs.createReadStream(abs);
+    stream.on('error', reject);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+/**
+ * 精确校验一份产物的原件动没动过：拿 frontmatter 里的 source_sha256 跟现在的原件重算一遍比。
+ * 这是 attachSourceState 那套 mtime 廉价判据的「坐实」手段 —— 只在用户点「校验原件」时跑一次，
+ * 绝不进扫描热路径。比不了的情况（没记来源、没记 sha256、来源是目录）一律返回 unknown +
+ * 一句中文原因，不要猜，也不要拿 mtime 的结论冒充哈希的结论。
+ */
+export async function verifySource(root, relPath) {
+  const abs = path.join(root, relPath);
+  // 目录型产物的溯源信息写在 _manifest.md 里
+  const isDir = fs.existsSync(abs) && fs.statSync(abs).isDirectory();
+  const manifest = isDir ? path.join(abs, '_manifest.md') : abs;
+  if (!fs.existsSync(manifest)) {
+    const err = new Error('产物不存在');
+    err.statusCode = 404;
+    throw err;
+  }
+  const { meta } = parseFrontmatter(readTextSafe(manifest));
+  const source = String(meta.source || '').replace(/\/+$/, '');
+  const sourceSha256 = String(meta.source_sha256 || '');
+  const out = { path: relPath, source, sourceSha256, checkedAt: new Date().toISOString() };
+  if (!source) return { ...out, state: 'unknown', reason: '这份产物没记来源' };
+  // 与 attachSourceState 同一条守卫：frontmatter 是用户内容，不拿它去读工作空间外的文件
+  if (path.isAbsolute(source) || source.split('/').includes('..')) {
+    return { ...out, state: 'unknown', reason: '来源路径指向工作空间外，看板不读' };
+  }
+  let stats;
+  try {
+    stats = fs.statSync(path.join(root, source));
+  } catch {
+    return { ...out, state: 'missing', reason: '原件已经不在这个路径上了' };
+  }
+  if (stats.isDirectory()) {
+    return { ...out, state: 'unknown', reason: '来源是一个目录，没有单份 sha256 可比' };
+  }
+  if (!sourceSha256) {
+    return { ...out, state: 'unknown', reason: '产物里没记 source_sha256' };
+  }
+  const actualSha256 = await sha256File(path.join(root, source));
+  return {
+    ...out,
+    actualSha256,
+    size: stats.size,
+    state: actualSha256 === sourceSha256 ? 'ok' : 'stale',
+  };
+}
+
 function scanInput(root) {
   const inputDir = path.join(root, 'input');
   const raw = listFiles(path.join(inputDir, 'raw')).map((abs) => ({
@@ -258,6 +351,7 @@ function scanInput(root) {
       converted.push(describeConverted(root, path.join(convertedDir, entry.name)));
     }
   }
+  attachSourceState(root, converted);
 
   // 只收图片：assets/ 下还有 ingest.py 写的 _manifest.md，它不该出现在图库里
   const assets = listFiles(path.join(inputDir, 'assets'))
@@ -303,6 +397,8 @@ function scanInput(root) {
       assets: assets.length,
       pending: pending.length,
       warnings: converted.filter((c) => c.warning).length,
+      orphaned: converted.filter((c) => c.sourceState === 'missing').length,
+      stale: converted.filter((c) => c.sourceState === 'stale').length,
       words: converted.reduce((sum, c) => sum + (c.words || 0), 0),
       bytes: raw.reduce((sum, r) => sum + r.size, 0),
     },

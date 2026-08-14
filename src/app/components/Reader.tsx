@@ -24,7 +24,13 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
 import { useFileManagerName } from '@/hooks/useFileManager';
-import { api, type AssetGroup, type ConvertedItem, type FileItem } from '@/lib/api';
+import {
+  api,
+  type AssetGroup,
+  type ConvertedItem,
+  type FileItem,
+  type SourceVerification,
+} from '@/lib/api';
 import { formatBytes, formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -67,11 +73,50 @@ function sheetLabel(name: string) {
   return name.replace(/\.(csv|tsv)$/i, '') || name;
 }
 
-function SourceBar({ meta }: { meta: [string, string][] }) {
+/** 校验结果的说法：ok/stale 是坐实过的结论，unknown 只说为什么比不了。 */
+const VERIFY_TEXT: Record<SourceVerification['state'], string> = {
+  ok: '已校验：原件和转换时一模一样',
+  stale: '已校验：原件内容确实变了，建议重新转换一次',
+  missing: '原件已经不在这个路径上了',
+  unknown: '比不了',
+};
+
+function SourceBar({
+  meta,
+  sourceState,
+  projectId,
+  path,
+}: {
+  meta: [string, string][];
+  /** 缺省 = 服务端没给（旧进程）或产物没记 source：不显示任何溯源状态 */
+  sourceState?: ConvertedItem['sourceState'];
+  projectId: string;
+  /** 产物自身的相对路径，校验接口按它反查 frontmatter 里的来源 */
+  path: string;
+}) {
   const [open, setOpen] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [result, setResult] = useState<SourceVerification | null>(null);
+  const [verifyError, setVerifyError] = useState('');
   if (!meta.length) return null;
   const warning = meta.find(([k]) => k === 'warning');
   const source = meta.find(([k]) => k === 'source');
+  // 扫描给的 stale 是 mtime 推的、会误报，哈希算过就以哈希为准；
+  // unknown 说明压根比不了，那就别拿它盖掉扫描的结论
+  const state = result && result.state !== 'unknown' ? result.state : sourceState;
+
+  const verify = async () => {
+    setChecking(true);
+    setVerifyError('');
+    try {
+      setResult(await api.verifySource(projectId, path));
+    } catch (err) {
+      setVerifyError(err instanceof Error ? err.message : '校验失败');
+    } finally {
+      setChecking(false);
+    }
+  };
+
   return (
     <div className="mb-6 rounded-lg border border-border bg-muted/40 text-xs">
       <button
@@ -82,6 +127,15 @@ function SourceBar({ meta }: { meta: [string, string][] }) {
         {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
         <span className="text-muted-foreground">溯源</span>
         <span className="min-w-0 flex-1 truncate font-mono text-[11px]">{source?.[1] || '—'}</span>
+        {/* 想回查原文时最该知道这件事；但删原件是正当用法，所以走灰字不走 destructive */}
+        {state === 'missing' ? (
+          <span className="shrink-0 text-muted-foreground">原件已不在</span>
+        ) : null}
+        {state === 'stale' ? (
+          <Badge variant="outline" className="border-destructive text-destructive">
+            原件转换后动过
+          </Badge>
+        ) : null}
         {warning ? (
           <Badge variant="outline" className="border-destructive text-destructive">
             内容存疑
@@ -89,16 +143,40 @@ function SourceBar({ meta }: { meta: [string, string][] }) {
         ) : null}
       </button>
       {open ? (
-        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 border-t border-border px-3 py-2.5">
-          {meta.map(([key, value]) => (
-            <div key={key} className="contents">
-              <dt className="text-muted-foreground">{key}</dt>
-              <dd className={key === 'warning' ? 'text-destructive' : 'font-mono text-[11px] break-all'}>
-                {value}
-              </dd>
+        <div className="border-t border-border px-3 py-2.5">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+            {meta.map(([key, value]) => (
+              <div key={key} className="contents">
+                <dt className="text-muted-foreground">{key}</dt>
+                <dd className={key === 'warning' ? 'text-destructive' : 'font-mono text-[11px] break-all'}>
+                  {value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+          {source ? (
+            <div className="mt-2.5 flex flex-wrap items-center gap-2 border-t border-border pt-2.5">
+              <Button type="button" variant="outline" size="sm" onClick={verify} disabled={checking}>
+                {checking ? '校验中…' : '校验原件'}
+              </Button>
+              {/* 列表上的「动过」只是 mtime 说的话（网盘同步、git checkout 都会动它），
+                  所以那句措辞不敢说内容变了；这个按钮重算 sha256，才敢下「内容确实变了」的结论 */}
+              <span
+                className={cn(
+                  'min-w-0 flex-1 text-[11px]',
+                  result?.state === 'stale' ? 'text-destructive' : 'text-muted-foreground',
+                )}
+              >
+                {verifyError ||
+                  (result
+                    ? result.state === 'unknown'
+                      ? `${VERIFY_TEXT.unknown}：${result.reason || '缺少可比对的信息'}`
+                      : VERIFY_TEXT[result.state]
+                    : '重算原件的 sha256 跟这份产物记的比一比；大文件要等几秒。')}
+              </span>
             </div>
-          ))}
-        </dl>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -473,6 +551,7 @@ export function Reader({
         ? item.path
         : '';
   const sqlitePath = isConverted(item) ? item.sqlitePath : undefined;
+  const sourceState = isConverted(item) ? item.sourceState : undefined;
 
   // 目录里有 csv 就按表格包处理（含点表）；item.reader 也可能已是 table
   const mode: 'markdown' | 'table' | 'text' | 'image' | 'html' | 'external' | 'gallery' = multiSheet
@@ -593,7 +672,13 @@ export function Reader({
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
             {content && !error ? (
               <div className="mx-auto w-full max-w-[76ch]">
-                <SourceBar meta={meta} />
+                <SourceBar
+                  key={item.path}
+                  meta={meta}
+                  sourceState={sourceState}
+                  projectId={projectId}
+                  path={item.path}
+                />
                 <Markdown
                   key={item.path}
                   urlTransform={(url) => api.fileUrl(projectId, resolveRelative(base, url))}
@@ -642,7 +727,13 @@ export function Reader({
                 {manifestError ? <p className="text-sm text-destructive">{manifestError}</p> : null}
                 {manifestContent && !manifestError ? (
                   <div className="mx-auto w-full max-w-[76ch]">
-                    <SourceBar meta={meta} />
+                    <SourceBar
+                  key={item.path}
+                  meta={meta}
+                  sourceState={sourceState}
+                  projectId={projectId}
+                  path={item.path}
+                />
                     {sqlitePath ? (
                       <p className="mb-4 rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-[11px] text-muted-foreground">
                         SQL 库：{sqlitePath}
@@ -713,7 +804,13 @@ export function Reader({
 
           {mode === 'html' ? (
             <div className="flex min-h-[min(70vh,640px)] flex-col gap-3">
-              <SourceBar meta={meta} />
+              <SourceBar
+                  key={item.path}
+                  meta={meta}
+                  sourceState={sourceState}
+                  projectId={projectId}
+                  path={item.path}
+                />
               <Tabs
                 value={htmlTab}
                 onValueChange={(v) => setHtmlTab(v === 'manifest' ? 'manifest' : 'preview')}
