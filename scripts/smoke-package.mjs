@@ -150,7 +150,7 @@ try {
   ok(`新建工作空间成功：${created.id}`);
 
   // ── 5 铺出来的骨架是不是完整的（npm 会吃掉 .gitignore 和软链接）───────────
-  const must = ['project.yaml', 'AGENTS.md', '.gitignore', 'input/raw/.gitkeep', '.claude/skills/pm-doc-ingest/SKILL.md'];
+  const must = ['project.yaml', 'AGENTS.md', '.gitignore', 'input/raw/.gitkeep', 'input/.ingestignore', '.claude/skills/pm-doc-ingest/SKILL.md'];
   const missing = must.filter((rel) => !fs.existsSync(path.join(wsPath, rel)));
   if (missing.length) die(`新工作空间缺文件：${missing.join('、')}`);
   const skills = path.join(wsPath, 'skills');
@@ -202,6 +202,50 @@ try {
     die(`input/raw/ 以外的路径没被拒（返回 ${ingestOutside.status}，应该是 400）`);
   }
   ok('单文件转换只认 input/raw/，越界路径被挡住');
+
+  // ── 7b 看板忽略资料：写 input/.ingestignore，从待转换里拿掉 ────────────────
+  const rawFile = path.join(wsPath, 'input', 'raw', '忽略我.txt');
+  fs.writeFileSync(rawFile, 'x');
+  const beforeIgnore = await fetch(`${base}/api/projects/${created.id}/scan`).then((r) => r.json());
+  if (!beforeIgnore.input?.pending?.some((f) => f.path === 'input/raw/忽略我.txt')) {
+    die('刚放进 raw 的文件没出现在待转换里', JSON.stringify(beforeIgnore.input?.pending));
+  }
+  const ignored = await fetch(`${base}/api/projects/${created.id}/ignore`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'input/raw/忽略我.txt' }),
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  if (ignored.status !== 200 || ignored.body.pattern !== 'raw/忽略我.txt') {
+    die(`忽略失败：${ignored.status} ${JSON.stringify(ignored.body)}`);
+  }
+  const ignoreText = fs.readFileSync(path.join(wsPath, 'input', '.ingestignore'), 'utf8');
+  if (!ignoreText.split(/\r?\n/).includes('raw/忽略我.txt')) {
+    die('忽略后 .ingestignore 里没有对应行', ignoreText);
+  }
+  const afterIgnore = await fetch(`${base}/api/projects/${created.id}/scan`).then((r) => r.json());
+  if (afterIgnore.input?.pending?.some((f) => f.path === 'input/raw/忽略我.txt')) {
+    die('忽略后文件还在待转换里');
+  }
+  if (!afterIgnore.input?.stats?.ignored) die('忽略后 stats.ignored 还是 0');
+  ok('POST /ignore 能写入 .ingestignore，扫描不再把它算待转换');
+
+  const ignoreEscape = await fetch(`${base}/api/projects/${created.id}/ignore`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: '../../../etc/passwd' }),
+  });
+  if (ignoreEscape.status !== 403) {
+    die(`忽略的路径穿越没被挡住（返回 ${ignoreEscape.status}，应该是 403）`);
+  }
+  const ignoreOutside = await fetch(`${base}/api/projects/${created.id}/ignore`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'output/docs/foo.md' }),
+  });
+  if (ignoreOutside.status !== 400) {
+    die(`input/raw/ 以外的路径没被拒（返回 ${ignoreOutside.status}，应该是 400）`);
+  }
+  ok('忽略只认 input/raw/，越界路径被挡住');
 
   // ── 8 注册表没写到真 HOME ─────────────────────────────────────────────────
   if (!fs.existsSync(path.join(fakeHome, '.pmwork', 'dashboard', 'projects.json'))) {

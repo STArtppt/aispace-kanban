@@ -321,4 +321,15 @@ export const api = {
       ...(targetPath ? { body: JSON.stringify({ path: targetPath }) } : {}),
     }),
   ingestStatus: (id: string) => request<IngestJob>(`/api/projects/${id}/ingest`),
+  /**
+   * 把 input/raw/ 下的文件或目录写进 input/.ingestignore，不再算待转换。
+   * 文件还在磁盘上，只是看板和 ingest.py 一起跳过它。
+   * already = 清单里已有这条（或更宽的目录）时没再追加。
+   * 旧服务进程没有这个接口，request 会带上「重启 serve」的提示。
+   */
+  addIgnore: (id: string, targetPath: string) =>
+    request<{ ok: boolean; pattern: string; already?: boolean }>(`/api/projects/${id}/ignore`, {
+      method: 'POST',
+      body: JSON.stringify({ path: targetPath }),
+    }),
 };

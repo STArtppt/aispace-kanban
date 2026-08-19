@@ -110,6 +110,10 @@ def main() -> int:
         d = target / rel
         d.mkdir(parents=True, exist_ok=True)
         (d / ".gitkeep").touch()
+    # .ingestignore 是约定文件不是示例资料，要铺过去；input/ 其它内容一律不带
+    ignore_src = TEMPLATE / "input" / ".ingestignore"
+    if ignore_src.exists():
+        shutil.copy2(ignore_src, target / "input" / ".ingestignore")
 
     (target / "project.yaml").write_text(render_project_yaml(args.name), encoding="utf-8")
 

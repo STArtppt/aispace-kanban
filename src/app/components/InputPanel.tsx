@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AppWindow, ArrowUpDown, Copy, FileOutput, FileText, FolderOpen, Image, Loader2, Quote, Search, Table } from 'lucide-react';
+import { AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, Loader2, Quote, Search, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
@@ -162,6 +162,8 @@ function PendingRow({
   ingestRunning,
   ingestingPath,
   onIngest,
+  ignoring,
+  onIgnore,
 }: {
   item: FileItem;
   /** 树形视图里的层级；列表视图不传 */
@@ -174,8 +176,10 @@ function PendingRow({
   ingestRunning: boolean;
   ingestingPath: string;
   onIngest: (filePath: string) => void;
+  ignoring: boolean;
+  onIgnore: (targetPath: string) => void;
 }) {
-  const thisRowRunning = ingestRunning && ingestingPath === item.path;
+  const thisRowRunning = (ingestRunning && ingestingPath === item.path) || ignoring;
   // 树里目录已经画在上一层了，行内只留文件名；列表里仍显示相对 raw/ 的路径
   const label = indent === undefined ? pendingLabel(item) : item.name;
   return (
@@ -198,6 +202,12 @@ function PendingRow({
                 },
               ]
             : []),
+          {
+            label: '忽略此文件',
+            icon: EyeOff,
+            disabled: ignoring,
+            onSelect: () => onIgnore(item.path),
+          },
           {
             label: '复制路径',
             icon: Copy,
@@ -228,6 +238,8 @@ function PendingList({
   ingestRunning,
   ingestingPath,
   onIngest,
+  ignoringPath,
+  onIgnore,
 }: {
   items: FileItem[];
   viewMode: ViewMode;
@@ -238,6 +250,8 @@ function PendingList({
   ingestRunning: boolean;
   ingestingPath: string;
   onIngest: (filePath: string) => void;
+  ignoringPath: string;
+  onIgnore: (targetPath: string) => void;
 }) {
   const { page, setPage } = useListPage(items.length, LIST_PAGE_SIZE, String(items.length));
   const pageItems = items.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
@@ -252,6 +266,7 @@ function PendingList({
     ingestRunning,
     ingestingPath,
     onIngest,
+    onIgnore,
   };
 
   // 树形视图不分页：目录折起来就够收敛了，再切页反而找不到东西
@@ -261,26 +276,41 @@ function PendingList({
         items={items}
         treePathOf={pendingLabel}
         keyOf={(item) => item.path}
-        renderFile={(item, indent) => <PendingRow item={item} indent={indent} {...rowProps} />}
+        renderFile={(item, indent) => (
+          <PendingRow
+            item={item}
+            indent={indent}
+            ignoring={ignoringPath === item.path}
+            {...rowProps}
+          />
+        )}
         renderDirActions={(dirKey) => {
           const dirPath = `input/raw/${dirKey}`;
-          const extra: RowAction[] = canIngest
-            ? [
-                {
-                  label: '转这一整个目录',
-                  icon: FileOutput,
-                  disabled: ingestRunning,
-                  onSelect: () => onIngest(dirPath),
-                },
-              ]
-            : [];
+          const extra: RowAction[] = [
+            ...(canIngest
+              ? [
+                  {
+                    label: '转这一整个目录',
+                    icon: FileOutput,
+                    disabled: ingestRunning,
+                    onSelect: () => onIngest(dirPath),
+                  },
+                ]
+              : []),
+            {
+              label: '忽略此目录',
+              icon: EyeOff,
+              disabled: Boolean(ignoringPath),
+              onSelect: () => onIgnore(dirPath),
+            },
+          ];
           return (
             <DirActions
               projectId={projectId}
               fileManager={fileManager}
               dirPath={dirPath}
               extra={extra}
-              busy={ingestRunning && ingestingPath === dirPath}
+              busy={(ingestRunning && ingestingPath === dirPath) || ignoringPath === dirPath}
             />
           );
         }}
@@ -291,7 +321,12 @@ function PendingList({
   return (
     <div className="overflow-hidden rounded-lg border border-border">
       {pageItems.map((item) => (
-        <PendingRow key={item.path} item={item} {...rowProps} />
+        <PendingRow
+          key={item.path}
+          item={item}
+          ignoring={ignoringPath === item.path}
+          {...rowProps}
+        />
       ))}
       <ListPager page={page} pageSize={LIST_PAGE_SIZE} total={items.length} onPageChange={setPage} />
     </div>
@@ -721,9 +756,31 @@ export function InputPanel({
   // 旧服务进程没有 canIngest：整块按钮不出现，只保留终端命令提示
   const canIngest = Boolean(input.canIngest);
   const ingest = useIngestJob(projectId, canIngest);
+  const [ignoringPath, setIgnoringPath] = useState('');
+  const [ignoreError, setIgnoreError] = useState('');
   // 旧服务进程没有 assetGroups：退回平铺网格
   const galleries = input.assetGroups || [];
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(INPUT_VIEW_KEY));
+
+  const ignore = useCallback(
+    async (targetPath: string) => {
+      setIgnoreError('');
+      setIgnoringPath(targetPath);
+      try {
+        await api.addIgnore(projectId, targetPath);
+      } catch (err) {
+        setIgnoreError((err as Error).message);
+      } finally {
+        setIgnoringPath('');
+      }
+    },
+    [projectId],
+  );
+
+  useEffect(() => {
+    setIgnoreError('');
+    setIgnoringPath('');
+  }, [projectId]);
 
   useEffect(() => {
     localStorage.setItem(INPUT_VIEW_KEY, viewMode);
@@ -793,9 +850,12 @@ export function InputPanel({
               <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
                 input/.ingestignore
               </code>
-              忽略，不算待转换（改那份文件可调整）。
+              忽略，不算待转换。
             </>
           ) : null}
+          {input.pending.length
+            ? '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在。'
+            : null}
           {canIngest ? (
             '点「开始转换」会一次处理全部；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
           ) : (
@@ -816,6 +876,9 @@ export function InputPanel({
             onStart={() => void ingest.start()}
           />
         ) : null}
+        {ignoreError ? (
+          <p className="whitespace-pre-wrap text-xs text-destructive">{ignoreError}</p>
+        ) : null}
         {input.pending.length ? (
           <PendingList
             items={input.pending}
@@ -827,6 +890,8 @@ export function InputPanel({
             ingestRunning={ingest.running}
             ingestingPath={ingest.job?.path || ''}
             onIngest={(filePath) => void ingest.start(filePath)}
+            ignoringPath={ignoringPath}
+            onIgnore={(targetPath) => void ignore(targetPath)}
           />
         ) : (
           <EmptyState title="暂无待转换文件" />

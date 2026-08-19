@@ -28,6 +28,10 @@
      铺骨架由模板仓负责,看板不自己造目录
    - 资料转换时调工作空间的 `scripts/ingest.py`(`src/server/http.mjs` 的 `startIngest`)——
      看板只 `spawn`,写 `input/converted/` 的是脚本本身
+   - 忽略待转换资料时追加 `input/.ingestignore`(`src/server/http.mjs` 的 `addIgnore`)——
+     用户在列表点「忽略此文件 / 忽略此目录」才写,只追加一行模式,不改原件。
+     不经过 ingest.py:这不是转换,旧工作空间的脚本也没有写入入口;
+     这份文件是看板和 ingest.py 共用的约定,改动会被 `input/` 的 SSE 捕获、两边同时生效
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/http.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
