@@ -1,6 +1,12 @@
 import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
-import { Check, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Copy, Loader2, MoreHorizontal, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   Tooltip,
   TooltipContent,
@@ -59,11 +65,14 @@ export function EmptyState({ title, hint }: { title: string; hint?: string }) {
 
 export function Row({
   active,
+  indent,
   onClick,
   children,
   className,
 }: {
   active?: boolean;
+  /** 树形视图里的层级：每层往右缩 1.125rem，行本身仍然是整行宽（悬停底色不断） */
+  indent?: number;
   onClick?: () => void;
   children: ReactNode;
   className?: string;
@@ -72,6 +81,7 @@ export function Row({
     <button
       type="button"
       onClick={onClick}
+      style={indent ? { paddingLeft: `calc(0.75rem + ${indent} * 1.125rem)` } : undefined}
       className={cn(
         'flex w-full items-center gap-3 border-b border-border px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-accent',
         active && 'bg-muted',
@@ -184,6 +194,71 @@ export function CopyButton({ value, className }: { value: string; className?: st
     >
       {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
     </RowIconButton>
+  );
+}
+
+/** 行尾「更多」菜单里的一条动作。 */
+export interface RowAction {
+  label: string;
+  icon: LucideIcon;
+  disabled?: boolean;
+  onSelect: () => void;
+}
+
+/**
+ * 行尾的动作收纳。
+ * 一行能做的事只会越来越多（复制、转换、定位、以后还有别的），全摊成图标会把行挤没；
+ * 所以一律收进「更多」，行上只留一个入口。
+ * busy 时触发器换成转圈 —— 菜单是关着的，正在跑的任务必须在行上看得见。
+ * 行本身是 <button>，里面不能再套 button：触发器同 RowIconButton 用 span，并挡住冒泡，
+ * 否则点「更多」会顺带把这一行打开。
+ */
+export function RowActions({
+  actions,
+  busy,
+  label = '更多',
+}: {
+  actions: RowAction[];
+  busy?: boolean;
+  label?: string;
+}) {
+  if (!actions.length) return null;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <span
+            role="button"
+            tabIndex={-1}
+            aria-label={label}
+            title={label}
+            className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
+            onClick={(event: MouseEvent) => event.stopPropagation()}
+          />
+        }
+      >
+        {busy ? (
+          <Loader2 className="size-3.5 animate-spin" />
+        ) : (
+          <MoreHorizontal className="size-3.5" />
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent>
+        {actions.map(({ label: itemLabel, icon: Icon, disabled, onSelect }) => (
+          <DropdownMenuItem
+            key={itemLabel}
+            disabled={disabled}
+            onClick={(event) => {
+              event.stopPropagation();
+              onSelect();
+            }}
+          >
+            <Icon />
+            {itemLabel}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

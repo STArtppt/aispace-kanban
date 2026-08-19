@@ -279,28 +279,25 @@ function resolveIngestTarget(root, relPath) {
   const abs = resolveInside(root, rel);
   const rawRoot = path.resolve(root, 'input', 'raw');
   if (abs !== rawRoot && !abs.startsWith(rawRoot + path.sep)) {
-    const err = new Error('只能转换 input/raw/ 下的文件');
+    const err = new Error('只能转换 input/raw/ 下的资料');
     err.statusCode = 400;
     throw err;
   }
   if (!fs.existsSync(abs)) {
-    const err = new Error(`文件不存在：${rel}`);
+    const err = new Error(`路径不存在：${rel}`);
     err.statusCode = 404;
     throw err;
   }
-  if (!fs.statSync(abs).isFile()) {
-    const err = new Error('请指定一个文件，不要指定目录');
-    err.statusCode = 400;
-    throw err;
-  }
-  return { abs, rel };
+  // 目录是允许的：ingest.py 的 paths 参数本来就吃目录（对目录 rglob 出所有文件），
+  // 界面上「转这一整个目录」走的就是这条路。
+  return { abs, rel, isDir: fs.statSync(abs).isDirectory() };
 }
 
 /**
  * 在工作空间里异步跑 scripts/ingest.py。
  * 看板只 spawn，真正写 input/converted/ 的是工作空间自己的脚本 —— 与 runInit 同构。
  * 接口立刻返回，进度靠 GET /ingest 轮询；写盘会被 watchWorkspace 捕获，页面自己刷新。
- * relPath 有值时只转那一份（ingest.py 的 paths 参数）；缺省转整个 input/raw/。
+ * relPath 有值时只转它（ingest.py 的 paths 参数，可以是文件也可以是目录）；缺省转整个 input/raw/。
  */
 async function startIngest(project, relPath) {
   const existing = ingestJobs.get(project.id);
@@ -341,7 +338,7 @@ async function startIngest(project, relPath) {
     exitCode: null,
     path: target ? target.rel : '',
     message: target
-      ? `正在转换 ${target.rel} … 大 PDF 可能要几分钟。`
+      ? `正在转换 ${target.rel}${target.isDir ? '/ 下的资料' : ''} … 大 PDF 可能要几分钟。`
       : '正在转换 input/raw/ … 大 PDF 可能要几分钟。',
     log: '',
   };

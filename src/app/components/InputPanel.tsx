@@ -1,11 +1,21 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppWindow, ArrowUpDown, FileOutput, FileText, FolderOpen, Image, Loader2, Quote, Search, Table } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { AppWindow, ArrowUpDown, Copy, FileOutput, FileText, FolderOpen, Image, Loader2, Quote, Search, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { AssetGalleryStack } from '@/components/AssetGalleryStack';
 import { ImageLightbox } from '@/components/ImageLightbox';
-import { CopyButton, EmptyState, ListPager, Row, RowIconButton, SectionTitle, Stat } from '@/components/Primitives';
+import {
+  EmptyState,
+  ListPager,
+  Row,
+  RowActions,
+  SectionTitle,
+  Stat,
+  writeClipboard,
+  type RowAction,
+} from '@/components/Primitives';
+import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { api, type ConvertedItem, type FileItem, type IngestJob, type Scan } from '@/lib/api';
 import { formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
@@ -54,19 +64,42 @@ function referenceLabel(item: ConvertedItem, hasOutputs: boolean): string {
   return item.referencedBy.length ? ` · 被 ${item.referencedBy.length} 篇产出引用` : ' · 还没有产出引用它';
 }
 
+/** 没记来源的产物在树里的落脚处 */
+const UNKNOWN_SOURCE = '未知来源';
+
+/**
+ * 产物在树里的位置：跟着**原件**在 input/raw/ 下的目录走。
+ * input/converted/ 本身是平的（服务端只扫一层），按产物自己的路径建树等于没建；
+ * 按原件目录建，树形结构就是自己在 raw/ 里的整理方式。
+ * 一份产物都没记来源时（旧 ingest.py 的产物）整棵树平铺，不平白多出一层「未知来源」。
+ */
+function convertedTreePath(item: ConvertedItem, hasAnySource: boolean): string {
+  const prefix = 'input/raw/';
+  const source = item.source || '';
+  // 来源不在 input/raw/ 下（理论上不该有）一并算「未知来源」：目录行的动作要按
+  // input/raw/<树内路径> 反推真实目录，认不回去的就别给动作，免得指到不存在的路径
+  if (!source.startsWith(prefix)) return hasAnySource ? `${UNKNOWN_SOURCE}/${item.name}` : item.name;
+  const rel = source.slice(prefix.length);
+  const cut = rel.lastIndexOf('/');
+  return cut > 0 ? `${rel.slice(0, cut)}/${item.name}` : item.name;
+}
+
 function ConvertedRow({
   item,
+  indent,
   hasOutputs,
   openPath,
   onOpen,
 }: {
   item: ConvertedItem;
+  /** 树形视图里的层级；列表视图不传 */
+  indent?: number;
   hasOutputs: boolean;
   openPath: string;
   onOpen: (item: FileItem) => void;
 }) {
   return (
-    <Row onClick={() => onOpen(item)} active={openPath === item.path}>
+    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
       <KindIcon item={item} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-2">
@@ -88,7 +121,17 @@ function ConvertedRow({
           {referenceLabel(item, hasOutputs)}
         </span>
       </div>
-      <CopyButton value={markdownLink(item.title || item.name, item.path)} />
+      <RowActions
+        actions={[
+          {
+            label: '复制路径',
+            icon: Copy,
+            onSelect: () => {
+              void writeClipboard(markdownLink(item.title || item.name, item.path));
+            },
+          },
+        ]}
+      />
     </Row>
   );
 }
@@ -108,8 +151,76 @@ function useListPage(total: number, pageSize: number, resetKey: string) {
   return { page, setPage, totalPages };
 }
 
+function PendingRow({
+  item,
+  indent,
+  projectId,
+  fileManager,
+  openPath,
+  onOpen,
+  canIngest,
+  ingestRunning,
+  ingestingPath,
+  onIngest,
+}: {
+  item: FileItem;
+  /** 树形视图里的层级；列表视图不传 */
+  indent?: number;
+  projectId: string;
+  fileManager: string;
+  openPath: string;
+  onOpen: (item: FileItem) => void;
+  canIngest: boolean;
+  ingestRunning: boolean;
+  ingestingPath: string;
+  onIngest: (filePath: string) => void;
+}) {
+  const thisRowRunning = ingestRunning && ingestingPath === item.path;
+  // 树里目录已经画在上一层了，行内只留文件名；列表里仍显示相对 raw/ 的路径
+  const label = indent === undefined ? pendingLabel(item) : item.name;
+  return (
+    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
+      <KindIcon item={item} />
+      <span className="min-w-0 flex-1 truncate text-sm" title={item.path}>
+        {label}
+      </span>
+      <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
+      <RowActions
+        busy={thisRowRunning}
+        actions={[
+          ...(canIngest
+            ? [
+                {
+                  label: '转成AI易读',
+                  icon: FileOutput,
+                  disabled: ingestRunning,
+                  onSelect: () => onIngest(item.path),
+                },
+              ]
+            : []),
+          {
+            label: '复制路径',
+            icon: Copy,
+            onSelect: () => {
+              void writeClipboard(markdownLink(pendingLabel(item), item.path));
+            },
+          },
+          {
+            label: `在${fileManager}中显示`,
+            icon: FolderOpen,
+            onSelect: () => {
+              void api.reveal(projectId, item.path);
+            },
+          },
+        ]}
+      />
+    </Row>
+  );
+}
+
 function PendingList({
   items,
+  viewMode,
   projectId,
   openPath,
   onOpen,
@@ -119,6 +230,7 @@ function PendingList({
   onIngest,
 }: {
   items: FileItem[];
+  viewMode: ViewMode;
   projectId: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
@@ -131,42 +243,56 @@ function PendingList({
   const pageItems = items.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
   const fileManager = useFileManagerName();
 
+  const rowProps = {
+    projectId,
+    fileManager,
+    openPath,
+    onOpen,
+    canIngest,
+    ingestRunning,
+    ingestingPath,
+    onIngest,
+  };
+
+  // 树形视图不分页：目录折起来就够收敛了，再切页反而找不到东西
+  if (viewMode === 'tree') {
+    return (
+      <FileTree
+        items={items}
+        treePathOf={pendingLabel}
+        keyOf={(item) => item.path}
+        renderFile={(item, indent) => <PendingRow item={item} indent={indent} {...rowProps} />}
+        renderDirActions={(dirKey) => {
+          const dirPath = `input/raw/${dirKey}`;
+          const extra: RowAction[] = canIngest
+            ? [
+                {
+                  label: '转这一整个目录',
+                  icon: FileOutput,
+                  disabled: ingestRunning,
+                  onSelect: () => onIngest(dirPath),
+                },
+              ]
+            : [];
+          return (
+            <DirActions
+              projectId={projectId}
+              fileManager={fileManager}
+              dirPath={dirPath}
+              extra={extra}
+              busy={ingestRunning && ingestingPath === dirPath}
+            />
+          );
+        }}
+      />
+    );
+  }
+
   return (
     <div className="overflow-hidden rounded-lg border border-border">
-      {pageItems.map((item) => {
-        const thisRowRunning = ingestRunning && ingestingPath === item.path;
-        return (
-          <Row key={item.path} onClick={() => onOpen(item)} active={openPath === item.path}>
-            <KindIcon item={item} />
-            <span className="min-w-0 flex-1 truncate text-sm" title={item.path}>
-              {pendingLabel(item)}
-            </span>
-            <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
-            {canIngest ? (
-              <RowIconButton
-                label="转成AI易读"
-                disabled={ingestRunning}
-                onClick={() => onIngest(item.path)}
-              >
-                {thisRowRunning ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <FileOutput className="size-3.5" />
-                )}
-              </RowIconButton>
-            ) : null}
-            <CopyButton value={markdownLink(pendingLabel(item), item.path)} />
-            <RowIconButton
-              label={`在${fileManager}中显示`}
-              onClick={() => {
-                void api.reveal(projectId, item.path);
-              }}
-            >
-              <FolderOpen className="size-3.5" />
-            </RowIconButton>
-          </Row>
-        );
-      })}
+      {pageItems.map((item) => (
+        <PendingRow key={item.path} item={item} {...rowProps} />
+      ))}
       <ListPager page={page} pageSize={LIST_PAGE_SIZE} total={items.length} onPageChange={setPage} />
     </div>
   );
@@ -188,6 +314,8 @@ const SORTS = {
 type SortKey = keyof typeof SORTS;
 
 const CONVERTED_SORT_KEY = 'aispace-kanban:converted-sort';
+/** 列表 / 树形是整个「输入资料」视图共用的偏好，待转换和转换产物一起切 */
+const INPUT_VIEW_KEY = 'aispace-kanban:input-view';
 
 function readConvertedSort(): SortKey {
   const raw = localStorage.getItem(CONVERTED_SORT_KEY);
@@ -201,14 +329,22 @@ const ICON_SELECT_TRIGGER =
 function ConvertedList({
   items,
   hasOutputs,
+  viewMode,
+  viewToggle,
+  projectId,
   openPath,
   onOpen,
 }: {
   items: ConvertedItem[];
   hasOutputs: boolean;
+  viewMode: ViewMode;
+  /** 视图开关只挂在本视图的第一个清单上；不是第一个时不传 */
+  viewToggle?: ReactNode;
+  projectId: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
 }) {
+  const fileManager = useFileManagerName();
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [refFilter, setRefFilter] = useState<RefFilter>('all');
@@ -241,6 +377,11 @@ function ConvertedList({
   const pageItems = filtered.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
   const searching = query.trim().length > 0;
   const searchExpanded = searchOpen || searching;
+  const hasAnySource = useMemo(() => items.some((item) => item.source), [items]);
+  const treePathOf = useCallback(
+    (item: ConvertedItem) => convertedTreePath(item, hasAnySource),
+    [hasAnySource],
+  );
 
   return (
     <div className="flex flex-col gap-2">
@@ -250,6 +391,7 @@ function ConvertedList({
           <SectionTitle count={items.length}>转换产物</SectionTitle>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {viewToggle}
           <Select
             value={sortKey}
             onValueChange={(value) => {
@@ -328,7 +470,34 @@ function ConvertedList({
           {filtered.length ? `匹配 ${filtered.length} 项` : '没有匹配的转换产物'}
         </p>
       ) : null}
-      {filtered.length ? (
+      {filtered.length && viewMode === 'tree' ? (
+        // 树形视图不分页：目录折起来就够收敛了，再切页反而找不到东西
+        <FileTree
+          items={filtered}
+          treePathOf={treePathOf}
+          keyOf={(item) => item.path}
+          expandAll={searching}
+          renderDirActions={(dirKey) =>
+            // 「未知来源」是前端为没记来源的产物造的一档，磁盘上没有这个目录，不给动作
+            dirKey === UNKNOWN_SOURCE ? null : (
+              <DirActions
+                projectId={projectId}
+                fileManager={fileManager}
+                dirPath={`input/raw/${dirKey}`}
+              />
+            )
+          }
+          renderFile={(item, indent) => (
+            <ConvertedRow
+              item={item}
+              indent={indent}
+              hasOutputs={hasOutputs}
+              openPath={openPath}
+              onOpen={onOpen}
+            />
+          )}
+        />
+      ) : filtered.length ? (
         <div className="overflow-hidden rounded-lg border border-border">
           {pageItems.map((item) => (
             <ConvertedRow
@@ -554,6 +723,14 @@ export function InputPanel({
   const ingest = useIngestJob(projectId, canIngest);
   // 旧服务进程没有 assetGroups：退回平铺网格
   const galleries = input.assetGroups || [];
+  const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(INPUT_VIEW_KEY));
+
+  useEffect(() => {
+    localStorage.setItem(INPUT_VIEW_KEY, viewMode);
+  }, [viewMode]);
+
+  // 待转换清单为空时它只剩一个空态，开关就落到下一个清单「转换产物」上
+  const viewToggle = <ViewModeToggle mode={viewMode} onChange={setViewMode} label="资料清单" />;
 
   return (
     <div className="flex flex-col gap-6">
@@ -599,7 +776,13 @@ export function InputPanel({
       </div>
 
       <section className="flex flex-col gap-2">
-        <SectionTitle count={input.pending.length}>待转换的原始资料</SectionTitle>
+        {/* 视图开关只挂在本视图的第一个清单上，切一次两个清单一起变 */}
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0 shrink">
+            <SectionTitle count={input.pending.length}>待转换的原始资料</SectionTitle>
+          </div>
+          {input.pending.length ? viewToggle : null}
+        </div>
         <p className="text-xs text-muted-foreground">
           {input.pending.length
             ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
@@ -636,6 +819,7 @@ export function InputPanel({
         {input.pending.length ? (
           <PendingList
             items={input.pending}
+            viewMode={viewMode}
             projectId={projectId}
             openPath={openPath}
             onOpen={onOpen}
@@ -654,6 +838,9 @@ export function InputPanel({
           <ConvertedList
             items={input.converted}
             hasOutputs={hasOutputs}
+            viewMode={viewMode}
+            viewToggle={input.pending.length ? undefined : viewToggle}
+            projectId={projectId}
             openPath={openPath}
             onOpen={onOpen}
           />

@@ -155,12 +155,13 @@ RE-ADD 后 `git diff src/app/components/ui/<name>.tsx`:**应该只有真源的�
 | 侧滑详情或筛选 | `drawer`,不是 Dialog |
 | 阅读器里的代码块 | `code-block` |
 | 操作结果提示 | `sonner` / `alert`,别自己写浮层 |
+| 列表行尾的一堆动作(复制 / 转换 / 定位) | `dropdown-menu` 收进「更多」,别在行上摊图标 |
 | "待转换 / 存疑"状态 | `badge` + `destructive` 令牌,不新增颜色 |
 
 ## 当前快照
 
-- **已 copy-in**:`badge` `button` `code-block` `dialog` `gallery-stack` `input` `lightbox`
-  `scroll-area` `select` `tabs` `tooltip`
+- **已 copy-in**:`badge` `button` `code-block` `dialog` `dropdown-menu` `gallery-stack` `input`
+  `lightbox` `scroll-area` `select` `tabs` `tooltip`
 - **registry 上还有**:`alert` `checkbox` `collapsible` `confirm-dialog` `drawer` `field`
   `label` `sonner` `switch` `textarea` `theme`
 

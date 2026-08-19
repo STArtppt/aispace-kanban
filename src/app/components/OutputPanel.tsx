@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ArrowUpDown,
+  Copy,
   FileText,
   MonitorPlay,
   ScrollText,
@@ -11,7 +12,9 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
-import { CopyButton, EmptyState, Row, SectionTitle, Stat } from '@/components/Primitives';
+import { EmptyState, Row, RowActions, SectionTitle, Stat, writeClipboard } from '@/components/Primitives';
+import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
+import { useFileManagerName } from '@/hooks/useFileManager';
 import type { FileItem, Scan } from '@/lib/api';
 import { datePrefix, formatRelative, formatWords, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -36,6 +39,8 @@ const SORTS = {
 type SortKey = keyof typeof SORTS;
 
 const OUTPUT_SORT_KEY = 'aispace-kanban:output-sort';
+/** 列表 / 树形是整个「产出文档」视图共用的偏好，三组一起切 */
+const OUTPUT_VIEW_KEY = 'aispace-kanban:output-view';
 
 function readOutputSort(): SortKey {
   const raw = localStorage.getItem(OUTPUT_SORT_KEY);
@@ -77,6 +82,58 @@ function annotationLabel(item: FileItem): string {
   return ` · ${parts.join('、')}`;
 }
 
+function OutputRow({
+  item,
+  indent,
+  icon: Icon,
+  openPath,
+  onOpen,
+}: {
+  item: FileItem;
+  /** 树形视图里的层级；列表视图不传 */
+  indent?: number;
+  icon: LucideIcon;
+  openPath: string;
+  onOpen: (item: FileItem) => void;
+}) {
+  return (
+    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
+      {isPresentable(item) ? (
+        <MonitorPlay className="size-4 text-muted-foreground" />
+      ) : (
+        <Icon className="size-4 text-muted-foreground" />
+      )}
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="truncate text-sm">{item.title || item.name}</span>
+          {isPresentable(item) ? (
+            <Badge variant="muted" className="shrink-0 text-[10px]">
+              可演示
+            </Badge>
+          ) : null}
+        </span>
+        {/* 文档自身的相对路径，方便直接喂给 AI / 命令行 */}
+        <span className="truncate text-xs text-muted-foreground" title={item.path}>
+          {item.path}
+          {datePrefix(item.name) ? '' : ` · ${formatRelative(item.mtime)}`}
+          {annotationLabel(item)}
+        </span>
+      </div>
+      <RowActions
+        actions={[
+          {
+            label: '复制路径',
+            icon: Copy,
+            onSelect: () => {
+              void writeClipboard(markdownLink(item.title || item.name, item.path));
+            },
+          },
+        ]}
+      />
+    </Row>
+  );
+}
+
 function OutputGroup({
   title,
   hint,
@@ -85,6 +142,9 @@ function OutputGroup({
   files,
   sortKey,
   onSortChange,
+  viewMode,
+  viewToggle,
+  projectId,
   openPath,
   onOpen,
 }: {
@@ -95,10 +155,15 @@ function OutputGroup({
   files: FileItem[];
   sortKey: SortKey;
   onSortChange: (key: SortKey) => void;
+  viewMode: ViewMode;
+  /** 视图开关只挂在本视图的第一个有内容的清单上；不是它时不传 */
+  viewToggle?: ReactNode;
+  projectId: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
 }) {
   const [query, setQuery] = useState('');
+  const fileManager = useFileManagerName();
   const [searchOpen, setSearchOpen] = useState(false);
   const filtered = useMemo(() => {
     const list = files.filter((item) => matchOutput(item, query));
@@ -112,6 +177,13 @@ function OutputGroup({
   }, [files, query, sortKey]);
   const searching = query.trim().length > 0;
   const searchExpanded = searchOpen || searching;
+  const treePathOf = useCallback(
+    (item: FileItem) => {
+      const prefix = `output/${dir}/`;
+      return item.path.startsWith(prefix) ? item.path.slice(prefix.length) : item.name;
+    },
+    [dir],
+  );
 
   if (!files.length) {
     return (
@@ -131,6 +203,7 @@ function OutputGroup({
           <SectionTitle count={files.length}>{title}</SectionTitle>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {viewToggle}
           <Select
             value={sortKey}
             onValueChange={(value) => {
@@ -186,33 +259,39 @@ function OutputGroup({
       ) : (
         <p className="text-xs text-muted-foreground">{hint}</p>
       )}
-      {filtered.length ? (
+      {filtered.length && viewMode === 'tree' ? (
+        <FileTree
+          items={filtered}
+          treePathOf={treePathOf}
+          keyOf={(item) => item.path}
+          expandAll={searching}
+          renderDirActions={(dirKey) => (
+            <DirActions
+              projectId={projectId}
+              fileManager={fileManager}
+              dirPath={`output/${dir}/${dirKey}`}
+            />
+          )}
+          renderFile={(item, indent) => (
+            <OutputRow
+              item={item}
+              indent={indent}
+              icon={Icon}
+              openPath={openPath}
+              onOpen={onOpen}
+            />
+          )}
+        />
+      ) : filtered.length ? (
         <div className="overflow-hidden rounded-lg border border-border">
           {filtered.map((item) => (
-            <Row key={item.path} onClick={() => onOpen(item)} active={openPath === item.path}>
-              {isPresentable(item) ? (
-                <MonitorPlay className="size-4 text-muted-foreground" />
-              ) : (
-                <Icon className="size-4 text-muted-foreground" />
-              )}
-              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-sm">{item.title || item.name}</span>
-                  {isPresentable(item) ? (
-                    <Badge variant="muted" className="shrink-0 text-[10px]">
-                      可演示
-                    </Badge>
-                  ) : null}
-                </span>
-                {/* 文档自身的相对路径，方便直接喂给 AI / 命令行 */}
-                <span className="truncate text-xs text-muted-foreground" title={item.path}>
-                  {item.path}
-                  {datePrefix(item.name) ? '' : ` · ${formatRelative(item.mtime)}`}
-                  {annotationLabel(item)}
-                </span>
-              </div>
-              <CopyButton value={markdownLink(item.title || item.name, item.path)} />
-            </Row>
+            <OutputRow
+              key={item.path}
+              item={item}
+              icon={Icon}
+              openPath={openPath}
+              onOpen={onOpen}
+            />
           ))}
         </div>
       ) : (
@@ -236,10 +315,19 @@ export function OutputPanel({
   const marks = output.stats.annotations ?? 0;
   const wordsHint = formatWords(output.stats.words);
   const [sortKey, setSortKey] = useState<SortKey>(readOutputSort);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(OUTPUT_VIEW_KEY));
 
   useEffect(() => {
     localStorage.setItem(OUTPUT_SORT_KEY, sortKey);
   }, [sortKey]);
+
+  useEffect(() => {
+    localStorage.setItem(OUTPUT_VIEW_KEY, viewMode);
+  }, [viewMode]);
+
+  // 空分组只剩一个空态，没有工具栏可挂；开关落在第一个真有文件的分组上
+  const toggleGroup = GROUPS.find(({ key }) => output[key].length)?.key;
+  const viewToggle = <ViewModeToggle mode={viewMode} onChange={setViewMode} label="产出清单" />;
 
   return (
     <div className="flex flex-col gap-6">
@@ -269,6 +357,8 @@ export function OutputPanel({
       {GROUPS.map(({ key, title, hint, icon }) => (
         <OutputGroup
           key={key}
+          viewToggle={key === toggleGroup ? viewToggle : undefined}
+          projectId={scan.project.id}
           title={title}
           hint={hint}
           dir={key}
@@ -276,6 +366,7 @@ export function OutputPanel({
           files={output[key]}
           sortKey={sortKey}
           onSortChange={setSortKey}
+          viewMode={viewMode}
           openPath={openPath}
           onOpen={onOpen}
         />

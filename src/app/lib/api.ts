@@ -225,8 +225,8 @@ export interface IngestJob {
   exitCode?: number | null;
   log?: string;
   /**
-   * 本次指定的单个文件（input/raw/ 下的相对路径）。空或缺省 = 转整个 input/raw/。
-   * 可选：旧服务进程没有这个字段，缺了就不当「单文件任务」展示。
+   * 本次指定的目标（input/raw/ 下的文件或目录的相对路径）。空或缺省 = 转整个 input/raw/。
+   * 可选：旧服务进程没有这个字段，缺了就不当「单个目标的任务」展示。
    */
   path?: string;
 }
@@ -311,12 +311,14 @@ export const api = {
     }),
   /**
    * 触发工作空间 scripts/ingest.py；立刻返回，进度用 ingestStatus 轮询。
-   * filePath 有值时只转那一份；缺省转整个 input/raw/。旧服务进程会忽略 body，仍整目录转。
+   * targetPath 有值时只转它（input/raw/ 下的文件或目录）；缺省转整个 input/raw/。
+   * 注意目录是后加的：旧服务进程对目录会返回 400「请指定一个文件，不要指定目录」，
+   * 前端把这句原样显示出来即可（不是白屏，也不需要前端自己判断能不能转目录）。
    */
-  startIngest: (id: string, filePath?: string) =>
+  startIngest: (id: string, targetPath?: string) =>
     request<IngestJob>(`/api/projects/${id}/ingest`, {
       method: 'POST',
-      ...(filePath ? { body: JSON.stringify({ path: filePath }) } : {}),
+      ...(targetPath ? { body: JSON.stringify({ path: targetPath }) } : {}),
     }),
   ingestStatus: (id: string) => request<IngestJob>(`/api/projects/${id}/ingest`),
 };
