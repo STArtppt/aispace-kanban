@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Expand,
   FolderOpen,
   SquareArrowOutUpRight,
   X,
@@ -456,11 +457,13 @@ function TableReader({
     setActive(firstPath);
   }, [item.path, firstPath]);
 
+  // 必须在 early return 之前：单 sheet / 多 sheet 切换时 TableReader 会复用同一实例
+  const byPath = useMemo(() => new Map(sheets.map((s) => [s.path, s])), [sheets]);
+
   if (!multi) {
     return <PaginatedCsvTable projectId={projectId} path={firstPath} />;
   }
 
-  const byPath = useMemo(() => new Map(sheets.map((s) => [s.path, s])), [sheets]);
   const activeSheet = byPath.get(active);
 
   return (
@@ -581,7 +584,11 @@ export function Reader({
   }, [content, mode, multiSheet, manifestContent]);
 
   const base = dirOf(mode === 'markdown' && isDir ? manifestPath : item.path);
+  // 单文件 HTML（output/docs 下的汇报材料）没有 _manifest.md，校验说明这一栏不该出现
+  const hasManifest = (multiSheet || mode === 'html') && isDir;
   const [htmlTab, setHtmlTab] = useState<'preview' | 'manifest'>('preview');
+  // 汇报时把预览区撑满整屏：iframe 自己进全屏，不牵动看板其余布局
+  const htmlFrameRef = useRef<HTMLIFrameElement>(null);
   // 点表等大包默认先看摘要（规模分布 / SQL），再按需翻数据
   const [tableTab, setTableTab] = useState<'summary' | 'data'>('summary');
 
@@ -818,12 +825,13 @@ export function Reader({
               >
                 <TabsList variant="line" className="px-0">
                   <TabsTrigger value="preview">预览</TabsTrigger>
-                  <TabsTrigger value="manifest">校验说明</TabsTrigger>
+                  {hasManifest ? <TabsTrigger value="manifest">校验说明</TabsTrigger> : null}
                 </TabsList>
                 <TabsContent value="preview" className="min-h-0 flex-1">
                   {htmlPath ? (
                     <div className="flex h-[min(70vh,640px)] flex-col gap-2">
                       <iframe
+                        ref={htmlFrameRef}
                         title={
                           item.title ||
                           (isConverted(item) ? item.htmlName : undefined) ||
@@ -834,6 +842,14 @@ export function Reader({
                         className="h-full w-full flex-1 rounded-lg border border-border bg-white"
                       />
                       <div className="flex flex-wrap gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void htmlFrameRef.current?.requestFullscreen?.()}
+                        >
+                          <Expand className="size-3.5" />
+                          全屏演示
+                        </Button>
                         <Button
                           variant="outline"
                           size="sm"

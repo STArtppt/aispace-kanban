@@ -269,17 +269,48 @@ function appendIngestLog(job, chunk) {
 }
 
 /**
+ * 单文件转换只认 input/raw/ 下真实存在的文件。
+ * 相对路径统一成 /，跟 scan 的 rel()、前端 FileItem.path 对齐。
+ */
+function resolveIngestTarget(root, relPath) {
+  const raw = typeof relPath === 'string' ? relPath.trim() : '';
+  if (!raw) return null;
+  const rel = raw.replace(/\\/g, '/');
+  const abs = resolveInside(root, rel);
+  const rawRoot = path.resolve(root, 'input', 'raw');
+  if (abs !== rawRoot && !abs.startsWith(rawRoot + path.sep)) {
+    const err = new Error('只能转换 input/raw/ 下的文件');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!fs.existsSync(abs)) {
+    const err = new Error(`文件不存在：${rel}`);
+    err.statusCode = 404;
+    throw err;
+  }
+  if (!fs.statSync(abs).isFile()) {
+    const err = new Error('请指定一个文件，不要指定目录');
+    err.statusCode = 400;
+    throw err;
+  }
+  return { abs, rel };
+}
+
+/**
  * 在工作空间里异步跑 scripts/ingest.py。
  * 看板只 spawn，真正写 input/converted/ 的是工作空间自己的脚本 —— 与 runInit 同构。
  * 接口立刻返回，进度靠 GET /ingest 轮询；写盘会被 watchWorkspace 捕获，页面自己刷新。
+ * relPath 有值时只转那一份（ingest.py 的 paths 参数）；缺省转整个 input/raw/。
  */
-async function startIngest(project) {
+async function startIngest(project, relPath) {
   const existing = ingestJobs.get(project.id);
   if (existing?.status === 'running') {
     const err = new Error('这个工作空间正在转换资料，等这轮结束后再试。');
     err.statusCode = 409;
     throw err;
   }
+
+  const target = resolveIngestTarget(project.root, relPath);
 
   const script = path.join(project.root, 'scripts', 'ingest.py');
   if (!fs.existsSync(script)) {
@@ -308,12 +339,16 @@ async function startIngest(project) {
     startedAt: new Date().toISOString(),
     finishedAt: '',
     exitCode: null,
-    message: '正在转换 input/raw/ … 大 PDF 可能要几分钟。',
+    path: target ? target.rel : '',
+    message: target
+      ? `正在转换 ${target.rel} … 大 PDF 可能要几分钟。`
+      : '正在转换 input/raw/ … 大 PDF 可能要几分钟。',
     log: '',
   };
   ingestJobs.set(project.id, job);
 
-  const child = spawn(bin, [...prefix, script], {
+  const args = target ? [...prefix, script, target.rel] : [...prefix, script];
+  const child = spawn(bin, args, {
     cwd: project.root,
     env: process.env,
   });
@@ -345,13 +380,14 @@ async function startIngest(project) {
     status: job.status,
     startedAt: job.startedAt,
     message: job.message,
+    path: job.path || '',
   };
 }
 
 function ingestStatus(projectId) {
   const job = ingestJobs.get(projectId);
   if (!job) {
-    return { status: 'idle', message: '', startedAt: '', finishedAt: '', exitCode: null, log: '' };
+    return { status: 'idle', message: '', startedAt: '', finishedAt: '', exitCode: null, log: '', path: '' };
   }
   return {
     status: job.status,
@@ -360,6 +396,7 @@ function ingestStatus(projectId) {
     finishedAt: job.finishedAt || '',
     exitCode: job.exitCode,
     log: job.log || '',
+    path: job.path || '',
   };
 }
 
@@ -626,7 +663,8 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     }
     if (req.method === 'POST') {
       if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      const started = await startIngest(project);
+      const body = await readBody(req);
+      const started = await startIngest(project, body.path);
       return json(res, 200, started);
     }
   }

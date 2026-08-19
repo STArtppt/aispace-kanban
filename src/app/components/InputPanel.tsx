@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppWindow, ArrowUpDown, FileText, FolderOpen, Image, Loader2, Quote, Search, Table } from 'lucide-react';
+import { AppWindow, ArrowUpDown, FileOutput, FileText, FolderOpen, Image, Loader2, Quote, Search, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { AssetGalleryStack } from '@/components/AssetGalleryStack';
 import { ImageLightbox } from '@/components/ImageLightbox';
-import { CopyButton, EmptyState, ListPager, Row, SectionTitle, Stat } from '@/components/Primitives';
+import { CopyButton, EmptyState, ListPager, Row, RowIconButton, SectionTitle, Stat } from '@/components/Primitives';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { api, type ConvertedItem, type FileItem, type IngestJob, type Scan } from '@/lib/api';
 import { formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
@@ -113,11 +113,19 @@ function PendingList({
   projectId,
   openPath,
   onOpen,
+  canIngest,
+  ingestRunning,
+  ingestingPath,
+  onIngest,
 }: {
   items: FileItem[];
   projectId: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  canIngest: boolean;
+  ingestRunning: boolean;
+  ingestingPath: string;
+  onIngest: (filePath: string) => void;
 }) {
   const { page, setPage } = useListPage(items.length, LIST_PAGE_SIZE, String(items.length));
   const pageItems = items.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
@@ -125,28 +133,40 @@ function PendingList({
 
   return (
     <div className="overflow-hidden rounded-lg border border-border">
-      {pageItems.map((item) => (
-        <Row key={item.path} onClick={() => onOpen(item)} active={openPath === item.path}>
-          <KindIcon item={item} />
-          <span className="min-w-0 flex-1 truncate text-sm" title={item.path}>
-            {pendingLabel(item)}
-          </span>
-          <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
-          <CopyButton value={markdownLink(pendingLabel(item), item.path)} />
-          <span
-            role="button"
-            tabIndex={-1}
-            title={`在${fileManager}中显示`}
-            className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground"
-            onClick={(event) => {
-              event.stopPropagation();
-              void api.reveal(projectId, item.path);
-            }}
-          >
-            <FolderOpen className="size-3.5" />
-          </span>
-        </Row>
-      ))}
+      {pageItems.map((item) => {
+        const thisRowRunning = ingestRunning && ingestingPath === item.path;
+        return (
+          <Row key={item.path} onClick={() => onOpen(item)} active={openPath === item.path}>
+            <KindIcon item={item} />
+            <span className="min-w-0 flex-1 truncate text-sm" title={item.path}>
+              {pendingLabel(item)}
+            </span>
+            <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
+            {canIngest ? (
+              <RowIconButton
+                label="转成AI易读"
+                disabled={ingestRunning}
+                onClick={() => onIngest(item.path)}
+              >
+                {thisRowRunning ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <FileOutput className="size-3.5" />
+                )}
+              </RowIconButton>
+            ) : null}
+            <CopyButton value={markdownLink(pendingLabel(item), item.path)} />
+            <RowIconButton
+              label={`在${fileManager}中显示`}
+              onClick={() => {
+                void api.reveal(projectId, item.path);
+              }}
+            >
+              <FolderOpen className="size-3.5" />
+            </RowIconButton>
+          </Row>
+        );
+      })}
       <ListPager page={page} pageSize={LIST_PAGE_SIZE} total={items.length} onPageChange={setPage} />
     </div>
   );
@@ -342,8 +362,9 @@ function ConvertedList({
  * 在看板里触发 scripts/ingest.py。
  * canIngest 缺失（旧服务）时整块不渲染，退回文案里的终端命令提示。
  * 写盘由工作空间脚本完成，看板只负责 spawn + 轮询状态；文件变化走已有 SSE。
+ * 状态提到 InputPanel 是为了让待转换列表的单行「转换」和整目录按钮共用同一轮任务。
  */
-function IngestControls({ projectId, canIngest }: { projectId: string; canIngest?: boolean }) {
+function useIngestJob(projectId: string, canIngest?: boolean) {
   const [job, setJob] = useState<IngestJob | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -403,28 +424,46 @@ function IngestControls({ projectId, canIngest }: { projectId: string; canIngest
     };
   }, [polling, projectId, applyJob]);
 
-  if (!canIngest) return null;
+  const start = useCallback(
+    async (filePath?: string) => {
+      setBusy(true);
+      setError('');
+      try {
+        const started = await api.startIngest(projectId, filePath);
+        applyJob(started);
+      } catch (err) {
+        setError((err as Error).message);
+        setPolling(false);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [projectId, applyJob],
+  );
 
-  const running = job?.status === 'running' || busy;
-
-  const start = async () => {
-    setBusy(true);
-    setError('');
-    try {
-      const started = await api.startIngest(projectId);
-      applyJob(started);
-    } catch (err) {
-      setError((err as Error).message);
-      setPolling(false);
-    } finally {
-      setBusy(false);
-    }
+  return {
+    job,
+    running: job?.status === 'running' || busy,
+    error,
+    start,
   };
+}
 
+function IngestControls({
+  job,
+  running,
+  error,
+  onStart,
+}: {
+  job: IngestJob | null;
+  running: boolean;
+  error: string;
+  onStart: () => void;
+}) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" disabled={running} onClick={() => void start()}>
+        <Button size="sm" disabled={running} onClick={onStart}>
           {running ? (
             <>
               <Loader2 className="size-3.5 animate-spin" />
@@ -512,6 +551,7 @@ export function InputPanel({
   const hasOutputs = scan.output.stats.total > 0;
   // 旧服务进程没有 canIngest：整块按钮不出现，只保留终端命令提示
   const canIngest = Boolean(input.canIngest);
+  const ingest = useIngestJob(projectId, canIngest);
   // 旧服务进程没有 assetGroups：退回平铺网格
   const galleries = input.assetGroups || [];
 
@@ -519,7 +559,17 @@ export function InputPanel({
     <div className="flex flex-col gap-6">
       {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
       <div className="grid grid-cols-3 gap-2">
-        <Stat label="原始资料" value={input.stats.raw} hint={formatBytes(input.stats.bytes)} />
+        <Stat
+          label="原始资料"
+          value={input.stats.raw}
+          // 忽略的仍计入总量，否则「资料总共多少份」会跟磁盘上对不上；
+          // 但要在 hint 里点明，不然人会奇怪为什么待转换比总量少一大截
+          hint={
+            input.stats.ignored
+              ? `${formatBytes(input.stats.bytes)} · ${input.stats.ignored} 份已忽略`
+              : formatBytes(input.stats.bytes)
+          }
+        />
         <Stat
           label="已转换"
           value={input.stats.converted}
@@ -554,8 +604,17 @@ export function InputPanel({
           {input.pending.length
             ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
             : '原始资料放进 input/raw/ 后会出现在这里。'}
+          {input.stats.ignored ? (
+            <>
+              另有 {input.stats.ignored} 份按
+              <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+                input/.ingestignore
+              </code>
+              忽略，不算待转换（改那份文件可调整）。
+            </>
+          ) : null}
           {canIngest ? (
-            '点下面「开始转换」，看板会在工作空间里跑 scripts/ingest.py（大 PDF 可能要几分钟）。'
+            '点「开始转换」会一次处理全部；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
           ) : (
             <>
               在工作空间里跑一次
@@ -566,13 +625,24 @@ export function InputPanel({
             </>
           )}
         </p>
-        <IngestControls projectId={projectId} canIngest={canIngest} />
+        {canIngest ? (
+          <IngestControls
+            job={ingest.job}
+            running={ingest.running}
+            error={ingest.error}
+            onStart={() => void ingest.start()}
+          />
+        ) : null}
         {input.pending.length ? (
           <PendingList
             items={input.pending}
             projectId={projectId}
             openPath={openPath}
             onOpen={onOpen}
+            canIngest={canIngest}
+            ingestRunning={ingest.running}
+            ingestingPath={ingest.job?.path || ''}
+            onIngest={(filePath) => void ingest.start(filePath)}
           />
         ) : (
           <EmptyState title="暂无待转换文件" />

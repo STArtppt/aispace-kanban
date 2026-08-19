@@ -112,8 +112,55 @@ export async function writeClipboard(text: string): Promise<boolean> {
 }
 
 /**
+ * 列表行上的小图标动作。行本身是 <button>，不能再套 button，触发器用 span。
+ * Tooltip 与复制按钮同一套（delay 300 + TooltipContent），别再用原生 title。
+ */
+export function RowIconButton({
+  label,
+  disabled,
+  className,
+  onClick,
+  children,
+}: {
+  label: string;
+  disabled?: boolean;
+  className?: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <TooltipProvider delay={300}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              role="button"
+              tabIndex={-1}
+              aria-label={label}
+              aria-disabled={disabled || undefined}
+              className={cn(
+                'shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground',
+                disabled && 'cursor-not-allowed text-muted-foreground/60 hover:bg-transparent hover:text-muted-foreground/60',
+                className,
+              )}
+              onClick={(event: MouseEvent) => {
+                event.stopPropagation();
+                if (disabled) return;
+                onClick();
+              }}
+            />
+          }
+        >
+          {children}
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/**
  * 复制文本的小图标按钮。
- * 列表行本身是 <button>，按钮不能嵌套，所以触发器渲染成 span + role="button"。
  * 提示文案固定「复制路径」，复制成功只用图标反馈（✓），不改文案。
  */
 export function CopyButton({ value, className }: { value: string; className?: string }) {
@@ -126,32 +173,17 @@ export function CopyButton({ value, className }: { value: string; className?: st
   }, [copied]);
 
   return (
-    <TooltipProvider delay={300}>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <span
-              role="button"
-              tabIndex={-1}
-              aria-label="复制路径"
-              className={cn(
-                'shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-secondary hover:text-foreground',
-                className,
-              )}
-              onClick={(event: MouseEvent) => {
-                event.stopPropagation();
-                void writeClipboard(value).then((ok) => {
-                  if (ok) setCopied(true);
-                });
-              }}
-            />
-          }
-        >
-          {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        </TooltipTrigger>
-        <TooltipContent>复制路径</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <RowIconButton
+      label="复制路径"
+      className={className}
+      onClick={() => {
+        void writeClipboard(value).then((ok) => {
+          if (ok) setCopied(true);
+        });
+      }}
+    >
+      {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+    </RowIconButton>
   );
 }
 

@@ -36,6 +36,7 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 明明已经转过的资料还挂在「待转换」 | 覆盖判据只认**产物里记着的来源** —— 没有 `.md` 产物的类型(图片)得另有出处:`assets/<组>/_manifest.md` 的 `sources` | `curl` 看 `input.pending`;再看该 raw 文件有没有出现在某份 frontmatter 的 `source` / `sources` 里。旧版工作空间的 `scripts/ingest.py` 不写这份清单,重跑一次即可 |
 | markdown 正文图片空白 / 页面上露出裸 `<img>` | pandoc 从 docx 转出的是 HTML 图,不是 `![]()`;`react-markdown` 默认转义 HTML | 打开 converted `.md` 看是 `<img` 还是 `![](`;`Markdown.tsx` 必须接 `rehype-raw` |
 | 装成 npm 包后才出的毛病(白屏 / 新建工作空间失败) | 包里缺东西:`dist/` 没构建、依赖没进 `dependencies`、模板文件被 npm 打包规则吃掉 | `pnpm smoke:npm` —— 它在干净目录装上真跑一遍,比在源码仓怎么试都准 |
+| 点开预览后白屏，控制台 `Rendered more/fewer hooks` 或 `change in the order of Hooks` | 同一组件实例里有 `if (...) return` **之后**又调了 `useMemo` / `useState` / `useEffect`（典型：`TableReader` 单 sheet 提前返回、切到多 sheet 才补 hook） | 看堆栈里的组件名，把所有 hooks 挪到任何 early return 之前；切换条目时组件常被复用、不会自动卸载 |
 
 排不掉,继续:
 

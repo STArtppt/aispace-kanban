@@ -31,6 +31,8 @@ export interface FileItem {
   words?: number;
   status?: string;
   date?: string;
+  /** 按 input/.ingestignore 命中被忽略：不算待转换。旧服务进程没有这个字段。 */
+  ignored?: boolean;
   /** 一条标注都没有时服务端不返回；旧服务进程也没有。缺了就什么都不显示。 */
   annotations?: Annotations;
 }
@@ -157,6 +159,11 @@ export interface Scan {
       converted: number;
       assets: number;
       pending: number;
+      /**
+       * 按 input/.ingestignore 忽略的份数：不算待转换，但仍计入 raw 总量。
+       * 可选：旧服务进程没有这个字段，缺了就不显示这一项。
+       */
+      ignored?: number;
       warnings: number;
       /** 原件已不在 / 原件转换后动过的产物份数。可选：旧服务进程没有这两个字段，缺了就不显示。 */
       orphaned?: number;
@@ -217,6 +224,11 @@ export interface IngestJob {
   finishedAt?: string;
   exitCode?: number | null;
   log?: string;
+  /**
+   * 本次指定的单个文件（input/raw/ 下的相对路径）。空或缺省 = 转整个 input/raw/。
+   * 可选：旧服务进程没有这个字段，缺了就不当「单文件任务」展示。
+   */
+  path?: string;
 }
 
 /**
@@ -297,8 +309,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ path, mode }),
     }),
-  /** 触发工作空间 scripts/ingest.py；立刻返回，进度用 ingestStatus 轮询 */
-  startIngest: (id: string) =>
-    request<IngestJob>(`/api/projects/${id}/ingest`, { method: 'POST' }),
+  /**
+   * 触发工作空间 scripts/ingest.py；立刻返回，进度用 ingestStatus 轮询。
+   * filePath 有值时只转那一份；缺省转整个 input/raw/。旧服务进程会忽略 body，仍整目录转。
+   */
+  startIngest: (id: string, filePath?: string) =>
+    request<IngestJob>(`/api/projects/${id}/ingest`, {
+      method: 'POST',
+      ...(filePath ? { body: JSON.stringify({ path: filePath }) } : {}),
+    }),
   ingestStatus: (id: string) => request<IngestJob>(`/api/projects/${id}/ingest`),
 };

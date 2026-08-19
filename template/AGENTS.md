@@ -24,7 +24,7 @@ input/  →  （分析）  →  output/  →  prototypes/
 | `input/assets/` | 图片资料：`<文档名>/` 是那份文档抽出的图，`未分类/` 是直接放进 raw/ 的单图 | 脚本生成。看图请直接读图片文件 |
 | `input/INDEX.md` | 资料台账 | 表格由脚本生成；人工判断写在「人工批注」区 |
 | `output/analysis/` | 分析中间产物（现状基线、需求拆解、澄清问题清单） | 自由写 |
-| `output/docs/` | 对外交付文档（PRD、需求规格、评审材料） | 自由写 |
+| `output/docs/` | 对外交付文档（PRD、需求规格、评审材料）；**演示/汇报用的 HTML 也放这里** | 自由写，见下文 |
 | `output/decisions/` | 决策记录：一个决策一个文件 | 只追加，不要改历史决策 |
 | `prototypes/` | Axhub Make 客户端目录 | **不要手动创建文件**，见下文 |
 
@@ -92,8 +92,31 @@ PM 接手项目最大的风险是**把自己的推断当成项目事实**，然�
 python3 scripts/ingest.py                      # 转换 input/raw/ 下的新资料（幂等，只转有变化的）
 python3 scripts/ingest.py --dry-run            # 先看转换计划
 python3 scripts/ingest.py --force              # 全部重转
+python3 scripts/ingest.py input/raw/某目录      # 只转指定目录或文件（台账会合并，不冲掉其他条目）
 python3 scripts/ingest.py --ocr                # 扫描版 PDF，让 MinerU 走 OCR
 python3 scripts/ingest.py --pdf-engine markitdown   # 不调在线接口，强制本地转
+```
+
+### 忽略清单 `input/.ingestignore`
+
+客户常常一次性交来上千份存量资料，只有一部分需要进分析链路。剩下的既不该转，
+也不该在看板上一直报「待转换」把真正的缺口淹掉——写进 `input/.ingestignore`：
+
+```
+raw/客户版          # 目录：连同其下所有文件一起忽略
+*.bak               # 通配：按文件名匹配，不必带路径
+```
+
+gitignore 风格，路径相对 `input/` 写。**`scripts/ingest.py` 和看板 `src/server/scan.mjs`
+读的是同一份**，改一次两边同时生效——改动其中一侧的匹配规则时必须同步另一侧。
+
+被忽略的资料**仍留在看板「原始资料」总量里并标注份数**，台账底部也会汇总一行。
+这是有意的：它们是「看过、判定用不上」，不是「不存在」——藏干净了下次就没人记得
+`input/raw/` 底下还压着几百份没看的东西。
+
+```bash
+python3 scripts/ingest.py --ignore "raw/某目录"   # 临时追加忽略，不写进文件
+python3 scripts/ingest.py --no-ignore            # 本次不应用忽略清单，全部转
 ```
 
 格式分派：docx/odt/rtf 走 pandoc（顺带抽图），**PDF/pptx 走 MinerU 在线 API**，
@@ -152,6 +175,27 @@ sqlite3 input/converted/集控点表/测点.sqlite \
 分段型点表的「设备名」是内容启发式推断的，写进正式文档前要按解析规则文档核对，
 并按溯源要求标 `[推断]`。
 
+## 演示与汇报材料（HTML）
+
+要给客户汇报、评审、演示的材料，如果产出是 HTML，**放 `output/docs/`，和它的 `.md` 源文并排**，
+文件名同名只差扩展名：
+
+```
+output/docs/2026-08-18-需求评审材料.md      ← 内容源，改这份
+output/docs/2026-08-18-需求评审材料.html    ← 渲染产物，一起改
+```
+
+三条规则：
+
+- **写成完整的单文件 HTML**：自带 `<!doctype html>`、内联 CSS、不引外部字体和脚本，
+  双击能在浏览器打开，拷给别人也能看。
+- **md 是内容源，html 是渲染产物**。两份内容要一致；改内容时两边一起改，不要只改一份。
+- **看板已经支持**：`output/docs/*.html` 在「产出文档」视图里带「可演示」标记，
+  点开是 iframe 预览，下面有「全屏演示」和「用浏览器打开」——汇报现场直接用。
+
+**不要放进 `prototypes/`。** 那是 Axhub Make 的地盘（见下节），而且看板扫 `prototypes/`
+只认 `<目录>/index.html` 或 zip 包，散装 HTML 文件放进去根本扫不到。
+
 ## 阶段四：原型
 
 `prototypes/` 是给 [Axhub Make](https://github.com/lintendo/Axhub-Make) 用的**客户端目录**。
@@ -178,7 +222,7 @@ sqlite3 input/converted/集控点表/测点.sqlite \
 - **不要把 `测点主表.csv` 整个读进上下文**（动辄十几万行）。查测点走 `测点.sqlite` 的 SQL，只把命中的几十行拿回来；要看全局分布读 `_manifest.md`。
 - 不要修改或删除 `input/raw/` 里的任何文件。
 - 不要手改 `input/converted/` 的产物，改脚本或在 `output/analysis/` 里记录修正。
-- 不要在 `prototypes/` 下建文件。
+- 不要在 `prototypes/` 下建文件。演示/汇报用的 HTML 放 `output/docs/`，见上文。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。
 - 不要用推断填平资料空白，标注出来交给用户去确认。
 

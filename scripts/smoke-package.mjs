@@ -185,6 +185,24 @@ try {
   if (traversal.status !== 403) die(`路径穿越没被挡住（返回 ${traversal.status}，应该是 403）`);
   ok('工作空间外的路径被挡住了');
 
+  const ingestEscape = await fetch(`${base}/api/projects/${created.id}/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: '../../../etc/passwd' }),
+  });
+  if (ingestEscape.status !== 403) {
+    die(`单文件转换的路径穿越没被挡住（返回 ${ingestEscape.status}，应该是 403）`);
+  }
+  const ingestOutside = await fetch(`${base}/api/projects/${created.id}/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'output/docs/foo.md' }),
+  });
+  if (ingestOutside.status !== 400) {
+    die(`input/raw/ 以外的路径没被拒（返回 ${ingestOutside.status}，应该是 400）`);
+  }
+  ok('单文件转换只认 input/raw/，越界路径被挡住');
+
   // ── 8 注册表没写到真 HOME ─────────────────────────────────────────────────
   if (!fs.existsSync(path.join(fakeHome, '.pmwork', 'dashboard', 'projects.json'))) {
     die('注册表没写进隔离目录 —— 冒烟可能污染了你自己的看板，检查 HOME 传递');

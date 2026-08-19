@@ -20,6 +20,49 @@ function rel(root, abs) {
   return path.relative(root, abs).split(path.sep).join('/');
 }
 
+/**
+ * 读 input/.ingestignore —— 不进转换、也不算「待转换」的资料清单。
+ * gitignore 风格：一行一个模式，# 是注释，路径相对 input/ 写。
+ * scripts/ingest.py 的 load_ignore() 读的是同一份，两边规则改动要同步。
+ */
+function readIgnorePatterns(root) {
+  const file = path.join(root, 'input', '.ingestignore');
+  if (!fs.existsSync(file)) return [];
+  return fs
+    .readFileSync(file, 'utf8')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#'))
+    .map((l) => l.replace(/\/+$/, ''));
+}
+
+/** 把模式里的 * / ? 通配翻成正则，其余字符原样转义 */
+function globToRegExp(pattern) {
+  const body = pattern
+    .split('')
+    .map((ch) => (ch === '*' ? '[^/]*' : ch === '?' ? '[^/]' : ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    .join('');
+  return new RegExp(`^${body}$`);
+}
+
+/**
+ * 返回「这份资料是否被忽略」的判定函数。
+ * 入参是相对工作空间根的路径（input/raw/客户版/x.doc），而模式相对 input/ 写
+ * （raw/客户版），所以先剥掉 input/ 前缀再比。
+ */
+function makeIgnoreMatcher(patterns) {
+  if (!patterns.length) return () => false;
+  const compiled = patterns.map((p) => ({ raw: p, re: globToRegExp(p) }));
+  return (relPath) => {
+    const p = relPath.startsWith('input/') ? relPath.slice('input/'.length) : relPath;
+    const name = p.split('/').pop();
+    return compiled.some(
+      // 目录前缀命中：写 raw/客户版 等于连同其下所有文件
+      ({ raw, re }) => p === raw || p.startsWith(`${raw}/`) || re.test(p) || re.test(name),
+    );
+  };
+}
+
 function listFiles(dir, { recursive = true } = {}) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
@@ -335,13 +378,19 @@ export async function verifySource(root, relPath) {
 
 function scanInput(root) {
   const inputDir = path.join(root, 'input');
-  const raw = listFiles(path.join(inputDir, 'raw')).map((abs) => ({
-    path: rel(root, abs),
-    name: path.basename(abs),
-    ext: path.extname(abs).toLowerCase(),
-    reader: readerKind(path.extname(abs).toLowerCase()),
-    ...stat(abs),
-  }));
+  const isIgnored = makeIgnoreMatcher(readIgnorePatterns(root));
+  const raw = listFiles(path.join(inputDir, 'raw')).map((abs) => {
+    const p = rel(root, abs);
+    return {
+      path: p,
+      name: path.basename(abs),
+      ext: path.extname(abs).toLowerCase(),
+      reader: readerKind(path.extname(abs).toLowerCase()),
+      // 忽略的资料仍留在 raw 列表和总量里 —— 藏起来就等于忘了它还在
+      ignored: isIgnored(p),
+      ...stat(abs),
+    };
+  });
 
   const convertedDir = path.join(inputDir, 'converted');
   const converted = [];
@@ -378,7 +427,9 @@ function scanInput(root) {
     convertedSources.has(r.path) ||
     assetSources.has(r.path) ||
     coveredDirs.some((d) => r.path.startsWith(d.prefix) && d.kinds.includes(r.ext));
-  const pending = raw.filter((r) => !isCovered(r));
+  // 忽略的不算缺口：它们是「看过、判定用不上」，跟「还没转」不是一回事
+  const pending = raw.filter((r) => !r.ignored && !isCovered(r));
+  const ignored = raw.filter((r) => r.ignored);
 
   const indexPath = path.join(inputDir, 'INDEX.md');
   // 模板工作空间才有 scripts/ingest.py；自己 mkdir 的只有目录约定，不能在看板里触发转换
@@ -396,6 +447,7 @@ function scanInput(root) {
       converted: converted.length,
       assets: assets.length,
       pending: pending.length,
+      ignored: ignored.length,
       warnings: converted.filter((c) => c.warning).length,
       orphaned: converted.filter((c) => c.sourceState === 'missing').length,
       stale: converted.filter((c) => c.sourceState === 'stale').length,

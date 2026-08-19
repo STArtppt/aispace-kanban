@@ -41,7 +41,7 @@ import sys
 import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mineru  # noqa: E402  与本脚本同目录
@@ -53,6 +53,8 @@ ASSETS = REPO / "input" / "assets"
 # 直接放在 input/raw/ 里的图片没有「所属文档」，统一归到这一堆，看板里就是「未分类」图库
 UNSORTED = ASSETS / "未分类"
 INDEX = REPO / "input" / "INDEX.md"
+# 忽略清单：不进转换、也不在看板上算「待转换」的资料。gitignore 风格，看板同读这一份
+IGNOREFILE = REPO / "input" / ".ingestignore"
 
 # 直接原样拷贝的格式：已经是 AI 可读的文本
 PASSTHROUGH = {".md", ".markdown", ".csv", ".tsv", ".txt", ".json", ".yaml", ".yml", ".xml"}
@@ -897,7 +899,41 @@ def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
     return out
 
 
-def collect(paths: list[str]) -> list[Path]:
+def load_ignore(extra: list[str] | None = None) -> list[str]:
+    """读 input/.ingestignore。gitignore 风格：一行一个模式，# 开头是注释，空行忽略。
+
+    看板 src/server/scan.mjs 读的是同一份文件，两边规则必须一致，改这里记得同步那边。
+    """
+    patterns = []
+    if IGNOREFILE.exists():
+        for line in IGNOREFILE.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                patterns.append(line.rstrip("/"))
+    patterns.extend(p.strip().rstrip("/") for p in (extra or []) if p.strip())
+    return patterns
+
+
+def is_ignored(src: Path, patterns: list[str]) -> bool:
+    """相对 input/ 的路径匹配上任一模式就忽略；目录模式命中其下所有文件。"""
+    if not patterns:
+        return False
+    try:
+        rel = src.resolve().relative_to(RAW.parent).as_posix()
+    except ValueError:
+        return False
+    for pat in patterns:
+        # 目录前缀命中（写 raw/客户版 就等于 raw/客户版/** 全部）
+        if rel == pat or rel.startswith(pat + "/"):
+            return True
+        # 通配符：整路径匹配，或只对文件名匹配（写 *.bak 不必带路径）
+        if PurePosixPath(rel).match(pat) or PurePosixPath(src.name).match(pat):
+            return True
+    return False
+
+
+def collect(paths: list[str], ignore: list[str] | None = None) -> tuple[list[Path], list[Path]]:
+    """返回 (要处理的文件, 被忽略的文件)。忽略的单独返回，好让调用方报个数。"""
     if paths:
         files = []
         for p in paths:
@@ -905,11 +941,52 @@ def collect(paths: list[str]) -> list[Path]:
             files.extend(sorted(f for f in path.rglob("*") if f.is_file()) if path.is_dir() else [path])
     else:
         files = sorted(f for f in RAW.rglob("*") if f.is_file())
-    return [f for f in files if not f.name.startswith(".") and f.name != ".gitkeep"]
+    files = [f for f in files if not f.name.startswith(".") and f.name != ".gitkeep"]
+    patterns = ignore or []
+    kept = [f for f in files if not is_ignored(f, patterns)]
+    dropped = [f for f in files if is_ignored(f, patterns)]
+    return kept, dropped
 
 
-def write_index(records: list[dict]) -> None:
+ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*$")
+
+
+def read_index_rows() -> dict[str, dict]:
+    """把 INDEX.md 已有的表格读回来，按 source 索引。
+
+    只跑子目录时（ingest.py input/raw/某目录）本次 records 只覆盖该目录，
+    不读回旧行就会把其他条目从台账里抹掉——那等于丢了溯源。
+    """
+    if not INDEX.exists():
+        return {}
+    rows = {}
+    for line in INDEX.read_text(encoding="utf-8").splitlines():
+        if line.startswith("## 人工批注"):
+            break
+        m = ROW_RE.match(line)
+        if not m:
+            continue
+        source, kind, target, status = m.groups()
+        if source == "原始文件":          # 表头
+            continue
+        # 产物列写的是 markdown 链接，取回裸路径
+        link = re.match(r"\[`([^`]+)`\]", target)
+        rows[source] = {"source": source, "kind": kind,
+                        "target": link.group(1) if link else "", "status": status}
+    return rows
+
+
+def write_index(records: list[dict], ignored: list[Path] | None = None) -> None:
     now = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
+    # 旧行打底，本次跑到的覆盖掉，没跑到的原样留着
+    merged = read_index_rows()
+    for r in records:
+        merged[r["source"]] = r
+    # 源文件已经不在了的旧行清掉，免得台账里挂着幽灵条目
+    for source in list(merged):
+        if not source.endswith("/") and not (REPO / source).exists():
+            del merged[source]
+    records = list(merged.values())
     lines = [
         "# 资料台账 INDEX",
         "",
@@ -922,6 +999,16 @@ def write_index(records: list[dict]) -> None:
     for r in sorted(records, key=lambda x: x["source"]):
         target = f"[`{r['target']}`](./{r['target']})" if r["target"] else "—"
         lines.append(f"| `{r['source']}` | {r['kind']} | {target} | {r['status']} |")
+    if ignored:
+        # 忽略的资料不逐份列（可能上千份），按顶层目录汇总一行，让人知道它们还在
+        groups: dict[str, int] = {}
+        for f in ignored:
+            rel = f.relative_to(REPO) if f.is_relative_to(REPO) else f
+            top = "/".join(rel.parts[:3]) if len(rel.parts) > 3 else str(rel)
+            groups[top] = groups.get(top, 0) + 1
+        lines += ["", f"> 另有 {len(ignored)} 份资料按 `input/.ingestignore` 忽略，不计入待转换："]
+        for top, n in sorted(groups.items()):
+            lines.append(f"> - `{top}/` {n} 份")
     lines += [
         "",
         "## 人工批注",
@@ -943,6 +1030,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="把 input/raw/ 的文档转换成 AI 可读格式")
     ap.add_argument("paths", nargs="*", help="指定文件或目录，默认整个 input/raw/")
     ap.add_argument("--force", action="store_true", help="忽略 sha256 缓存，全部重转")
+    ap.add_argument("--ignore", action="append", metavar="模式", default=[],
+                    help="临时追加忽略模式（可多次）。常驻规则写进 input/.ingestignore")
+    ap.add_argument("--no-ignore", action="store_true",
+                    help="本次不应用 input/.ingestignore，把被忽略的也一起转")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")
     ap.add_argument("--pdf-engine", choices=["auto", "mineru", "markitdown"], default="auto",
                     help="PDF / PPTX 用哪个引擎。auto=配了 MINERU_API_KEY 就用 MinerU，否则 markitdown")
@@ -957,7 +1048,10 @@ def main() -> int:
     CONVERTED.mkdir(parents=True, exist_ok=True)
     ASSETS.mkdir(parents=True, exist_ok=True)
 
-    files = collect(args.paths)
+    patterns = [] if args.no_ignore else load_ignore(args.ignore)
+    files, ignored = collect(args.paths, patterns)
+    if ignored:
+        log(f"· 按 input/.ingestignore 忽略 {len(ignored)} 份（不计入待转换，加 --no-ignore 可强制转）")
     if not files:
         log("input/raw/ 里没有文件。把 docx / pdf / xlsx / pptx 放进去再跑一次。")
         return 0
@@ -1079,7 +1173,7 @@ def main() -> int:
         })
 
     write_assets_manifest(records)
-    write_index(records)
+    write_index(records, ignored)
     log(f"\n台账已更新：{INDEX.relative_to(REPO)}")
     if failures:
         log(f"有 {failures} 个文件转换失败，见上方日志。")
