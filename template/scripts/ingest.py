@@ -4,7 +4,7 @@
 格式分派
 --------
 docx/odt/rtf → pandoc（顺带抽图）　　PDF/pptx → MinerU 在线 API（没配 key 时退回 markitdown）
-xlsx/xlsm → 每 sheet 一个 csv（自带 OOXML 解析）
+xlsx/xlsm/xls → 每 sheet 一个 csv（自带 OOXML / BIFF8 解析）
 html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（不转 md 正文）
 纯文本 → 原样拷贝　　图片 → assets/未分类/（附 _manifest.md 记溯源）
 **点表**（成百上千个同构小文件）→ 让给 scripts/pointtable.py 汇总成测点主表，本脚本不逐个转
@@ -12,7 +12,8 @@ html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（�
 设计原则
 --------
 1. **零 Python 依赖**：只用标准库 + 外部 CLI（pandoc / markitdown）+ MinerU HTTP 接口。
-   xlsx 解析直接读 OOXML，因此不需要 openpyxl / pandas，换机器也能跑。
+   xlsx 解析直接读 OOXML，.xls 走自带的 BIFF8 解析器（scripts/xls_reader.py），
+   因此不需要 openpyxl / pandas / xlrd，换机器也能跑。
 2. **可溯源**：每个产物都带 frontmatter，记录来源路径、sha256、转换工具和时间。
    PM 在做需求分析时必须能把一句结论追回到原始文档，这比转换质量本身更重要。
 3. **幂等**：源文件 sha256 没变就跳过，`--force` 强制重转。
@@ -45,6 +46,7 @@ from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mineru  # noqa: E402  与本脚本同目录
+from xls_reader import XlsError, read_xls  # noqa: E402  与本脚本同目录
 
 REPO = Path(__file__).resolve().parent.parent
 RAW = REPO / "input" / "raw"
@@ -68,10 +70,12 @@ MINERU = {".pdf", ".pptx"}
 MARKITDOWN = {".pdf", ".pptx", ".msg"}  # .epub 走 pandoc，见上
 # 自研 OOXML 解析 → 每个 sheet 一个 csv
 SPREADSHEET = {".xlsx", ".xlsm"}
+# 老版 Excel：自研 BIFF8 解析（scripts/xls_reader.py）→ 同样每个 sheet 一个 csv
+LEGACY_SPREADSHEET = {".xls"}
 # 单文件 HTML 原型：保留可预览 HTML + 配套 _manifest.md（校验与摘要）
 HTML_PROTOTYPE = {".html", ".htm"}
-# 明确不支持的老格式
-LEGACY = {".doc": "docx", ".xls": "xlsx", ".ppt": "pptx", ".wps": "docx", ".et": "xlsx", ".dps": "pptx"}
+# 明确不支持的老格式（.xls 不在此列，见 LEGACY_SPREADSHEET）
+LEGACY = {".doc": "docx", ".ppt": "pptx", ".wps": "docx", ".et": "xlsx", ".dps": "pptx"}
 
 XLNS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 # 注意这是两个不同的命名空间：.rels 文件里的 <Relationship> 用 package/…，
@@ -296,35 +300,52 @@ def read_sheet(zf: zipfile.ZipFile, path: str, strings: list[str],
     return rows
 
 
-def convert_spreadsheet(src: Path, digest: str) -> Path:
-    """xlsx → 目录：每个 sheet 一个 csv + 一份 _manifest.md 导航。"""
-    out_dir = CONVERTED / slugify(src.stem)
-    if out_dir.exists():
-        shutil.rmtree(out_dir)
-    out_dir.mkdir(parents=True)
-
+def read_ooxml_sheets(src: Path) -> list[tuple[str, list[list[str]], bool]]:
+    """xlsx / xlsm → [(sheet 名, 行, 是否隐藏)]。"""
     with zipfile.ZipFile(src) as zf:
         strings = load_shared_strings(zf)
         date_styles = load_date_styles(zf)
         wb = ET.fromstring(zf.read("xl/workbook.xml"))
         pr = wb.find(f"{XLNS}workbookPr")
         date1904 = bool(pr is not None and pr.get("date1904") in ("1", "true"))
+        return [(name, read_sheet(zf, path, strings, date_styles, date1904), hidden)
+                for name, path, hidden in sheet_targets(zf)]
 
-        summary = []
-        for name, path, hidden in sheet_targets(zf):
-            rows = read_sheet(zf, path, strings, date_styles, date1904)
-            csv_name = f"{slugify(name)}.csv"
-            with (out_dir / csv_name).open("w", encoding="utf-8-sig", newline="") as fh:
-                csv.writer(fh).writerows(rows)
-            width = max((len(r) for r in rows), default=0)
-            header = rows[0] if rows else []
-            summary.append({
-                "sheet": name, "file": csv_name, "rows": len(rows),
-                "cols": width, "hidden": hidden,
-                "header": [c for c in header if c][:12],
-            })
 
-    lines = [frontmatter(src, digest, "ingest.py (stdlib ooxml)",
+def read_biff_sheets(src: Path) -> list[tuple[str, list[list[str]], bool]]:
+    """.xls（Excel 97-2003）→ 同上。BIFF8 解析见 scripts/xls_reader.py。
+
+    该解析器不读样式记录，拿不到「隐藏」标记，统一按不隐藏记。
+    """
+    return [(sheet.name, sheet.rows, False) for sheet in read_xls(src)]
+
+
+def convert_spreadsheet(src: Path, digest: str) -> Path:
+    """xlsx / xlsm / xls → 目录：每个 sheet 一个 csv + 一份 _manifest.md 导航。"""
+    is_legacy = src.suffix.lower() in LEGACY_SPREADSHEET
+    # 先解析再清空目标目录：源文件读不动时不要把上一版产物先毁掉
+    sheets = read_biff_sheets(src) if is_legacy else read_ooxml_sheets(src)
+    tool = "ingest.py (stdlib biff8)" if is_legacy else "ingest.py (stdlib ooxml)"
+
+    out_dir = CONVERTED / slugify(src.stem)
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+
+    summary = []
+    for name, rows, hidden in sheets:
+        csv_name = f"{slugify(name)}.csv"
+        with (out_dir / csv_name).open("w", encoding="utf-8-sig", newline="") as fh:
+            csv.writer(fh).writerows(rows)
+        width = max((len(r) for r in rows), default=0)
+        header = rows[0] if rows else []
+        summary.append({
+            "sheet": name, "file": csv_name, "rows": len(rows),
+            "cols": width, "hidden": hidden,
+            "header": [c for c in header if c][:12],
+        })
+
+    lines = [frontmatter(src, digest, tool,
                          {"kind": "spreadsheet", "sheets": len(summary)})]
     lines.append(f"# {src.stem}\n")
     lines.append(f"来源：`{src.relative_to(REPO)}`，共 {len(summary)} 个 sheet。每个 sheet 一个 CSV。\n")
@@ -875,9 +896,9 @@ def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
         slug = slugify(src.stem)
         if is_pointtable(src):
             # 点表由 scripts/pointtable.py 汇总成测点主表，这里让路：
-            # 否则 .xls 会刷一屏「老格式不支持」，分段型 .txt 会被当纯文本拷进 converted/。
+            # 否则几百个同构点表会各自转出一个 csv 目录，分段型 .txt 还会被当纯文本拷进 converted/。
             out.append((src, "pointtable", Path()))
-        elif ext in SPREADSHEET:
+        elif ext in SPREADSHEET or ext in LEGACY_SPREADSHEET:
             out.append((src, "spreadsheet", CONVERTED / slug))
         elif ext in HTML_PROTOTYPE:
             out.append((src, "html", CONVERTED / slug))
@@ -1117,7 +1138,8 @@ def main() -> int:
                 out = convert_image(src, digest)
             else:
                 out = convert_passthrough(src, digest)
-        except (subprocess.CalledProcessError, RuntimeError, zipfile.BadZipFile, ET.ParseError, OSError) as exc:
+        except (subprocess.CalledProcessError, RuntimeError, zipfile.BadZipFile, ET.ParseError,
+                XlsError, OSError) as exc:
             detail = exc.stderr.strip().splitlines()[-1] if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else exc
             log(f"✗ 失败 {rel}：{detail}")
             records.append({"source": str(rel), "kind": how, "target": "", "status": "✗ 转换失败"})

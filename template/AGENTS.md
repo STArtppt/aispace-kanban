@@ -121,7 +121,7 @@ python3 scripts/ingest.py --no-ignore            # 本次不应用忽略清单�
 ```
 
 格式分派：docx/odt/rtf 走 pandoc（顺带抽图），**PDF/pptx 走 MinerU 在线 API**，
-xlsx/xlsm 按 sheet 拆成 CSV；**html/htm 作为 PM 互传的单文件可点击原型**——不转成
+xlsx/xlsm/xls 按 sheet 拆成 CSV；**html/htm 作为 PM 互传的单文件可点击原型**——不转成
 Markdown 正文，而是拷到 `input/converted/<名>/` 保留可预览 HTML，并生成配套
 `_manifest.md`（结构摘要 + 可访问性/安全等校验，形态对齐 xlsx 的目录 + manifest）；
 纯文本原样拷贝，图片进 `assets/未分类/`。
@@ -131,7 +131,8 @@ MinerU 需要 `MINERU_API_KEY`（`.env` 里配，脚本会自己读）。**没�
 Token 在 <https://mineru.net/apiManage> 创建，免费额度 1000 页/天，单文件上限 200MB / 200 页。
 
 `.doc` / `.ppt` / `.wps` 等老格式脚本不支持，需要请用户先另存为新格式
-（`.xls` 是例外：点表场景由 `pointtable.py` 直接读，见下节）。
+（`.xls` 是例外：自带 BIFF8 解析器 `scripts/xls_reader.py`，普通 .xls 按 sheet 拆 CSV，
+点表形态的 .xls 让给 `pointtable.py` 汇总，见下节）。
 产物 frontmatter 里带 `warning` 的说明内容几乎是空的（扫描件且 OCR 也没识别出来），
 要提醒用户这份资料实际不可用，不要当它已经进来了。
 
