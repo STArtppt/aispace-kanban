@@ -1,10 +1,13 @@
 import { useCallback, useMemo, useSyncExternalStore } from 'react';
 
 /**
- * 产出文档的「收藏置顶」。
+ * 列表行的「收藏置顶」。
  * 纯前端偏好（工作空间只读，不往里写任何东西），按工作空间存相对路径。
  * 清单和预览两处都要能收藏，且要立刻互相看见 —— 所以状态放在模块级，
  * 用 useSyncExternalStore 广播，而不是各自 useState 各存一份。
+ *
+ * 键名沿用 aispace-kanban:output-pins：最早只给产出文档用，后来扩到所有清单；
+ * 不改键，已收藏的产出才不会丢。
  */
 const PIN_KEY = 'aispace-kanban:output-pins';
 
@@ -42,8 +45,8 @@ function subscribe(notify: () => void) {
   };
 }
 
-/** 某个工作空间收藏了哪些产出文档，以及切换收藏的入口 */
-export function useOutputPins(projectId: string) {
+/** 某个工作空间收藏了哪些路径，以及切换收藏的入口 */
+export function usePins(projectId: string) {
   const paths = useSyncExternalStore(subscribe, () => readStore()[projectId] || EMPTY);
   const pins = useMemo(() => new Set(paths), [paths]);
 

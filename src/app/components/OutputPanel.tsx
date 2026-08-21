@@ -18,7 +18,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, Row, RowActions, Stat, writeClipboard } from '@/components/Primitives';
 import { useFileManagerName } from '@/hooks/useFileManager';
-import { useOutputPins } from '@/hooks/useOutputPins';
+import { usePins } from '@/hooks/usePins';
 import { api, type FileItem, type Scan } from '@/lib/api';
 import { datePrefix, formatRelative, formatWords, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -239,7 +239,7 @@ export function OutputPanel({
   const projectId = scan.project.id;
   const fileManager = useFileManagerName();
   // 预览头部也有同一个收藏按钮，两处共用一份状态
-  const { pins, togglePin } = useOutputPins(projectId);
+  const { pins, togglePin } = usePins(projectId);
   // 旧服务进程不返回 annotations，那时候退回只显示字数
   const marks = output.stats.annotations ?? 0;
   const wordsHint = formatWords(output.stats.words);

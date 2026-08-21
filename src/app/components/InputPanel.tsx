@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Search, Table } from 'lucide-react';
+import { AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Search, Star, StarOff, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
@@ -18,6 +18,7 @@ import {
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
+import { usePins } from '@/hooks/usePins';
 import { api, type ConvertedItem, type FileItem, type IngestJob, type Scan } from '@/lib/api';
 import { formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -87,6 +88,8 @@ function ConvertedRow({
   item,
   indent,
   hasOutputs,
+  pinned,
+  onTogglePin,
   openPath,
   onOpen,
   canIngest,
@@ -98,6 +101,8 @@ function ConvertedRow({
   /** 树形视图里的层级；列表视图不传 */
   indent?: number;
   hasOutputs: boolean;
+  pinned: boolean;
+  onTogglePin: (path: string) => void;
   openPath: string;
   onOpen: (item: FileItem) => void;
   canIngest: boolean;
@@ -112,8 +117,11 @@ function ConvertedRow({
     <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
       <KindIcon item={item} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm">{item.title || item.name}</span>
+          {pinned ? (
+            <Star className="size-3.5 shrink-0 fill-current text-muted-foreground" />
+          ) : null}
         </div>
         {/* 产物自身的相对路径：单文件产物到文件，目录型产物到目录 */}
         <span className="truncate text-xs text-muted-foreground" title={item.path}>
@@ -134,6 +142,11 @@ function ConvertedRow({
       <RowActions
         busy={ingestRunning && ingestingPath === item.source}
         actions={[
+          {
+            label: pinned ? '取消收藏' : '收藏置顶',
+            icon: pinned ? StarOff : Star,
+            onSelect: () => onTogglePin(item.path),
+          },
           ...(canReconvert
             ? [
                 {
@@ -177,6 +190,8 @@ function PendingRow({
   indent,
   projectId,
   fileManager,
+  pinned,
+  onTogglePin,
   openPath,
   onOpen,
   canIngest,
@@ -191,6 +206,8 @@ function PendingRow({
   indent?: number;
   projectId: string;
   fileManager: string;
+  pinned: boolean;
+  onTogglePin: (path: string) => void;
   openPath: string;
   onOpen: (item: FileItem) => void;
   canIngest: boolean;
@@ -206,13 +223,23 @@ function PendingRow({
   return (
     <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
       <KindIcon item={item} />
-      <span className="min-w-0 flex-1 truncate text-sm" title={item.path}>
-        {label}
+      <span className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-sm" title={item.path}>
+          {label}
+        </span>
+        {pinned ? (
+          <Star className="size-3.5 shrink-0 fill-current text-muted-foreground" />
+        ) : null}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
       <RowActions
         busy={thisRowRunning}
         actions={[
+          {
+            label: pinned ? '取消收藏' : '收藏置顶',
+            icon: pinned ? StarOff : Star,
+            onSelect: () => onTogglePin(item.path),
+          },
           ...(canIngest
             ? [
                 {
@@ -274,13 +301,23 @@ function PendingList({
   ignoringPath: string;
   onIgnore: (targetPath: string) => void;
 }) {
-  const { page, setPage } = useListPage(items.length, LIST_PAGE_SIZE, String(items.length));
-  const pageItems = items.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
+  const { pins, togglePin } = usePins(projectId);
+  const ordered = useMemo(
+    () => [...items].sort((a, b) => Number(pins.has(b.path)) - Number(pins.has(a.path))),
+    [items, pins],
+  );
+  const { page, setPage } = useListPage(
+    ordered.length,
+    LIST_PAGE_SIZE,
+    `${ordered.length}\0${[...pins].join('\0')}`,
+  );
+  const pageItems = ordered.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
   const fileManager = useFileManagerName();
 
   const rowProps = {
     projectId,
     fileManager,
+    onTogglePin: togglePin,
     openPath,
     onOpen,
     canIngest,
@@ -294,13 +331,14 @@ function PendingList({
   if (viewMode === 'tree') {
     return (
       <FileTree
-        items={items}
+        items={ordered}
         treePathOf={pendingLabel}
         keyOf={(item) => item.path}
         renderFile={(item, indent) => (
           <PendingRow
             item={item}
             indent={indent}
+            pinned={pins.has(item.path)}
             ignoring={ignoringPath === item.path}
             {...rowProps}
           />
@@ -345,11 +383,12 @@ function PendingList({
         <PendingRow
           key={item.path}
           item={item}
+          pinned={pins.has(item.path)}
           ignoring={ignoringPath === item.path}
           {...rowProps}
         />
       ))}
-      <ListPager page={page} pageSize={LIST_PAGE_SIZE} total={items.length} onPageChange={setPage} />
+      <ListPager page={page} pageSize={LIST_PAGE_SIZE} total={ordered.length} onPageChange={setPage} />
     </div>
   );
 }
@@ -410,6 +449,7 @@ function ConvertedList({
   onIngest: (filePath: string) => void;
 }) {
   const fileManager = useFileManagerName();
+  const { pins, togglePin } = usePins(projectId);
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [filter, setFilter] = useState<ConvertedFilter>('all');
@@ -436,17 +476,20 @@ function ConvertedList({
       return matchConverted(item, query);
     });
     return list.sort((a, b) => {
+      // 收藏的一律在前，名称 / 时间排序只在收藏内外各自生效
+      const pin = Number(pins.has(b.path)) - Number(pins.has(a.path));
+      if (pin) return pin;
       if (sortKey === 'name') {
         return (a.title || a.name).localeCompare(b.title || b.name, 'zh');
       }
       const cmp = (a.mtime || '').localeCompare(b.mtime || '');
       return sortKey === 'mtimeAsc' ? cmp : -cmp;
     });
-  }, [items, query, activeFilter, sortKey]);
+  }, [items, query, activeFilter, sortKey, pins]);
   const { page, setPage } = useListPage(
     filtered.length,
     LIST_PAGE_SIZE,
-    `${query}\0${activeFilter}\0${sortKey}\0${items.length}`,
+    `${query}\0${activeFilter}\0${sortKey}\0${items.length}\0${[...pins].join('\0')}`,
   );
   const pageItems = filtered.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
   const searching = query.trim().length > 0;
@@ -577,6 +620,8 @@ function ConvertedList({
               item={item}
               indent={indent}
               hasOutputs={hasOutputs}
+              pinned={pins.has(item.path)}
+              onTogglePin={togglePin}
               openPath={openPath}
               onOpen={onOpen}
               canIngest={canIngest}
@@ -593,6 +638,8 @@ function ConvertedList({
               key={item.path}
               item={item}
               hasOutputs={hasOutputs}
+              pinned={pins.has(item.path)}
+              onTogglePin={togglePin}
               openPath={openPath}
               onOpen={onOpen}
               canIngest={canIngest}

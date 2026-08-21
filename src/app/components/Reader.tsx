@@ -29,7 +29,7 @@ import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
-import { useOutputPins } from '@/hooks/useOutputPins';
+import { usePins } from '@/hooks/usePins';
 import {
   api,
   type AssetGroup,
@@ -616,9 +616,8 @@ export function Reader({
   ingest?: IngestControl;
 }) {
   const fileManager = useFileManagerName();
-  // 收藏只对产出文档有意义：会置顶的那份清单只有「产出文档」视图有
-  const canPin = item.path.startsWith('output/');
-  const { pins, togglePin } = useOutputPins(projectId);
+  // 清单和预览共用一份收藏状态：点这里立刻反映到对应列表的置顶
+  const { pins, togglePin } = usePins(projectId);
   const pinned = pins.has(item.path);
   const sheets = useMemo(() => {
     if (isConverted(item) && item.sheets?.length) {
@@ -738,18 +737,16 @@ export function Reader({
               )}
             </Button>
           ) : null}
-          {canPin ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              title={pinned ? '取消收藏' : '收藏置顶'}
-              aria-label={pinned ? '取消收藏' : '收藏置顶'}
-              aria-pressed={pinned}
-              onClick={() => togglePin(item.path)}
-            >
-              <Star className={cn('size-4', pinned && 'fill-current')} />
-            </Button>
-          ) : null}
+          <Button
+            variant="ghost"
+            size="icon"
+            title={pinned ? '取消收藏' : '收藏置顶'}
+            aria-label={pinned ? '取消收藏' : '收藏置顶'}
+            aria-pressed={pinned}
+            onClick={() => togglePin(item.path)}
+          >
+            <Star className={cn('size-4', pinned && 'fill-current')} />
+          </Button>
           <Button
             variant="ghost"
             size="icon"
