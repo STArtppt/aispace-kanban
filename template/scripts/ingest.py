@@ -9,6 +9,21 @@ html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（�
 纯文本 → 原样拷贝　　图片 → assets/未分类/（附 _manifest.md 记溯源）
 **点表**（成百上千个同构小文件）→ 让给 scripts/pointtable.py 汇总成测点主表，本脚本不逐个转
 
+产物落点：镜像 input/raw/ 的目录结构
+--------------------------------------
+`input/converted/` 的目录结构与 `input/raw/` **一一对齐**，好让资料多了以后还能按批次删除：
+
+    input/raw/站点数据/0_公共/六大库汛限（正常高）水位.docx
+      → input/converted/站点数据/0_公共/六大库汛限(正常高)水位.md          单产物直接落在镜像目录
+
+    input/raw/站点数据/0_公共/7大库闸门底坎库容.xlsx
+      → input/converted/站点数据/0_公共/_manifest_7大库闸门底坎库容.md      摘要在镜像目录
+      → input/converted/站点数据/0_公共/SplittingObject/7大库闸门底坎库容/*.csv   正文套一层
+
+一份源文件拆出多个产物时，正文收进 `SplittingObject/<文件名>/`，摘要 `_manifest_<文件名>.md`
+留在镜像目录里（看板预览点它）。整个目录合并成一份产物的（点表、现场数据）由
+`pointtable.py` / `realdata.py` 写，规则同构，正文收进 `MergedObject/`。
+
 设计原则
 --------
 1. **零 Python 依赖**：只用标准库 + 外部 CLI（pandoc / markitdown）+ MinerU HTTP 接口。
@@ -39,13 +54,16 @@ import re
 import shutil
 import subprocess
 import sys
-import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mineru  # noqa: E402  与本脚本同目录
+from layout import (  # noqa: E402  input/ 的共用约定，三个转换脚本共用一份
+    add_ignore_flags, ignore_patterns, is_ignored, md_link, merge_paths,
+    rel_path, safe_component, single_target, split_paths,
+)
 from xls_reader import XlsError, read_xls  # noqa: E402  与本脚本同目录
 
 REPO = Path(__file__).resolve().parent.parent
@@ -55,8 +73,7 @@ ASSETS = REPO / "input" / "assets"
 # 直接放在 input/raw/ 里的图片没有「所属文档」，统一归到这一堆，看板里就是「未分类」图库
 UNSORTED = ASSETS / "未分类"
 INDEX = REPO / "input" / "INDEX.md"
-# 忽略清单：不进转换、也不在看板上算「待转换」的资料。gitignore 风格，看板同读这一份
-IGNOREFILE = REPO / "input" / ".ingestignore"
+
 
 # 直接原样拷贝的格式：已经是 AI 可读的文本
 PASSTHROUGH = {".md", ".markdown", ".csv", ".tsv", ".txt", ".json", ".yaml", ".yml", ".xml"}
@@ -100,15 +117,6 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
-
-
-def slugify(name: str) -> str:
-    """文件名 → 安全的 slug。保留中文（IDE 和 AI 都能处理），只压掉空格和符号。"""
-    name = unicodedata.normalize("NFKC", name)
-    name = re.sub(r"[\s_]+", "-", name.strip())
-    name = re.sub(r"[^\w一-鿿.-]+", "", name)
-    name = re.sub(r"-{2,}", "-", name).strip("-.")
-    return name or "untitled"
 
 
 def has_cli(name: str) -> bool:
@@ -169,24 +177,40 @@ def frontmatter(source: Path, digest: str, tool: str, extra: dict | None = None)
     return "\n".join(lines)
 
 
-def read_recorded_digest(target: Path) -> str | None:
-    """从已有产物里读回 source_sha256，用于判断是否需要重转。"""
-    probe = target / "_manifest.md" if target.is_dir() else target
+def read_frontmatter_keys(probe: Path, keys: tuple[str, ...]) -> dict[str, str]:
+    """从产物头部的 frontmatter 里读回指定字段。读不到就返回空 dict（当作要重转）。"""
     if not probe.is_file():
-        return None
+        return {}
+    out: dict[str, str] = {}
     try:
         with probe.open("r", encoding="utf-8") as fh:
             if fh.readline().strip() != "---":
-                return None
+                return {}
             for _ in range(30):
                 line = fh.readline()
                 if not line or line.strip() == "---":
-                    return None
-                if line.startswith("source_sha256:"):
-                    return line.split(":", 1)[1].strip()
+                    break
+                for key in keys:
+                    if line.startswith(f"{key}:"):
+                        out[key] = line.split(":", 1)[1].strip()
     except (OSError, UnicodeDecodeError):
-        return None
-    return None
+        return {}
+    return out
+
+
+def read_recorded_digest(target: Path) -> str | None:
+    """从已有产物里读回 source_sha256，用于判断是否需要重转。"""
+    return read_frontmatter_keys(target, ("source_sha256",)).get("source_sha256")
+
+
+def product_intact(target: Path) -> bool:
+    """产物是否完整。
+
+    多产物的摘要里记着 `payload:`（正文目录），有人把正文目录删了、只剩摘要时
+    必须重转——否则台账显示「已转换」，磁盘上却只有一份摘要，溯源是断的。
+    """
+    payload = read_frontmatter_keys(target, ("payload",)).get("payload")
+    return True if not payload else (target.parent / payload).is_dir()
 
 
 # --------------------------------------------------------------------------- #
@@ -340,20 +364,25 @@ def read_biff_sheets(src: Path) -> list[tuple[str, list[list[str]], bool]]:
 
 
 def convert_spreadsheet(src: Path, digest: str) -> Path:
-    """xlsx / xlsm / xls → 目录：每个 sheet 一个 csv + 一份 _manifest.md 导航。"""
+    """xlsx / xlsm / xls → 每个 sheet 一个 csv（收进 SplittingObject/），外加一份摘要导航。
+
+    返回摘要 `_manifest_<名>.md` 的路径——它在镜像目录里，是这份产物对外的入口。
+    """
     is_legacy = src.suffix.lower() in LEGACY_SPREADSHEET
     # 先解析再清空目标目录：源文件读不动时不要把上一版产物先毁掉
     sheets = read_biff_sheets(src) if is_legacy else read_ooxml_sheets(src)
     tool = "ingest.py (stdlib biff8)" if is_legacy else "ingest.py (stdlib ooxml)"
 
-    out_dir = CONVERTED / slugify(src.stem)
+    manifest_path, out_dir = split_paths(src)
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = rel_path(out_dir, manifest_path.parent)
 
     summary = []
     for name, rows, hidden in sheets:
-        csv_name = f"{slugify(name)}.csv"
+        csv_name = f"{safe_component(name)}.csv"
         with (out_dir / csv_name).open("w", encoding="utf-8-sig", newline="") as fh:
             csv.writer(fh).writerows(rows)
         width = max((len(r) for r in rows), default=0)
@@ -365,18 +394,20 @@ def convert_spreadsheet(src: Path, digest: str) -> Path:
         })
 
     lines = [frontmatter(src, digest, tool,
-                         {"kind": "spreadsheet", "sheets": len(summary)})]
+                         {"kind": "spreadsheet", "sheets": len(summary), "payload": payload})]
     lines.append(f"# {src.stem}\n")
-    lines.append(f"来源：`{src.relative_to(REPO)}`，共 {len(summary)} 个 sheet。每个 sheet 一个 CSV。\n")
+    lines.append(f"来源：`{src.relative_to(REPO)}`，共 {len(summary)} 个 sheet。"
+                 f"每个 sheet 一个 CSV，都在 `{payload}/` 下。\n")
     lines.append("| Sheet | CSV | 行 | 列 | 表头（前 12 列） |")
     lines.append("| --- | --- | --- | --- | --- |")
     for s in summary:
         tag = " *(隐藏)*" if s["hidden"] else ""
         head = ", ".join(s["header"]) if s["header"] else "—"
-        lines.append(f"| {s['sheet']}{tag} | [`{s['file']}`](./{s['file']}) | {s['rows']} | {s['cols']} | {head} |")
+        href = md_link(f"./{payload}/{s['file']}")
+        lines.append(f"| {s['sheet']}{tag} | [`{s['file']}`]({href}) | {s['rows']} | {s['cols']} | {head} |")
     lines.append("")
-    (out_dir / "_manifest.md").write_text("\n".join(lines), encoding="utf-8")
-    return out_dir
+    manifest_path.write_text("\n".join(lines), encoding="utf-8")
+    return manifest_path
 
 
 # --------------------------------------------------------------------------- #
@@ -662,14 +693,16 @@ def inspect_html(text: str, src: Path) -> dict:
 
 
 def convert_html(src: Path, digest: str) -> Path:
-    """html → 目录：可预览的 .html 原件 + _manifest.md（校验与结构摘要，不把页面转成 md 正文）。"""
-    out_dir = CONVERTED / slugify(src.stem)
+    """html → 可预览的 .html 原件（收进 SplittingObject/）+ 摘要（校验与结构，不转 md 正文）。"""
+    manifest_path, out_dir = split_paths(src)
     if out_dir.exists():
         shutil.rmtree(out_dir)
     out_dir.mkdir(parents=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = rel_path(out_dir, manifest_path.parent)
 
     ext = src.suffix.lower() if src.suffix.lower() in HTML_PROTOTYPE else ".html"
-    html_name = f"{slugify(src.stem)}{ext}"
+    html_name = f"{safe_component(src.stem)}{ext}"
     html_path = out_dir / html_name
     shutil.copy2(src, html_path)
 
@@ -681,7 +714,9 @@ def convert_html(src: Path, digest: str) -> Path:
     report = inspect_html(text, src)
     extra: dict = {
         "kind": "html-prototype",
-        "preview": html_name,
+        # preview 相对**本摘要文件所在目录**写，看板据此找到那份可预览 HTML
+        "preview": f"{payload}/{html_name}",
+        "payload": payload,
         "encoding_read": encoding,
     }
     if report["hard_fail"]:
@@ -695,7 +730,8 @@ def convert_html(src: Path, digest: str) -> Path:
         f"# {src.stem}",
         "",
         f"来源：`{src.relative_to(REPO)}`。**单文件 HTML 原型**，不转成 Markdown 正文；",
-        f"直接预览请打开同目录 [`{html_name}`](./{html_name})（看板输入区也会按网页预览）。",
+        f"直接预览请打开 [`{payload}/{html_name}`]({md_link(f'./{payload}/{html_name}')})"
+        "（看板输入区也会按网页预览）。",
         "",
         "## 摘要",
         "",
@@ -726,7 +762,7 @@ def convert_html(src: Path, digest: str) -> Path:
         lines += [
             "## 结构线索（供 AI 阅读，非页面全文）",
             "",
-            "未提取到标题层级。若需分析交互细节，请打开同目录 HTML 预览或向用户确认。",
+            f"未提取到标题层级。若需分析交互细节，请打开 `{payload}/` 下的 HTML 预览或向用户确认。",
             "",
         ]
 
@@ -738,8 +774,8 @@ def convert_html(src: Path, digest: str) -> Path:
         "- 正式可维护原型仍走 `prototypes/`（Axhub Make）；本目录产物只作输入资料。",
         "",
     ]
-    (out_dir / "_manifest.md").write_text("\n".join(lines), encoding="utf-8")
-    return out_dir
+    manifest_path.write_text("\n".join(lines), encoding="utf-8")
+    return manifest_path
 
 
 # --------------------------------------------------------------------------- #
@@ -747,16 +783,20 @@ def convert_html(src: Path, digest: str) -> Path:
 # --------------------------------------------------------------------------- #
 
 def convert_pandoc(src: Path, digest: str, fmt: str) -> Path:
-    slug = slugify(src.stem)
-    target = CONVERTED / f"{slug}.md"
-    media_rel = f"input/assets/{slug}"
+    name = safe_component(src.stem)
+    target = single_target(src, ".md")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    img_dir = ASSETS / name
+    media_rel = img_dir.relative_to(REPO).as_posix()
     cmd = ["pandoc", str(src.relative_to(REPO)), "--from", fmt, "--to", "gfm",
            "--wrap=none", f"--extract-media={media_rel}", "-o", str(target.relative_to(REPO))]
     subprocess.run(cmd, cwd=REPO, check=True, capture_output=True, text=True)
     body = target.read_text(encoding="utf-8")
-    # pandoc 写的图片路径是相对仓库根的，改成相对 converted/ 的路径
-    body = body.replace(f"input/assets/{slug}/", f"../assets/{slug}/")
-    images = sorted(p.name for p in (ASSETS / slug).rglob("*") if p.is_file()) if (ASSETS / slug).exists() else []
+    # pandoc 写的图片路径是相对仓库根的，改成相对**产物所在目录**的路径
+    # （镜像目录深度不一，不能再写死 ../assets/）。必须过一遍 md_link：图片目录随源文件
+    # 取名，名字里的空格和括号会当场打断 `![](...)` 语法，链接指到半截路径上。
+    body = body.replace(f"{media_rel}/", md_link(f"{rel_path(img_dir, target.parent)}/"))
+    images = sorted(p.name for p in img_dir.rglob("*") if p.is_file()) if img_dir.exists() else []
     extra = {"kind": "document"}
     if images:
         extra["extracted_images"] = len(images)
@@ -765,7 +805,8 @@ def convert_pandoc(src: Path, digest: str, fmt: str) -> Path:
 
 
 def convert_markitdown(src: Path, digest: str) -> Path:
-    target = CONVERTED / f"{slugify(src.stem)}.md"
+    target = single_target(src, ".md")
+    target.parent.mkdir(parents=True, exist_ok=True)
     proc = subprocess.run(["markitdown", str(src)], check=True, capture_output=True, text=True)
     body = proc.stdout
     extra = {"kind": "document"}
@@ -779,16 +820,18 @@ def convert_markitdown(src: Path, digest: str) -> Path:
 
 def write_mineru_result(src: Path, digest: str, res: "mineru.Result", model_version: str) -> Path:
     """把 MinerU 返回的 markdown 和图片落盘，图片链接改写成相对 converted/ 的路径。"""
-    slug = slugify(src.stem)
-    target = CONVERTED / f"{slug}.md"
+    target = single_target(src, ".md")
+    target.parent.mkdir(parents=True, exist_ok=True)
     body = res.markdown or ""
 
     if res.images:
-        img_dir = ASSETS / slug
+        img_dir = ASSETS / safe_component(src.stem)
         img_dir.mkdir(parents=True, exist_ok=True)
         for name, blob in res.images.items():
             (img_dir / name).write_bytes(blob)
-        body = mineru.rewrite_image_links(body, f"../assets/{slug}")
+        # 相对产物所在目录，不写死 ../assets/：镜像目录深度不一。
+        # md_link 转义空格和括号，否则 `![](...)` 会被路径里的 `)` 提前截断。
+        body = mineru.rewrite_image_links(body, md_link(rel_path(img_dir, target.parent)))
 
     extra = {"kind": "document", "mineru_model": model_version}
     if res.images:
@@ -803,12 +846,14 @@ def convert_passthrough(src: Path, digest: str) -> Path:
     ext = src.suffix.lower()
     if ext in {".md", ".markdown", ".txt"}:
         # 文本型文档统一输出为 .md，方便看板识别为已转换；同时保留来源信息 frontmatter
-        target = CONVERTED / f"{slugify(src.stem)}.md"
+        target = single_target(src, ".md")
+        target.parent.mkdir(parents=True, exist_ok=True)
         body = src.read_text(encoding="utf-8", errors="replace")
         target.write_text(frontmatter(src, digest, "copy", {"kind": "document"}) + body, encoding="utf-8")
     else:
         # csv/json 等结构化文件不能加 frontmatter，否则会破坏解析
-        target = CONVERTED / f"{slugify(src.stem)}{ext}"
+        target = single_target(src, ext)
+        target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, target)
     return target
 
@@ -816,7 +861,7 @@ def convert_passthrough(src: Path, digest: str) -> Path:
 def convert_image(src: Path, digest: str) -> Path:
     """图片没有文本产物，原样拷进 assets/未分类/；溯源记在同目录 _manifest.md。"""
     UNSORTED.mkdir(parents=True, exist_ok=True)
-    target = UNSORTED / f"{slugify(src.stem)}{src.suffix.lower()}"
+    target = UNSORTED / f"{safe_component(src.stem)}{src.suffix.lower()}"
     shutil.copy2(src, target)
     # 老版本把图拷在 assets/ 根下。同名且内容与源文件一致，就是那份旧拷贝——
     # 留着会让同一张图在图库里出现两遍，所以只在能证明是旧拷贝时才删。
@@ -887,8 +932,8 @@ def write_assets_manifest(records: list[dict]) -> None:
         "| --- | --- |",
     ]
     for s in sources:
-        name = f"{slugify(Path(s).stem)}{Path(s).suffix.lower()}"
-        lines.append(f"| `{s}` | [`{name}`](./{name}) |")
+        name = f"{safe_component(Path(s).stem)}{Path(s).suffix.lower()}"
+        lines.append(f"| `{s}` | [`{name}`]({md_link(f'./{name}')}) |")
     lines.append("")
     UNSORTED.mkdir(parents=True, exist_ok=True)
     manifest.write_text("\n".join(lines), encoding="utf-8")
@@ -908,11 +953,15 @@ def resolve_pdf_engine(requested: str) -> str:
 
 
 def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
-    """→ [(源文件, 处理方式, 目标路径)]"""
+    """→ [(源文件, 处理方式, 目标路径)]
+
+    目标路径一律是**一个文件**：单产物就是产物本身，多产物是镜像目录里的摘要
+    `_manifest_<名>.md`（正文在它旁边的 `SplittingObject/<名>/`）。
+    统一成文件，幂等判断只要读这一份的 frontmatter 就够。
+    """
     out = []
     for src in files:
         ext = src.suffix.lower()
-        slug = slugify(src.stem)
         if is_pointtable(src):
             # 点表由 scripts/pointtable.py 汇总成测点主表，这里让路：
             # 否则几百个同构点表会各自转出一个 csv 目录，分段型 .txt 还会被当纯文本拷进 converted/。
@@ -921,58 +970,25 @@ def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
             # 现场实测数据由 scripts/realdata.py 建成时序库，这里让路（同上）
             out.append((src, "realdata", Path()))
         elif ext in SPREADSHEET or ext in LEGACY_SPREADSHEET:
-            out.append((src, "spreadsheet", CONVERTED / slug))
+            out.append((src, "spreadsheet", split_paths(src)[0]))
         elif ext in HTML_PROTOTYPE:
-            out.append((src, "html", CONVERTED / slug))
+            out.append((src, "html", split_paths(src)[0]))
         elif ext in PANDOC:
-            out.append((src, "pandoc", CONVERTED / f"{slug}.md"))
+            out.append((src, "pandoc", single_target(src, ".md")))
         elif ext in MINERU and pdf_engine == "mineru":
-            out.append((src, "mineru", CONVERTED / f"{slug}.md"))
+            out.append((src, "mineru", single_target(src, ".md")))
         elif ext in MARKITDOWN:
-            out.append((src, "markitdown", CONVERTED / f"{slug}.md"))
+            out.append((src, "markitdown", single_target(src, ".md")))
         elif ext in PASSTHROUGH:
-            # .txt 实际输出为 .md，其余纯文本保留原扩展名
-            out.append((src, "copy", CONVERTED / f"{slug}.md" if ext == ".txt" else CONVERTED / f"{slug}{ext}"))
+            # .md / .txt 实际输出为 .md，其余纯文本保留原扩展名
+            out.append((src, "copy", single_target(src, ".md" if ext in {".md", ".markdown", ".txt"} else ext)))
         elif ext in IMAGES:
-            out.append((src, "image", UNSORTED / f"{slug}{ext}"))
+            out.append((src, "image", UNSORTED / f"{safe_component(src.stem)}{ext}"))
         elif ext in LEGACY:
             out.append((src, "legacy", Path()))
         else:
             out.append((src, "skip", Path()))
     return out
-
-
-def load_ignore(extra: list[str] | None = None) -> list[str]:
-    """读 input/.ingestignore。gitignore 风格：一行一个模式，# 开头是注释，空行忽略。
-
-    看板 src/server/scan.mjs 读的是同一份文件，两边规则必须一致，改这里记得同步那边。
-    """
-    patterns = []
-    if IGNOREFILE.exists():
-        for line in IGNOREFILE.read_text(encoding="utf-8").splitlines():
-            line = line.strip()
-            if line and not line.startswith("#"):
-                patterns.append(line.rstrip("/"))
-    patterns.extend(p.strip().rstrip("/") for p in (extra or []) if p.strip())
-    return patterns
-
-
-def is_ignored(src: Path, patterns: list[str]) -> bool:
-    """相对 input/ 的路径匹配上任一模式就忽略；目录模式命中其下所有文件。"""
-    if not patterns:
-        return False
-    try:
-        rel = src.resolve().relative_to(RAW.parent).as_posix()
-    except ValueError:
-        return False
-    for pat in patterns:
-        # 目录前缀命中（写 raw/客户版 就等于 raw/客户版/** 全部）
-        if rel == pat or rel.startswith(pat + "/"):
-            return True
-        # 通配符：整路径匹配，或只对文件名匹配（写 *.bak 不必带路径）
-        if PurePosixPath(rel).match(pat) or PurePosixPath(src.name).match(pat):
-            return True
-    return False
 
 
 def collect(paths: list[str], ignore: list[str] | None = None) -> tuple[list[Path], list[Path]]:
@@ -1012,7 +1028,7 @@ def read_index_rows() -> dict[str, dict]:
         source, kind, target, status = m.groups()
         if source == "原始文件":          # 表头
             continue
-        # 产物列写的是 markdown 链接，取回裸路径
+        # 产物列写的是 markdown 链接，取回裸路径（反引号里那份没转义，直接可用）
         link = re.match(r"\[`([^`]+)`\]", target)
         rows[source] = {"source": source, "kind": kind,
                         "target": link.group(1) if link else "", "status": status}
@@ -1025,9 +1041,14 @@ def write_index(records: list[dict], ignored: list[Path] | None = None) -> None:
     merged = read_index_rows()
     for r in records:
         merged[r["source"]] = r
-    # 源文件已经不在了的旧行清掉，免得台账里挂着幽灵条目
-    for source in list(merged):
-        if not source.endswith("/") and not (REPO / source).exists():
+    # 幽灵条目清掉，免得台账挂着假账。两种：原件没了，或者记着的产物没了
+    # （产物被手删、落点规则变过）。清掉之后那份资料回到「待转换」，下次跑会重新入账。
+    for source, row in list(merged.items()):
+        if not (REPO / source.rstrip("/")).exists():
+            del merged[source]
+            continue
+        target = row.get("target") or ""
+        if target and not (CONVERTED.parent / target).exists():
             del merged[source]
     records = list(merged.values())
     lines = [
@@ -1040,7 +1061,7 @@ def write_index(records: list[dict], ignored: list[Path] | None = None) -> None:
         "| --- | --- | --- | --- |",
     ]
     for r in sorted(records, key=lambda x: x["source"]):
-        target = f"[`{r['target']}`](./{r['target']})" if r["target"] else "—"
+        target = f"[`{r['target']}`]({md_link('./' + r['target'])})" if r["target"] else "—"
         lines.append(f"| `{r['source']}` | {r['kind']} | {target} | {r['status']} |")
     if ignored:
         # 忽略的资料不逐份列（可能上千份），按顶层目录汇总一行，让人知道它们还在
@@ -1073,10 +1094,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="把 input/raw/ 的文档转换成 AI 可读格式")
     ap.add_argument("paths", nargs="*", help="指定文件或目录，默认整个 input/raw/")
     ap.add_argument("--force", action="store_true", help="忽略 sha256 缓存，全部重转")
-    ap.add_argument("--ignore", action="append", metavar="模式", default=[],
-                    help="临时追加忽略模式（可多次）。常驻规则写进 input/.ingestignore")
-    ap.add_argument("--no-ignore", action="store_true",
-                    help="本次不应用 input/.ingestignore，把被忽略的也一起转")
+    add_ignore_flags(ap)
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")
     ap.add_argument("--pdf-engine", choices=["auto", "mineru", "markitdown"], default="auto",
                     help="PDF / PPTX 用哪个引擎。auto=配了 MINERU_API_KEY 就用 MinerU，否则 markitdown")
@@ -1091,7 +1109,7 @@ def main() -> int:
     CONVERTED.mkdir(parents=True, exist_ok=True)
     ASSETS.mkdir(parents=True, exist_ok=True)
 
-    patterns = [] if args.no_ignore else load_ignore(args.ignore)
+    patterns = ignore_patterns(args)
     files, ignored = collect(args.paths, patterns)
     if ignored:
         log(f"· 按 input/.ingestignore 忽略 {len(ignored)} 份（不计入待转换，加 --no-ignore 可强制转）")
@@ -1114,14 +1132,16 @@ def main() -> int:
     records: list[dict] = []
     failures = 0
     deferred: list[tuple[Path, str, Path]] = []   # MinerU 的任务攒起来一批提交
-    pointtable_dirs: dict[str, int] = {}          # 点表按目录汇总，不逐个刷屏
-    realdata_dirs: dict[str, int] = {}            # 现场实测数据同理
+    pointtable_dirs: dict[str, int] = {}          # 点表整目录汇总成一份产物，不逐个刷屏
+    realdata_files: list[Path] = []               # 现场数据一个导出文件一个库，逐份记账
     for src, how, target in tasks:
         rel = src.relative_to(REPO) if src.is_relative_to(REPO) else src
-        if how in ("pointtable", "realdata"):
-            top = rel.parts[2] if len(rel.parts) > 2 else rel.name   # input/raw/<数据集>/...
-            bucket = pointtable_dirs if how == "pointtable" else realdata_dirs
-            bucket[top] = bucket.get(top, 0) + 1
+        if how == "pointtable":
+            top = rel.parts[2] if len(rel.parts) > 2 else rel.name   # input/raw/<点表集>/...
+            pointtable_dirs[top] = pointtable_dirs.get(top, 0) + 1
+            continue
+        if how == "realdata":
+            realdata_files.append(src)
             continue
         if how == "legacy":
             log(f"⚠ 跳过 {rel}：老格式不受支持，请先另存为 .{LEGACY[src.suffix.lower()]}")
@@ -1134,10 +1154,11 @@ def main() -> int:
             continue
 
         digest = sha256(src)
-        if not args.force and target.exists() and read_recorded_digest(target) == digest:
+        if (not args.force and target.exists()
+                and read_recorded_digest(target) == digest and product_intact(target)):
             log(f"= 未变化 {rel}")
             records.append({"source": str(rel), "kind": how,
-                            "target": str(target.relative_to(CONVERTED.parent)), "status": "✓ 已转换"})
+                            "target": target.relative_to(CONVERTED.parent).as_posix(), "status": "✓ 已转换"})
             continue
 
         if how == "mineru":
@@ -1172,7 +1193,7 @@ def main() -> int:
 
         log(f"✓ {rel}  →  {out.relative_to(REPO)}")
         records.append({"source": str(rel), "kind": how,
-                        "target": str(out.relative_to(CONVERTED.parent)), "status": "✓ 已转换"})
+                        "target": out.relative_to(CONVERTED.parent).as_posix(), "status": "✓ 已转换"})
 
     if deferred:
         log(f"\nMinerU：{len(deferred)} 个文件走在线解析")
@@ -1205,28 +1226,41 @@ def main() -> int:
             img = f"，{len(res.images)} 张图" if res.images else ""
             log(f"✓ {rel}  →  {out.relative_to(REPO)}{img}")
             records.append({"source": str(rel), "kind": "mineru",
-                            "target": str(out.relative_to(CONVERTED.parent)), "status": "✓ 已转换"})
+                            "target": out.relative_to(CONVERTED.parent).as_posix(), "status": "✓ 已转换"})
 
     for name, count in sorted(pointtable_dirs.items()):
-        converted = CONVERTED / slugify(name)
-        done = (converted / "_manifest.md").is_file()
+        manifest, payload = merge_paths(RAW / name)
+        done = manifest.is_file() and payload.is_dir()
         log(f"· 点表 input/raw/{name}/：{count} 个文件交给 scripts/pointtable.py"
             + ("" if done else "（尚未处理，请运行 python3 scripts/pointtable.py）"))
         records.append({
             "source": f"input/raw/{name}/", "kind": f"点表 ×{count}",
-            "target": f"converted/{slugify(name)}/_manifest.md" if done else "",
+            "target": manifest.relative_to(CONVERTED.parent).as_posix() if done else "",
             "status": "✓ 已汇总为测点主表" if done else "⚠ 待运行 pointtable.py",
         })
 
-    for name, count in sorted(realdata_dirs.items()):
-        converted = CONVERTED / slugify(name)
-        done = (converted / "_manifest.md").is_file()
-        log(f"· 现场数据 input/raw/{name}/：{count} 个文件交给 scripts/realdata.py"
+    # 现场数据一个导出文件一份库（各表之间互相独立），所以逐份记账，不按目录合并成一行
+    for src in sorted(realdata_files):
+        rel = src.relative_to(REPO)
+        manifest, payload = split_paths(src)
+        done = manifest.is_file() and payload.is_dir()
+        dialect = None
+        try:
+            import realdata as _rd
+            dialect = _rd.detect(src)
+        except (OSError, ValueError, ImportError):
+            dialect = None
+        kind = (dialect or {}).get("台账类型") or "现场实测数据"
+        if done:
+            status = "✓ 已建成指标库" if (dialect or {}).get("形态") == "product_day" else "✓ 已建成时序库"
+        else:
+            status = "⚠ 待运行 realdata.py"
+        log(f"· 现场数据 {rel} 交给 scripts/realdata.py"
             + ("" if done else "（尚未处理，请运行 python3 scripts/realdata.py）"))
         records.append({
-            "source": f"input/raw/{name}/", "kind": f"现场实测数据 ×{count}",
-            "target": f"converted/{slugify(name)}/_manifest.md" if done else "",
-            "status": "✓ 已建成时序库" if done else "⚠ 待运行 realdata.py",
+            "source": rel.as_posix(), "kind": kind,
+            "target": manifest.relative_to(CONVERTED.parent).as_posix() if done else "",
+            "status": status,
         })
 
     write_assets_manifest(records)

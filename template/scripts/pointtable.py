@@ -49,13 +49,16 @@ import re
 import shutil
 import sqlite3
 import sys
-import unicodedata
 import xml.etree.ElementTree as ET
 import zipfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from layout import (  # noqa: E402  input/ 的共用约定，三个转换脚本共用一份
+    MERGE_DIR, add_ignore_flags, ignore_patterns, is_ignored, md_link,
+    merge_paths, safe_component,
+)
 from xls_reader import XlsError, read_xls  # noqa: E402  与本脚本同目录
 
 REPO = Path(__file__).resolve().parent.parent
@@ -99,13 +102,6 @@ def sha256_of(paths: list[Path]) -> str:
         h.update(str(p).encode("utf-8"))
         h.update(p.read_bytes())
     return h.hexdigest()
-
-
-def slugify(name: str) -> str:
-    name = unicodedata.normalize("NFKC", name)
-    name = re.sub(r"[\s_]+", "-", name.strip())
-    name = re.sub(r"[^\w一-鿿.-]+", "", name)
-    return re.sub(r"-{2,}", "-", name).strip("-.") or "untitled"
 
 
 def decode_text(data: bytes) -> str:
@@ -366,10 +362,12 @@ def parser_for(name: str):
 
 def write_outputs(name: str, records: list[dict], src_dir: Path,
                   digest: str, stats: dict, want_sqlite: bool) -> Path:
-    out_dir = CONVERTED / slugify(name)
+    """正文写进镜像目录的 `MergedObject/`，摘要写在镜像目录里。返回摘要路径。"""
+    manifest_path, out_dir = merge_paths(src_dir)
     if out_dir.exists():
         shutil.rmtree(out_dir)
     (out_dir / "分册").mkdir(parents=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
 
     master = out_dir / "测点主表.csv"
     with master.open("w", encoding="utf-8-sig", newline="") as fh:
@@ -381,7 +379,7 @@ def write_outputs(name: str, records: list[dict], src_dir: Path,
     for r in records:
         by_station[r["厂站"] or "未分类"].append(r)
     for station, rows in sorted(by_station.items()):
-        with (out_dir / "分册" / f"{slugify(station)}.csv").open(
+        with (out_dir / "分册" / f"{safe_component(station)}.csv").open(
                 "w", encoding="utf-8-sig", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=COLUMNS)
             w.writeheader()
@@ -396,16 +394,16 @@ def write_outputs(name: str, records: list[dict], src_dir: Path,
             f'INSERT INTO 测点 ({cols}) VALUES ({",".join("?" * len(COLUMNS))})',
             [[r[c] for c in COLUMNS] for r in records])
         for col in ("厂站", "点类型", "设备分区", "是否备用"):
-            conn.execute(f'CREATE INDEX idx_{slugify(col)} ON 测点("{col}")')
+            conn.execute(f'CREATE INDEX idx_{safe_component(col)} ON 测点("{col}")')
         conn.commit()
         conn.close()
 
-    write_manifest(out_dir, name, src_dir, digest, stats, by_station,
+    write_manifest(manifest_path, name, src_dir, digest, stats, by_station,
                    master, db_path if want_sqlite else None)
-    return out_dir
+    return manifest_path
 
 
-def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str, stats: dict,
+def write_manifest(manifest_path: Path, name: str, src_dir: Path, digest: str, stats: dict,
                    by_station: dict, master: Path, db_path: Path | None) -> None:
     total = stats["总数"]
     spare = stats["备用"]
@@ -419,6 +417,9 @@ def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str, stats: 
         f"source_kinds: {', '.join(sorted(stats['扩展名']))}",
         f"source_files: {stats['文件数']}",
         f"source_sha256: {digest}",
+        # 正文目录，相对本摘要所在目录写。ingest.py 靠它判断产物完不完整，看板靠它把
+        # 摘要和正文认成同一份产物。
+        f"payload: {MERGE_DIR}",
         "converted_by: scripts/pointtable.py",
         f"converted_at: {dt.datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"point_count: {total}",
@@ -434,12 +435,14 @@ def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str, stats: 
         "",
         "| 文件 | 用途 |",
         "| --- | --- |",
-        f"| `测点主表.csv` | 全量 {total:,} 行。**体积较大，看板里别直接点开**，用 Excel 打开或按需下载 |",
-        "| `分册/*.csv` | 按厂站拆分，单个文件小，适合预览、也适合单独发给某厂站的对接人核对 |",
+        f"| `{MERGE_DIR}/测点主表.csv` | 全量 {total:,} 行。**体积较大，看板里别直接点开**，用 Excel 打开或按需下载 |",
+        f"| `{MERGE_DIR}/分册/*.csv` | 按厂站拆分，单个文件小，适合预览、也适合单独发给某厂站的对接人核对 |",
     ]
     if db_path:
-        lines.append("| `测点.sqlite` | 供 AI 做 SQL 精确检索，不占对话上下文。见下方示例 |")
-    lines += ["| `_manifest.md` | 就是本文件，轻量摘要，**预览请点这里** |", ""]
+        lines.append(f"| `{MERGE_DIR}/测点.sqlite` | 供 AI 做 SQL 精确检索，不占对话上下文。见下方示例 |")
+    lines += [f"| `{manifest_path.name}` | 就是本文件，轻量摘要，**预览请点这里** |", "",
+              f"正文都在同目录的 [`{MERGE_DIR}/`]({md_link('./' + MERGE_DIR)}) 下"
+              "（整个目录的几百个点表汇总成这一份，所以套一层 MergedObject）。", ""]
 
     lines += ["## 规模分布", "", "### 按厂站", "", "| 厂站 | 测点数 | 其中备用 |", "| --- | ---: | ---: |"]
     for station, rows in sorted(by_station.items(), key=lambda kv: -len(kv[1])):
@@ -481,29 +484,35 @@ def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str, stats: 
             "```",
             "",
         ]
-    (out_dir / "_manifest.md").write_text("\n".join(lines), encoding="utf-8")
+    manifest_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #
 # 主流程
 # --------------------------------------------------------------------------- #
 
-def collect_pointtable_dirs() -> list[Path]:
-    """自动发现：input/raw/ 下**直接子目录**中含可识别点表文件的，算一个点表集。"""
+def collect_pointtable_dirs(patterns: list[str]) -> list[Path]:
+    """自动发现：input/raw/ 下**直接子目录**中含可识别点表文件的，算一个点表集。
+
+    忽略清单在这里格外要紧：探测要逐个读文件头，客户一次交来的上千份存量资料全扫一遍
+    要好几分钟。整个目录被忽略时直接跳过，连走都不走进去。
+    """
     found = []
     for child in sorted(RAW.iterdir()):
-        if not child.is_dir() or child.name.startswith("."):
+        if not child.is_dir() or child.name.startswith(".") or is_ignored(child, patterns):
             continue
         for p in child.rglob("*"):
-            if p.is_file() and not p.name.startswith(".") and detect(p):
+            if (p.is_file() and not p.name.startswith(".")
+                    and not is_ignored(p, patterns) and detect(p)):
                 found.append(child)
                 break
     return found
 
 
-def process(src_dir: Path, force: bool, dry_run: bool, want_sqlite: bool) -> bool:
+def process(src_dir: Path, patterns: list[str], force: bool, dry_run: bool,
+            want_sqlite: bool) -> bool:
     files = [p for p in sorted(src_dir.rglob("*"))
-             if p.is_file() and not p.name.startswith(".")]
+             if p.is_file() and not p.name.startswith(".") and not is_ignored(p, patterns)]
     targets = [(p, detect(p)) for p in files]
     targets = [(p, k) for p, k in targets if k]
     if not targets:
@@ -517,9 +526,8 @@ def process(src_dir: Path, force: bool, dry_run: bool, want_sqlite: bool) -> boo
         return False
 
     digest = sha256_of([p for p, _ in targets])
-    out_dir = CONVERTED / slugify(src_dir.name)
-    manifest = out_dir / "_manifest.md"
-    if not force and manifest.is_file():
+    manifest, payload = merge_paths(src_dir)
+    if not force and manifest.is_file() and payload.is_dir():
         for line in manifest.read_text(encoding="utf-8").splitlines()[:10]:
             if line.startswith("source_sha256:") and line.split(":", 1)[1].strip() == digest:
                 log("  ✓ 内容未变，跳过（--force 可强制重建）")
@@ -540,7 +548,7 @@ def process(src_dir: Path, force: bool, dry_run: bool, want_sqlite: bool) -> boo
         "扩展名": {p.suffix.lower() for p, _ in targets},
     }
     out = write_outputs(src_dir.name, records, src_dir, digest, stats, want_sqlite)
-    log(f"  ✓ {stats['总数']:,} 个测点（备用 {stats['备用']:,}）→ {out.relative_to(REPO)}/")
+    log(f"  ✓ {stats['总数']:,} 个测点（备用 {stats['备用']:,}）→ {out.relative_to(REPO)}")
     return True
 
 
@@ -550,7 +558,9 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="忽略缓存强制重建")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写产物")
     ap.add_argument("--no-sqlite", action="store_true", help="不产出 sqlite 索引")
+    add_ignore_flags(ap)
     args = ap.parse_args()
+    patterns = ignore_patterns(args)
 
     if args.paths:
         dirs = [Path(p) if Path(p).is_absolute() else REPO / p for p in args.paths]
@@ -559,14 +569,15 @@ def main() -> int:
             log("找不到目录：" + "、".join(str(d) for d in missing))
             return 1
     else:
-        dirs = collect_pointtable_dirs()
+        dirs = collect_pointtable_dirs(patterns)
         if not dirs:
             log("input/raw/ 下没有发现点表目录。把点表放进去（支持 .xls/.xlsx 表格型、"
                 "[RTU]/[遥信] 分段型 .txt）再跑一次。")
             return 0
 
     CONVERTED.mkdir(parents=True, exist_ok=True)
-    changed = sum(process(d, args.force, args.dry_run, not args.no_sqlite) for d in dirs)
+    changed = sum(process(d, patterns, args.force, args.dry_run, not args.no_sqlite)
+                  for d in dirs)
     if not args.dry_run:
         log(f"\n完成：{changed} 个点表集有更新。")
     return 0

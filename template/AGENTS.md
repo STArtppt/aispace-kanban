@@ -20,13 +20,62 @@ input/  →  （分析）  →  output/  →  prototypes/
 | --- | --- | --- |
 | `project.yaml` | 项目元信息：背景目标、干系人、里程碑、成果要求、约束 | 由 `pm-project-meta` 增量维护，见下文 |
 | `input/raw/` | 人类给的原始资料（docx / PDF / xlsx / pptx） | **只读**。永不改动、永不删除，它是溯源的终点。**默认禁止读取**（见下文） |
-| `input/converted/` | 转换后的 `.md` / `.csv`；点表另出主表 + sqlite | 由 `scripts/ingest.py` 和 `scripts/pointtable.py` 生成，**不要手改**（重跑会覆盖） |
+| `input/converted/` | 转换后的 `.md` / `.csv`；**目录结构镜像 `input/raw/`**，见下文 | 由 `scripts/ingest.py` / `pointtable.py` / `realdata.py` 生成，**不要手改**（重跑会覆盖） |
 | `input/assets/` | 图片资料：`<文档名>/` 是那份文档抽出的图，`未分类/` 是直接放进 raw/ 的单图 | 脚本生成。看图请直接读图片文件 |
 | `input/INDEX.md` | 资料台账 | 表格由脚本生成；人工判断写在「人工批注」区 |
 | `output/analysis/` | 分析中间产物（现状基线、需求拆解、澄清问题清单） | 自由写 |
 | `output/docs/` | 对外交付文档（PRD、需求规格、评审材料）；**演示/汇报用的 HTML 也放这里** | 自由写，见下文 |
 | `output/decisions/` | 决策记录：一个决策一个文件 | 只追加，不要改历史决策 |
 | `prototypes/` | Axhub Make 客户端目录 | **不要手动创建文件**，见下文 |
+
+## 产物落点：`input/converted/` 镜像 `input/raw/`
+
+转换产物**不平铺**。`input/converted/` 的目录结构与 `input/raw/` 一一对齐，
+这样资料上千份以后还能按批次删除——删 `converted/站点数据/0_公共/` 就等于删掉那批资料的
+全部产物，不留残渣；看板的树形视图也直接按这个结构展示。
+
+三条规则（实现在 [`scripts/layout.py`](scripts/layout.py)，三个转换脚本共用一份——
+忽略清单的解析也在这个模块里）：
+
+| 情形 | 落点 |
+| --- | --- |
+| **一源一产物**（docx / PDF / txt → 一个 `.md`） | 镜像目录下的同名文件 |
+| **一源多产物**（xlsx 拆 sheet、html 原型包） | 正文进 `SplittingObject/<文件名>/`，摘要 `_manifest_<文件名>.md` 留在镜像目录 |
+| **整目录合并成一份**（点表、几百个同构文件汇总成一个库） | 正文进 `MergedObject/`，摘要 `_manifest_<目录名>批量处理.md` |
+
+```
+input/raw/站点数据/0_公共/六大库汛限（正常高）水位.docx
+  → input/converted/站点数据/0_公共/六大库汛限(正常高)水位.md
+
+input/raw/站点数据/0_公共/7大库闸门底坎库容.xlsx
+  → input/converted/站点数据/0_公共/_manifest_7大库闸门底坎库容.md          ← 看板预览点这个
+  → input/converted/站点数据/0_公共/SplittingObject/7大库闸门底坎库容/Sheet1.csv
+
+input/raw/集控点表/（11 个厂站目录，572 个点表）
+  → input/converted/集控点表/_manifest_集控点表批量处理.md
+  → input/converted/集控点表/MergedObject/测点.sqlite
+input/raw/集控点表/南瑞-水调系统测点.xlsx                                  ← 同目录的普通表格
+  → input/converted/集控点表/_manifest_南瑞-水调系统测点.md                    照样走上面的规则
+  → input/converted/集控点表/SplittingObject/南瑞-水调系统测点/*.csv
+```
+
+**产物名尽量保留原文件名**（下划线、括号、中文标点都留着），只压掉路径分隔符这类会出事的
+字符——镜像目录要能一眼对回 `input/raw/` 里的那份原件。
+
+**旧工作空间搬迁**：以前的产物平铺在 `input/converted/` 根下，
+`scripts/migrate_converted.py` 负责搬过来。它只搬不重转——MinerU 转过的 PDF 不会再花在线额度，
+目录型产物（xlsx 拆表、点表、现场数据）删掉由脚本本地重建。
+顺带把 `output/` 里指向旧产物路径的**溯源引用**一并改写：搬完产物却留一堆指不到东西的来源，
+等于把已经建立的追溯链断掉。
+
+```bash
+python3 scripts/migrate_converted.py --dry-run     # 先看计划（强烈建议）
+python3 scripts/migrate_converted.py               # 执行
+python3 scripts/ingest.py && python3 scripts/pointtable.py && python3 scripts/realdata.py
+python3 scripts/migrate_converted.py --citations-only   # 重建完再跑一次，补上带具体文件名的引用
+```
+
+认不出主人的产物（原件已删、或旧版遗留）原地保留并单独列出，交给人判断是删是留。
 
 ## 溯源是硬要求
 
@@ -108,23 +157,30 @@ raw/客户版          # 目录：连同其下所有文件一起忽略
 *.bak               # 通配：按文件名匹配，不必带路径
 ```
 
-gitignore 风格，路径相对 `input/` 写。**`scripts/ingest.py` 和看板 `src/server/scan.mjs`
-读的是同一份**，改一次两边同时生效——改动其中一侧的匹配规则时必须同步另一侧。
-看板上待转换列表「更多 → 忽略此文件 / 忽略此目录」会往这份文件追加一行，效果相同。
+gitignore 风格，路径相对 `input/` 写。**`scripts/layout.py`（三个转换脚本共用）和看板
+`src/server/scan.mjs` 读的是同一份**，改一次全都生效——改动其中一侧的匹配规则时必须同步另一侧。
+
+`pointtable.py` 的自动发现尤其依赖它：探测点表要逐个读文件头，上千份存量资料全扫一遍要
+好几分钟；整个目录被忽略时直接跳过，不走进去。
 
 被忽略的资料**仍留在看板「原始资料」总量里并标注份数**，台账底部也会汇总一行。
 这是有意的：它们是「看过、判定用不上」，不是「不存在」——藏干净了下次就没人记得
 `input/raw/` 底下还压着几百份没看的东西。
 
+看板上待转换列表「更多 → 忽略此文件 / 忽略此目录」会往这份文件追加一行，效果相同。
+
+`ingest.py` 和 `pointtable.py` 都认这两个开关，语义一致（显式指定目录时忽略清单同样生效）：
+
 ```bash
-python3 scripts/ingest.py --ignore "raw/某目录"   # 临时追加忽略，不写进文件
-python3 scripts/ingest.py --no-ignore            # 本次不应用忽略清单，全部转
+python3 scripts/ingest.py --ignore "raw/某目录"      # 临时追加忽略，不写进文件
+python3 scripts/ingest.py --no-ignore               # 本次不应用忽略清单，全部转
+python3 scripts/pointtable.py --no-ignore           # 点表脚本同理
 ```
 
 格式分派：docx/odt/rtf 走 pandoc（顺带抽图），**PDF/pptx 走 MinerU 在线 API**，
 xlsx/xlsm/xls 按 sheet 拆成 CSV；**html/htm 作为 PM 互传的单文件可点击原型**——不转成
-Markdown 正文，而是拷到 `input/converted/<名>/` 保留可预览 HTML，并生成配套
-`_manifest.md`（结构摘要 + 可访问性/安全等校验，形态对齐 xlsx 的目录 + manifest）；
+Markdown 正文，而是拷到镜像目录的 `SplittingObject/<名>/` 保留可预览 HTML，并生成配套
+`_manifest_<名>.md`（结构摘要 + 可访问性/安全等校验，形态对齐 xlsx）；
 纯文本原样拷贝，图片进 `assets/未分类/`。
 
 MinerU 需要 `MINERU_API_KEY`（`.env` 里配，脚本会自己读）。**没配 key 不会报错**，
@@ -157,15 +213,15 @@ python3 scripts/pointtable.py --force          # 强制重建
 | `hydro_xls` | 表格型 `.xls`/`.xlsx`，首行表头 + 数据行，设备层级来自**目录路径** | 南瑞水电集控（模拟量/开关量/SOE量/温度量） |
 | `scada_ini` | 分段型 `.txt`，`[RTU]`/`[遥信]`/`[遥测]` 分段，GBK 与 UTF-8 混杂 | 风电 / 光伏集中监控 |
 
-产物在 `input/converted/<点表集名>/`：
+产物在 `input/converted/<点表集名>/`（整目录合并，见上文「产物落点」）：
 
-- **`_manifest.md`** — 轻量台账（规模分布、字段说明、已知局限）。**看板预览点这个**
-- `测点主表.csv` — 全量统一 18 列，含溯源列（源文件 + 源行号）
-- `分册/<厂站>.csv` — 按厂站拆分，便于预览、也便于单独发给某厂站对接人核对
-- `测点.sqlite` — 建好索引，**按测点检索一律走 SQL，不要把主表读进上下文**
+- **`_manifest_<点表集名>批量处理.md`** — 轻量台账（规模分布、字段说明、已知局限）。**看板预览点这个**
+- `MergedObject/测点主表.csv` — 全量统一 18 列，含溯源列（源文件 + 源行号）
+- `MergedObject/分册/<厂站>.csv` — 按厂站拆分，便于预览、也便于单独发给某厂站对接人核对
+- `MergedObject/测点.sqlite` — 建好索引，**按测点检索一律走 SQL，不要把主表读进上下文**
 
 ```bash
-sqlite3 input/converted/集控点表/测点.sqlite \
+sqlite3 input/converted/集控点表/MergedObject/测点.sqlite \
   "SELECT 厂站,设备分区,测点描述,测点地址 FROM 测点
    WHERE 测点描述 LIKE '%水位%' AND 是否备用='' LIMIT 20;"
 ```
@@ -188,30 +244,40 @@ sqlite3 input/converted/集控点表/测点.sqlite \
 ```bash
 python3 scripts/realdata.py                    # 自动发现 input/raw/ 下的现场数据目录（幂等）
 python3 scripts/realdata.py --dry-run          # 先看识别到的列映射和时间格式
-python3 scripts/realdata.py input/raw/现场数据  # 只处理指定目录（给文件也行，按其所在目录成集）
+python3 scripts/realdata.py input/raw/现场数据  # 只处理指定目录下认得出的文件（给单个文件也行）
 python3 scripts/realdata.py --force            # 强制重建
 python3 scripts/realdata.py --time-format "%m/%d/%Y %H:%M:%S"   # 日月顺序有歧义时手工指定
 ```
 
-**一个数据集一个子目录**（如 `input/raw/现场数据/`），别散放在 `input/raw/` 根下——
-按目录成集是脚本识别数据集的方式。识别靠**表头**不看扩展名：只要认得出
-「测点标识列 + 时间列 + 数值列」（别名表在 `scripts/realdata.py` 顶部，遇到新系统加一行），
+**导出文件放进一个子目录**（如 `input/raw/现场数据/`），别散放在 `input/raw/` 根下——
+根下的 csv 更可能是普通表格，归 `ingest.py` 管；放进子目录才会被当成现场数据。
+识别靠**表头**不看扩展名。目前两种形态（别名表在 `scripts/realdata.py` 顶部，遇到新系统加一行）：
+
+| 形态 | 表头要能认出 | 主产物 |
+| --- | --- | --- |
+| 测点时序 | 测点标识 + 时间 + 数值（`senid` / `time` / `v`） | `SplittingObject/<文件名>/实测数据.sqlite` |
+| 日指标 | 期间 + 组织 + 指标 + 数值（`period_id` / `orgz_code` / `measure_code` / `measure_value`） | `SplittingObject/<文件名>/日指标.sqlite`，组织名连组织表、指标名连指标字典 |
+
 csv / txt 都能进。
 
-产物在 `input/converted/<数据集名>/`：
+**一个导出文件 = 一个数据集 = 一个库。** 现场常一次导好几张表，各表互相独立
+（不同系统、不同测点集），合成一个库反而混。产物按镜像规则落在
+`input/converted/<raw 相对目录>/`：
 
-- **`_manifest.md`** — 轻量台账：规模、时间范围、覆盖分布、质量体检、**表结构和 SQL 范例**。
+- **`_manifest_<文件名>.md`** — 轻量台账：规模、时间范围、覆盖分布、质量体检、**表结构和 SQL 范例**。
   **看板预览点这个**；AI 要写 SQL 读这一份就够
-- `实测数据.sqlite` — 主产物：`测点` 维表（已按测点字典补齐流域/场站/中文名/单位）
-  + `实测` 事实表 + `日统计` 预聚合 + `v_实测` / `v_日统计` 视图，建好索引
-- `测点覆盖清单.csv` — 一行一个测点，可直接发给现场对接人核对
-- `日统计.csv` — 一行一个测点一天，Excel 就能看趋势
-- `未匹配测点.csv` — 字典里查不到的测点（有才生成）——**这就是缺口本身**
+- 测点时序：`实测数据.sqlite`（测点维表 + 实测事实表 + 日统计）+ `测点覆盖清单.csv` + `日统计.csv` + 未匹配测点
+- 日指标：`日指标.sqlite`（组织 / 指标维表 + 日指标事实表 + 覆盖表）+ `覆盖清单.csv` + 未匹配组织/指标
 
 ```bash
-sqlite3 -header -column input/converted/现场数据/实测数据.sqlite \
+sqlite3 -header -column input/converted/现场数据/SplittingObject/wds_real_data/实测数据.sqlite \
   "SELECT 场站名称,测点名称,采样间隔秒,\"间隔规律性%\",\"完整率%\"
    FROM 测点 WHERE 测点名称 LIKE '%坝上水位%' ORDER BY \"完整率%\" LIMIT 20;"
+
+sqlite3 -header -column input/converted/现场数据/SplittingObject/t02_product_day/日指标.sqlite \
+  "SELECT 日期,组织简称,数值 FROM v_日指标
+   WHERE 指标编码='DL01001' AND 机组编码='-1' AND 组织简称 LIKE '%棉花滩%'
+   ORDER BY 日期 LIMIT 20;"
 ```
 
 `ingest.py` 识别到现场数据同样让路（打一行汇总日志并记进 INDEX 台账）。
@@ -267,10 +333,12 @@ output/docs/2026-08-18-需求评审材料.html    ← 渲染产物，一起改
 ## 不要做的事
 
 - **不要主动读取 `input/raw/` 下的原始文件**（除非用户明确要求）。分析、写文档、追溯一律优先用 `input/converted/` 和 `input/INDEX.md`。原始文件（尤其 PDF / docx / xlsx）体积大、进上下文烧 token，且内容已由 `scripts/ingest.py` 转成可读文本——默认读转换产物即可。用户说「打开原件」「对照 raw 里的某某」「看一下原始 PDF」时才读 `input/raw/`。
-- **不要把现场实测数据的原始 csv 或 `实测数据.sqlite` 的事实表整表读进上下文**（几十万行）。查数走 SQL 只取回需要的几十行，看全局读 `_manifest.md`。
+- **不要把现场数据的原始 csv 或 sqlite 事实表整表读进上下文**（几十万到上百万行）。查数走 SQL 只取回需要的几十行，看全局读对应的 `_manifest_*.md`。
 - **不要把 `测点主表.csv` 整个读进上下文**（动辄十几万行）。查测点走 `测点.sqlite` 的 SQL，只把命中的几十行拿回来；要看全局分布读 `_manifest.md`。
 - 不要修改或删除 `input/raw/` 里的任何文件。
 - 不要手改 `input/converted/` 的产物，改脚本或在 `output/analysis/` 里记录修正。
+- 不要往 `input/converted/` 里手动建目录。落点规则在 `scripts/layout.py`，
+  `SplittingObject/` 和 `MergedObject/` 由脚本创建，手建的目录看板认不出来。
 - 不要在 `prototypes/` 下建文件。演示/汇报用的 HTML 放 `output/docs/`，见上文。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。
 - 不要用推断填平资料空白，标注出来交给用户去确认。

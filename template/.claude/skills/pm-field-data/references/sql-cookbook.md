@@ -1,10 +1,11 @@
 # 现场实测数据 · SQL 速查
 
-对 `input/converted/<数据集名>/实测数据.sqlite`。表结构见同目录 `_manifest.md`。
+对 `input/converted/<raw 相对目录>/SplittingObject/<文件名>/实测数据.sqlite`。
+表结构见镜像目录里的 `_manifest_<文件名>.md`（库在哪由它的 frontmatter `payload:` 给出）。
 所有查询都**只取回几十行**，不要 `SELECT *` 扫事实表。
 
 ```bash
-DB="input/converted/现场数据/实测数据.sqlite"
+DB="input/converted/现场数据/SplittingObject/wds_real_data/实测数据.sqlite"
 ```
 
 ## 一、覆盖：这个测点现场有没有数
@@ -106,6 +107,38 @@ SELECT 状态码, count(*) FROM 实测 GROUP BY 1 ORDER BY 2 DESC;
 -- 哪些测点集中出现非主状态
 SELECT 场站名称, 测点名称, 状态码分布 FROM 测点
 WHERE 状态码分布 LIKE '%|%' ORDER BY 场站名称 LIMIT 30;
+```
+
+## 七、日指标（太极 t02_product_day）
+
+```bash
+DB="input/converted/现场数据/SplittingObject/t02_product_day/日指标.sqlite"
+```
+
+粒度是（组织 × 机组 × 指标 × 日）。查厂站日值时加上 `机组编码 = '-1'`（含义待现场确认）。
+
+```sql
+-- 某厂站厂级日发电量
+SELECT 日期, 组织简称, 数值 FROM v_日指标
+WHERE 指标编码='DL01001' AND 机组编码='-1' AND 组织简称 LIKE '%棉花滩%'
+ORDER BY 日期;
+
+-- 某个指标各厂覆盖
+SELECT 组织简称, 机组编码, 记录数, "完整率%", 空值数, 最小值, 最大值
+FROM 覆盖 WHERE 指标编码='DL01001' ORDER BY 组织简称;
+
+-- 定义在、值不在：全程空值的指标
+SELECT 指标编码, 指标全称, sum(记录数) 行数, sum(空值数) 空值
+FROM 覆盖 GROUP BY 1,2 HAVING sum(空值数)=sum(记录数) ORDER BY 1;
+
+-- 组织表有但本次导出没有
+SELECT 组织编码, 组织简称, 层级, 已删除 FROM 组织
+WHERE 组织编码 NOT IN (SELECT DISTINCT 组织编码 FROM 日指标);
+
+-- 某日各厂发电量横比
+SELECT 组织简称, 数值 FROM v_日指标
+WHERE 指标编码='DL01001' AND 机组编码='-1' AND 日期='2025-08-01'
+ORDER BY 数值 DESC;
 ```
 
 ## 输出给人看

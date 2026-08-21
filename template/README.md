@@ -43,7 +43,7 @@ claude
 ```
 input/            阶段一：资料入库与格式转换
   raw/              原始文档（只读，溯源终点）
-  converted/        转换后的 .md / .csv
+  converted/        转换后的 .md / .csv（目录结构镜像 raw/，见 AGENTS.md「产物落点」）
   assets/           图片资料（按来源分目录，单张图进 未分类/）
   INDEX.md          资料台账（脚本生成 + 人工批注）
 output/           阶段三：产出
@@ -53,6 +53,10 @@ output/           阶段三：产出
 prototypes/       阶段四：Axhub Make 客户端目录（保持空，别手动放文件）
 scripts/
   ingest.py         文档转换调度
+  layout.py         converted/ 的落点规则（三个转换脚本共用一份）
+  pointtable.py     点表批量归一 → 测点主表 + sqlite
+  realdata.py       现场实测数据归一 → 时序库
+  migrate_converted.py  旧版平铺产物 → 镜像结构（一次性）
   mineru.py         MinerU 在线解析客户端
 skills/           预装的 PM 技能 + skill-creator（→ .claude/skills 软链接）
 AGENTS.md         Agent 工作约定（所有 Agent 通用，唯一来源）

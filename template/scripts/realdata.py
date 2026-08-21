@@ -15,15 +15,29 @@
 
 支持的形态（dialect 靠**表头**识别，不看扩展名）
 ------------------------------------------------
-任何「一行一条测值」的 csv / txt 导出，只要表头里能认出三类列：
+目前两种。都是「一行一个值」的长表，只是粒度不同：
 
-    测点标识列   senid / sensorid / pointid / point_code / tagname / 测点编码 …
-    时间列       time / ts / datetime / 采集时间 / 时间 …
-    数值列       v / value / val / 数值 / 测值 …
+1. **测点时序**（水情实时这类）：表头能认出三类列
 
-状态、质量、类型这些**可选列**认出来就带上，认不出来就留空——现场系统各家不同，
-不强求对齐。列名别名收在 ID_ALIASES / TIME_ALIASES / VALUE_ALIASES / OPTIONAL_ALIASES，
-遇到新系统在那里加一行即可。
+       测点标识列   senid / sensorid / pointid / point_code / tagname / 测点编码 …
+       时间列       time / ts / datetime / 采集时间 / 时间 …
+       数值列       v / value / val / 数值 / 测值 …
+
+   产物是 `实测数据.sqlite`（测点维表 + 实测事实表 + 日统计）。
+
+2. **日指标**（太极 t02_product_day 这类）：表头能认出四类列
+
+       期间列       period_id / biz_date / 业务日期 / 期间 …
+       组织列       orgz_code / 组织编码 …
+       指标列       measure_code / 指标编码 …
+       数值列       measure_value / 指标值 …
+
+   机组列（crew_set_code）有就带上。产物是 `日指标.sqlite`，组织名连已转换的
+   组织表、指标名连指标字典。**不要**把它硬套进测点时序——粒度是
+   （组织 × 机组 × 指标 × 日），字典也不是测点字典。
+
+状态、质量、创建时间这些**可选列**认出来就带上。列名别名都收在文件顶部，
+遇到新系统加一行即可。
 
 测点字典
 --------
@@ -33,14 +47,20 @@
 并在 `字典来源` 列里记下这条信息是从哪份字典来的（溯源要求）。
 **匹配不上的测点不丢弃、不猜名字**，单独出一份 `未匹配测点.csv`。
 
-产物（写到 input/converted/<数据集名>/）
----------------------------------------
-    _manifest.md        轻量台账：规模、时间范围、覆盖率、质量体检、**表结构和 SQL 范例**。
-                        看板预览请点这个；AI 要写 SQL 也只需要读这个
-    实测数据.sqlite      主产物：测点维表 + 实测事实表 + 日统计 + 视图，建好索引
-    测点覆盖清单.csv     一行一个测点：字典信息 + 记录数 + 时间范围 + 值域 + 完整率
-    日统计.csv           一行一个测点一天：条数 / 极值 / 均值，用 Excel 就能看趋势
-    未匹配测点.csv       字典里查不到的测点（有才生成）——这是要向现场确认的缺口
+产物落点
+--------
+**一个导出文件 = 一个数据集 = 一个库**。现场往往一次导好几张表，各表之间互相独立
+（不同系统、不同测点集），合成一个库反而混。目录结构镜像 `input/raw/`，见 `scripts/layout.py`：
+
+    input/raw/现场数据/wds_real_data.csv          ← 测点时序
+      → input/converted/现场数据/_manifest_wds_real_data.md
+      → input/converted/现场数据/SplittingObject/wds_real_data/实测数据.sqlite …
+
+    input/raw/现场数据/t02_product_day.csv        ← 日指标
+      → input/converted/现场数据/_manifest_t02_product_day.md
+      → input/converted/现场数据/SplittingObject/t02_product_day/日指标.sqlite
+            覆盖清单.csv         一行一个（组织 × 机组 × 指标）
+            未匹配组织.csv / 未匹配指标.csv   字典里查不到的（有才生成）
 
 设计原则
 --------
@@ -51,8 +71,8 @@
 
 用法
 ----
-    python3 scripts/realdata.py                        # 自动发现 input/raw/ 下的现场数据目录
-    python3 scripts/realdata.py input/raw/现场数据      # 只处理指定目录（给文件也行，按其所在目录算一个数据集）
+    python3 scripts/realdata.py                        # 自动发现 input/raw/ 下的现场数据文件
+    python3 scripts/realdata.py input/raw/现场数据      # 只处理指定目录下的（给单个文件也行）
     python3 scripts/realdata.py --dry-run              # 只打印识别结果和计划
     python3 scripts/realdata.py --force                # 忽略缓存重建
     python3 scripts/realdata.py --time-format "%m/%d/%Y %H:%M:%S"   # 日月顺序有歧义时手工指定
@@ -69,9 +89,11 @@ import re
 import shutil
 import sqlite3
 import sys
-import unicodedata
 from collections import Counter, defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from layout import md_link, rel_path, split_paths  # noqa: E402  产物落点规则，三个脚本共用
 
 REPO = Path(__file__).resolve().parent.parent
 RAW = REPO / "input" / "raw"
@@ -100,6 +122,20 @@ OPTIONAL_ALIASES = {
 }
 OPTIONAL_COLUMNS = list(OPTIONAL_ALIASES)
 
+# 日指标方言（太极 t02_product_day 这类）。期间是 YYYYMMDD，不是时分秒。
+PERIOD_ALIASES = ("period_id", "periodid", "biz_date", "bizdate", "stat_date", "statdate",
+                  "业务日期", "统计日期", "期间")
+ORG_ALIASES = ("orgz_code", "org_code", "orgcode", "组织编码", "组织代码")
+MEASURE_ALIASES = ("measure_code", "measurecode", "指标编码", "指标代码")
+MEASURE_VALUE_ALIASES = ("measure_value", "measurevalue", "指标值")
+CREW_ALIASES = ("crew_set_code", "crewsetcode", "crew_code", "机组编码", "机组代码")
+PRODUCT_OPTIONAL_ALIASES = {
+    "创建时间": ("creation_time", "create_time", "created_at", "创建时间"),
+    "更新时间": ("update_time", "updated_at", "更新时间"),
+}
+# 组织 / 指标字典文件超过这个大小就不扫——事实表动辄上百 MB，不能当字典读。
+DICT_MAX_BYTES = 5 << 20
+
 # 时间格式候选。ISO 类放前面（无歧义）；斜杠类的日月顺序在 sniff_time 里按数据判定。
 TIME_FORMATS = (
     "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S",
@@ -110,19 +146,14 @@ TIME_FORMATS = (
 EPOCH_S, EPOCH_MS = "@s", "@ms"        # 纪元秒 / 毫秒，当作两个特殊「格式」
 
 SLASH_DATE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})")
+PERIOD_YMD = re.compile(r"^\d{8}$")
+PERIOD_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 BATCH = 20000                          # sqlite 分批写入的行数
 
 
 def log(msg: str) -> None:
     print(msg, flush=True)
-
-
-def slugify(name: str) -> str:
-    name = unicodedata.normalize("NFKC", name)
-    name = re.sub(r"[\s_]+", "-", name.strip())
-    name = re.sub(r"[^\w一-鿿.-]+", "", name)
-    return re.sub(r"-{2,}", "-", name).strip("-.") or "untitled"
 
 
 def rel(path: Path) -> str:
@@ -220,15 +251,32 @@ def sniff_time(samples: list[str]) -> tuple[str | None, str]:
     return None, note
 
 
+def sniff_period(samples: list[str]) -> str | None:
+    """日指标的期间列：YYYYMMDD 或 YYYY-MM-DD。认不出就不当日报。"""
+    vals = [s.strip().strip('"') for s in samples if s and s.strip()]
+    if not vals:
+        return None
+    if all(PERIOD_YMD.match(v) for v in vals):
+        if all(parse_time(v, "%Y%m%d") for v in vals[:20]):
+            return "%Y%m%d"
+        return None
+    if all(PERIOD_ISO.match(v) for v in vals):
+        if all(parse_time(v, "%Y-%m-%d") for v in vals[:20]):
+            return "%Y-%m-%d"
+        return None
+    return None
+
+
 # --------------------------------------------------------------------------- #
 # 格式探测
 # --------------------------------------------------------------------------- #
 
 def detect(path: Path) -> dict | None:
-    """这个文件是不是「一行一条测值」的现场实测数据？是就返回列映射，不是返回 None。
+    """现场导出数据？是就返回列映射（含「形态」），不是返回 None。
 
-    判据是表头能同时认出**测点标识 + 时间 + 数值**三类列，且时间列**确实解析得出时间**——
-    只看列名会把普通报表误判进来。
+    先认日指标（期间+组织+指标+数值），再认测点时序（测点+时间+数值）。
+    日指标更特殊，四个列都要在；只看列名会把普通报表误判进来，期间/时间
+    必须真能解析。
     """
     if path.suffix.lower() not in DATA_SUFFIXES:
         return None
@@ -248,6 +296,39 @@ def detect(path: Path) -> dict | None:
     if not rows:
         return None
     header = [norm_header(c) for c in rows[0]]
+    hit = detect_product_day(header, rows, delim)
+    if hit:
+        return hit
+    return detect_timeseries(header, rows, delim)
+
+
+def detect_product_day(header: list[str], rows: list[list[str]], delim: str) -> dict | None:
+    period_col = pick(header, PERIOD_ALIASES)
+    org_col = pick(header, ORG_ALIASES)
+    meas_col = pick(header, MEASURE_ALIASES)
+    value_col = pick(header, MEASURE_VALUE_ALIASES) or pick(header, VALUE_ALIASES)
+    if not (period_col and org_col and meas_col and value_col):
+        return None
+    if len({period_col, org_col, meas_col, value_col}) < 4:
+        return None
+    idx = header.index(period_col)
+    samples = [r[idx] for r in rows[1:80] if len(r) > idx]
+    fmt = sniff_period(samples)
+    if not fmt:
+        return None
+    crew_col = pick(header, CREW_ALIASES)
+    used = {period_col, org_col, meas_col, value_col, crew_col}
+    optional = {}
+    for uniform, aliases in PRODUCT_OPTIONAL_ALIASES.items():
+        hit = pick(header, aliases)
+        if hit and hit not in used:
+            optional[uniform] = hit
+    return {"形态": "product_day", "台账类型": "现场日指标", "分隔符": delim, "表头": header,
+            "期间列": period_col, "组织列": org_col, "指标列": meas_col, "数值列": value_col,
+            "机组列": crew_col, "可选列": optional, "期间格式": fmt}
+
+
+def detect_timeseries(header: list[str], rows: list[list[str]], delim: str) -> dict | None:
     id_col, time_col, value_col = (pick(header, ID_ALIASES), pick(header, TIME_ALIASES),
                                    pick(header, VALUE_ALIASES))
     if not (id_col and time_col and value_col):
@@ -262,8 +343,9 @@ def detect(path: Path) -> dict | None:
         hit = pick(header, aliases)
         if hit and hit not in (id_col, time_col, value_col):
             optional[uniform] = hit
-    return {"分隔符": delim, "表头": header, "测点列": id_col, "时间列": time_col,
-            "数值列": value_col, "可选列": optional, "时间格式": fmt, "时间提醒": note}
+    return {"形态": "timeseries", "台账类型": "现场实测数据", "分隔符": delim, "表头": header,
+            "测点列": id_col, "时间列": time_col, "数值列": value_col, "可选列": optional,
+            "时间格式": fmt, "时间提醒": note}
 
 
 # --------------------------------------------------------------------------- #
@@ -350,6 +432,113 @@ def load_point_dict() -> tuple[dict[str, dict], list[str]]:
             added += 1
         if added:
             used.append(f"{rel(path)}（兜底补 {added} 条）")
+    return index, used
+
+
+ORG_DICT_FIELDS = ["组织编码", "组织全称", "组织简称", "层级", "上级编码",
+                   "流域编码", "集控编码", "集控全称", "集控简称", "已删除", "字典来源"]
+MEASURE_DICT_FIELDS = ["指标编码", "指标全称", "指标简称", "业务类型", "单位",
+                       "数据频度", "指标定义", "计算公式", "说明", "字典来源"]
+DAY_FACT_COLUMNS = ["日期", "期间", "组织编码", "机组编码", "指标编码", "数值", "创建时间", "更新时间"]
+COVER_COLUMNS = ["组织编码", "组织简称", "组织全称", "集控简称", "层级",
+                 "机组编码", "指标编码", "指标全称", "单位",
+                 "记录数", "起始日期", "结束日期", "日历天数", "缺行天数", "完整率%",
+                 "最小值", "最大值", "平均值", "空值数", "恒定值"]
+
+
+def _norm_row(row: dict) -> dict[str, str]:
+    return {norm_header(k): (v or "").strip() for k, v in row.items() if k}
+
+
+def _field(row: dict[str, str], aliases: tuple[str, ...]) -> str:
+    for a in aliases:
+        if row.get(a):
+            return row[a]
+    return ""
+
+
+def _small_csv_paths() -> list[Path]:
+    out = []
+    for path in CONVERTED.rglob("*.csv"):
+        try:
+            if path.stat().st_size > DICT_MAX_BYTES:
+                continue
+        except OSError:
+            continue
+        out.append(path)
+    return out
+
+
+def load_org_dict() -> tuple[dict[str, dict], list[str]]:
+    """扫 converted/ 里的组织表。必须同时有组织编码和全称，避免把测点清单误当成组织字典。"""
+    index: dict[str, dict] = {}
+    used: list[str] = []
+    for path in sorted(_small_csv_paths()):
+        try:
+            with path.open(newline="", encoding="utf-8-sig", errors="replace") as fh:
+                header = [norm_header(c) for c in next(csv.reader(fh), [])]
+        except OSError:
+            continue
+        if not (pick(header, ORG_ALIASES) and pick(header, ("orgz_full_name", "组织全称"))):
+            continue
+        added = 0
+        for raw in _read_csv(path):
+            row = _norm_row(raw)
+            code = _field(row, ORG_ALIASES)
+            if not code or code in index:
+                continue
+            index[code] = {
+                "组织编码": code,
+                "组织全称": _field(row, ("orgz_full_name", "组织全称")),
+                "组织简称": _field(row, ("orgz_abb_name", "组织简称")),
+                "层级": _field(row, ("levels", "层级")),
+                "上级编码": _field(row, ("parent_orgz_code", "上级编码")),
+                "流域编码": _field(row, ("watershed_code", "流域编码")),
+                "集控编码": _field(row, ("water_control_code", "集控编码")),
+                "集控全称": _field(row, ("water_control_full_name", "集控全称")),
+                "集控简称": _field(row, ("water_control_abb_name", "集控简称")),
+                "已删除": _field(row, ("is_delete_flag", "已删除")),
+                "字典来源": rel(path),
+            }
+            added += 1
+        if added:
+            used.append(f"{rel(path)}（{added} 条）")
+    return index, used
+
+
+def load_measure_dict() -> tuple[dict[str, dict], list[str]]:
+    """扫 converted/ 里的指标字典。必须同时有指标编码和全称，避免把日指标事实表误当成字典。"""
+    index: dict[str, dict] = {}
+    used: list[str] = []
+    for path in sorted(_small_csv_paths()):
+        try:
+            with path.open(newline="", encoding="utf-8-sig", errors="replace") as fh:
+                header = [norm_header(c) for c in next(csv.reader(fh), [])]
+        except OSError:
+            continue
+        if not (pick(header, MEASURE_ALIASES) and pick(header, ("measure_full_name", "指标全称", "指标名称"))):
+            continue
+        added = 0
+        for raw in _read_csv(path):
+            row = _norm_row(raw)
+            code = _field(row, MEASURE_ALIASES)
+            if not code or code in index:
+                continue
+            index[code] = {
+                "指标编码": code,
+                "指标全称": _field(row, ("measure_full_name", "指标全称", "指标名称")),
+                "指标简称": _field(row, ("measure_abb_name", "指标简称")),
+                "业务类型": _field(row, ("biz_type", "业务类型")),
+                "单位": _field(row, ("measure_unit", "单位")),
+                "数据频度": _field(row, ("data_frequency", "数据频度")),
+                "指标定义": _field(row, ("measure_define", "指标定义")),
+                "计算公式": _field(row, ("measure_formula_descp", "计算公式")),
+                "说明": _field(row, ("descp", "说明")),
+                "字典来源": rel(path),
+            }
+            added += 1
+        if added:
+            used.append(f"{rel(path)}（{added} 条）")
     return index, used
 
 
@@ -641,7 +830,7 @@ def finish_sqlite(conn: sqlite3.Connection, dim: list[dict], days: list[dict],
 # 台账
 # --------------------------------------------------------------------------- #
 
-def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str,
+def write_manifest(manifest_path: Path, out_dir: Path, name: str, src: Path, digest: str,
                    dim: list[dict], issues: dict, dict_sources: list[str],
                    dupes: int | None, has_db: bool, unmatched: int,
                    dropped: list[tuple[str, str]]) -> None:
@@ -669,13 +858,14 @@ def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str,
                 states[k] += int(v)
 
     db_rel = f"{rel(out_dir)}/实测数据.sqlite"
+    # 正文目录，相对本摘要所在目录写。ingest.py 靠它判断产物完不完整，看板靠它把摘要和正文
+    # 认成同一份产物。
+    payload = rel_path(out_dir, manifest_path.parent)
     lines = [
         "---",
-        f"source: {rel(src_dir)}",
-        "source_is_dir: true",
-        f"source_kinds: {', '.join(sorted({Path(f['路径']).suffix for f in issues['文件']}))}",
-        f"source_files: {len(issues['文件'])}",
+        f"source: {rel(src)}",
         f"source_sha256: {digest}",
+        f"payload: {payload}",
         "converted_by: scripts/realdata.py",
         f"converted_at: {dt.datetime.now().astimezone().isoformat(timespec='seconds')}",
         f"row_count: {total_rows}",
@@ -686,7 +876,7 @@ def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str,
         "",
         f"# {name} · 现场实测数据台账",
         "",
-        f"源目录 `{rel(src_dir)}`，{len(issues['文件'])} 个文件、**{total_rows:,} 行测值**，"
+        f"源文件 `{rel(src)}`，**{total_rows:,} 行测值**，"
         f"覆盖 **{points:,} 个测点**，时间范围 **{t0} ~ {t1}**。",
         "",
         "> 这是**现场已接入数据库的真实数据**，不是设计文档。它能回答的是"
@@ -698,15 +888,17 @@ def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str,
         "| --- | --- |",
     ]
     if has_db:
-        lines.append(f"| `实测数据.sqlite` | **主产物**。测点维表 + 实测事实表 + 日统计 + 视图，"
+        lines.append(f"| `{payload}/实测数据.sqlite` | **主产物**。测点维表 + 实测事实表 + 日统计 + 视图，"
                      f"建好索引。AI 查数一律走 SQL，见下方表结构和范例 |")
     lines += [
-        f"| `测点覆盖清单.csv` | 一行一个测点（{points:,} 行）：字典信息 + 记录数 + 时间范围 + 值域 + 完整率 |",
-        "| `日统计.csv` | 一行一个测点一天：条数 / 极值 / 均值，用 Excel 就能看趋势 |",
+        f"| `{payload}/测点覆盖清单.csv` | 一行一个测点（{points:,} 行）：字典信息 + 记录数 + 时间范围 + 值域 + 完整率 |",
+        f"| `{payload}/日统计.csv` | 一行一个测点一天：条数 / 极值 / 均值，用 Excel 就能看趋势 |",
     ]
     if unmatched:
-        lines.append(f"| `未匹配测点.csv` | 字典里查不到的 {unmatched} 个测点，**这是要向现场确认的缺口** |")
-    lines += ["| `_manifest.md` | 就是本文件，轻量摘要，**预览请点这里** |", "",
+        lines.append(f"| `{payload}/未匹配测点.csv` | 字典里查不到的 {unmatched} 个测点，"
+                     "**这是要向现场确认的缺口** |")
+    lines += [f"| `{manifest_path.name}` | 就是本文件，轻量摘要，**预览请点这里** |", "",
+              f"正文都在 [`{payload}/`]({md_link('./' + payload)}) 下。",
               "**不要把原始导出文件或 `实测数据.sqlite` 的事实表整表读进上下文**"
               "（几十万行），用 SQL 取回需要的几十行。", ""]
 
@@ -838,51 +1030,539 @@ def write_manifest(out_dir: Path, name: str, src_dir: Path, digest: str,
             "```",
             "",
         ]
-    (out_dir / "_manifest.md").write_text("\n".join(lines), encoding="utf-8")
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 # --------------------------------------------------------------------------- #
 # 编排
 # --------------------------------------------------------------------------- #
 
-def collect_realdata_dirs() -> list[Path]:
-    """自动发现：input/raw/ 下**直接子目录**里含可识别实测数据文件的，算一个数据集。"""
+def collect_realdata_files() -> list[Path]:
+    """自动发现：input/raw/ 的**子目录**里所有能认出来的实测数据文件，一份一个数据集。
+
+    只看子目录、不看 raw/ 根：根下散放的 csv 更可能是普通表格（客户发来的清单之类），
+    归 ingest.py 管。要按数据集处理就放进一个子目录，这也是 ingest.py 让路的判据。
+    """
     found = []
     for child in sorted(RAW.iterdir()):
         if not child.is_dir() or child.name.startswith("."):
             continue
-        for p in child.rglob("*"):
-            if p.is_file() and not p.name.startswith(".") and detect(p):
-                found.append(child)
-                break
+        found.extend(p for p in sorted(child.rglob("*"))
+                     if p.is_file() and not p.name.startswith(".") and detect(p))
     return found
 
 
-def process(src_dir: Path, force: bool, dry_run: bool, want_sqlite: bool,
-            time_format: str | None) -> bool:
-    files = []
-    for p in sorted(src_dir.rglob("*")):
-        if p.is_file() and not p.name.startswith("."):
-            d = detect(p)
-            if d:
-                files.append((p, d))
-    if not files:
-        log(f"⚠ {rel(src_dir)}：没有识别到实测数据文件（需要表头含 测点/时间/数值 三类列）")
-        return False
+# --------------------------------------------------------------------------- #
+# 日指标：一行 = 某组织 × 某机组 × 某指标 × 某一天
+# --------------------------------------------------------------------------- #
 
-    size = sum(p.stat().st_size for p, _ in files) / (1 << 20)
-    log(f"\n▶ {rel(src_dir)}　{len(files)} 个文件　{size:,.1f} MB")
-    for p, d in files:
-        log(f"    {p.name}：测点={d['测点列']} 时间={d['时间列']}（{d['时间格式']}）"
-            f" 数值={d['数值列']}"
-            + (f" 可选={'、'.join(d['可选列'])}" if d["可选列"] else ""))
+class SeriesStat:
+    __slots__ = ("n", "first", "last", "vmin", "vmax", "vsum", "nnum", "nonnum")
+
+    def __init__(self) -> None:
+        self.n = 0
+        self.first = self.last = None
+        self.vmin = self.vmax = None
+        self.vsum = 0.0
+        self.nnum = 0
+        self.nonnum = 0
+
+    def add(self, day: dt.date, value: float | None) -> None:
+        self.n += 1
+        if self.first is None or day < self.first:
+            self.first = day
+        if self.last is None or day > self.last:
+            self.last = day
+        if value is None:
+            self.nonnum += 1
+            return
+        self.nnum += 1
+        self.vsum += value
+        self.vmin = value if self.vmin is None else min(self.vmin, value)
+        self.vmax = value if self.vmax is None else max(self.vmax, value)
+
+
+def scan_product_day(src: Path, dialect: dict, conn: sqlite3.Connection | None
+                     ) -> tuple[dict[tuple[str, str, str], SeriesStat], dict]:
+    stats: dict[tuple[str, str, str], SeriesStat] = defaultdict(SeriesStat)
+    issues = {"总行数": 0, "期间解析失败": 0, "空组织": 0, "空指标": 0}
+    fmt = dialect["期间格式"]
+    enc = sniff_encoding(src)
+    buffer: list[tuple] = []
+    with src.open(newline="", encoding=enc, errors="replace") as fh:
+        reader = csv.reader(fh, delimiter=dialect["分隔符"])
+        header = [norm_header(c) for c in next(reader, [])]
+        pos = {name: header.index(name) for name in header}
+        i_p, i_o, i_m, i_v = (pos[dialect["期间列"]], pos[dialect["组织列"]],
+                              pos[dialect["指标列"]], pos[dialect["数值列"]])
+        i_c = pos[dialect["机组列"]] if dialect.get("机组列") else None
+        i_opt = [(name, pos[src_col]) for name, src_col in dialect["可选列"].items()]
+        rows = 0
+        for row in reader:
+            if len(row) <= max(i_p, i_o, i_m, i_v):
+                continue
+            rows += 1
+            org = row[i_o].strip()
+            meas = row[i_m].strip()
+            if not org:
+                issues["空组织"] += 1
+            if not meas:
+                issues["空指标"] += 1
+            ts = parse_time(row[i_p].strip(), fmt)
+            if ts is None:
+                issues["期间解析失败"] += 1
+                continue
+            day = ts.date()
+            crew = row[i_c].strip() if i_c is not None and i_c < len(row) else ""
+            value = to_float(row[i_v]) if i_v < len(row) else None
+            stats[(org, crew, meas)].add(day, value)
+            if conn is not None:
+                opt = {name: row[j].strip() if j < len(row) else "" for name, j in i_opt}
+                buffer.append((day.isoformat(), row[i_p].strip(), org, crew, meas, value,
+                               opt.get("创建时间", ""), opt.get("更新时间", "")))
+                if len(buffer) >= BATCH:
+                    conn.executemany(
+                        f'INSERT INTO 日指标 ({",".join(chr(34)+c+chr(34) for c in DAY_FACT_COLUMNS)}) '
+                        f'VALUES ({",".join("?" * len(DAY_FACT_COLUMNS))})', buffer)
+                    buffer.clear()
+        issues["总行数"] = rows
+        issues["编码"] = enc
+        issues["期间格式"] = fmt
+    if conn is not None and buffer:
+        conn.executemany(
+            f'INSERT INTO 日指标 ({",".join(chr(34)+c+chr(34) for c in DAY_FACT_COLUMNS)}) '
+            f'VALUES ({",".join("?" * len(DAY_FACT_COLUMNS))})', buffer)
+    return stats, issues
+
+
+def build_org_dim(stats, org_dict: dict[str, dict]) -> list[dict]:
+    seen = {org for org, _, _ in stats}
+    codes = sorted(set(org_dict) | seen)
+    out = []
+    for code in codes:
+        rec = org_dict.get(code) or dict.fromkeys(ORG_DICT_FIELDS, "")
+        rec = dict(rec)
+        rec["组织编码"] = code
+        out.append(rec)
+    return out
+
+
+def build_measure_dim(stats, meas_dict: dict[str, dict]) -> list[dict]:
+    seen = {meas for _, _, meas in stats}
+    codes = sorted(set(meas_dict) | seen)
+    out = []
+    for code in codes:
+        rec = meas_dict.get(code) or dict.fromkeys(MEASURE_DICT_FIELDS, "")
+        rec = dict(rec)
+        rec["指标编码"] = code
+        out.append(rec)
+    return out
+
+
+def build_cover(stats, org_dict: dict[str, dict], meas_dict: dict[str, dict]) -> list[dict]:
+    out = []
+    for (org, crew, meas), st in sorted(stats.items()):
+        o = org_dict.get(org) or {}
+        m = meas_dict.get(meas) or {}
+        calendar = (st.last - st.first).days + 1 if st.first and st.last else 0
+        missing = max(0, calendar - st.n) if calendar else 0
+        out.append({
+            "组织编码": org,
+            "组织简称": o.get("组织简称", ""),
+            "组织全称": o.get("组织全称", ""),
+            "集控简称": o.get("集控简称", ""),
+            "层级": o.get("层级", ""),
+            "机组编码": crew,
+            "指标编码": meas,
+            "指标全称": m.get("指标全称", ""),
+            "单位": m.get("单位", ""),
+            "记录数": st.n,
+            "起始日期": st.first.isoformat() if st.first else "",
+            "结束日期": st.last.isoformat() if st.last else "",
+            "日历天数": calendar or "",
+            "缺行天数": missing if calendar else "",
+            "完整率%": round(st.n * 100 / calendar, 1) if calendar else "",
+            "最小值": st.vmin if st.vmin is not None else "",
+            "最大值": st.vmax if st.vmax is not None else "",
+            "平均值": round(st.vsum / st.nnum, 4) if st.nnum else "",
+            "空值数": st.nonnum,
+            "恒定值": 1 if st.nnum and st.vmin == st.vmax else 0,
+        })
+    return out
+
+
+def finish_product_sqlite(conn: sqlite3.Connection, orgs: list[dict], measures: list[dict],
+                          cover: list[dict], meta: list[tuple[str, str]]) -> int:
+    conn.executemany(
+        f'INSERT INTO 组织 ({",".join(chr(34)+c+chr(34) for c in ORG_DICT_FIELDS)}) '
+        f'VALUES ({",".join("?" * len(ORG_DICT_FIELDS))})',
+        [[r.get(c, "") for c in ORG_DICT_FIELDS] for r in orgs])
+    conn.executemany(
+        f'INSERT INTO 指标 ({",".join(chr(34)+c+chr(34) for c in MEASURE_DICT_FIELDS)}) '
+        f'VALUES ({",".join("?" * len(MEASURE_DICT_FIELDS))})',
+        [[r.get(c, "") for c in MEASURE_DICT_FIELDS] for r in measures])
+    conn.executemany(
+        f'INSERT INTO 覆盖 ({",".join(chr(34)+c+chr(34) for c in COVER_COLUMNS)}) '
+        f'VALUES ({",".join("?" * len(COVER_COLUMNS))})',
+        [[r.get(c, "") for c in COVER_COLUMNS] for r in cover])
+    conn.executemany("INSERT INTO 元信息 (键, 值) VALUES (?, ?)", meta)
+    conn.execute('CREATE INDEX idx_日指标_组织指标日期 ON 日指标("组织编码","指标编码","日期")')
+    conn.execute('CREATE INDEX idx_日指标_日期 ON 日指标("日期")')
+    conn.execute('CREATE INDEX idx_日指标_指标日期 ON 日指标("指标编码","日期")')
+    conn.execute('CREATE INDEX idx_覆盖_组织 ON 覆盖("组织编码")')
+    conn.execute('CREATE INDEX idx_覆盖_指标 ON 覆盖("指标编码")')
+    conn.execute("""
+        CREATE VIEW v_日指标 AS
+        SELECT o.组织简称, o.组织全称, o.集控简称, o.层级,
+               m.指标全称, m.单位,
+               f.日期, f.期间, f.组织编码, f.机组编码, f.指标编码, f.数值,
+               f.创建时间, f.更新时间
+        FROM 日指标 f
+        LEFT JOIN 组织 o ON o.组织编码 = f.组织编码
+        LEFT JOIN 指标 m ON m.指标编码 = f.指标编码
+    """)
+    dupes = conn.execute(
+        'SELECT count(*) FROM (SELECT 日期,组织编码,机组编码,指标编码 FROM 日指标 '
+        'GROUP BY 1,2,3,4 HAVING count(*) > 1)'
+    ).fetchone()[0]
+    conn.commit()
+    conn.execute("VACUUM")
+    conn.close()
+    return dupes
+
+
+def write_product_manifest(manifest_path: Path, out_dir: Path, src: Path, digest: str,
+                           dialect: dict, issues: dict, cover: list[dict],
+                           orgs: list[dict], measures: list[dict],
+                           org_sources: list[str], meas_sources: list[str],
+                           unmatched_orgs: list[str], unmatched_meas: list[str],
+                           dict_only_orgs: list[dict], dupes: int | None,
+                           has_db: bool) -> None:
+    total = issues["总行数"]
+    series = len(cover)
+    starts = [r["起始日期"] for r in cover if r["起始日期"]]
+    ends = [r["结束日期"] for r in cover if r["结束日期"]]
+    t0, t1 = (min(starts) if starts else ""), (max(ends) if ends else "")
+    orgs_in_data = sorted({r["组织编码"] for r in cover})
+    meas_in_data = sorted({r["指标编码"] for r in cover})
+    plant = [r for r in cover if r["机组编码"] in ("-1", "", "0")]
+    unit = [r for r in cover if r["机组编码"] not in ("-1", "", "0")]
+    empty_all = [r for r in cover if r["记录数"] and r["空值数"] == r["记录数"]]
+    low = [r for r in cover if isinstance(r["完整率%"], float) and r["完整率%"] < 95]
+    const = sum(1 for r in cover if r["恒定值"] == 1)
+    empty_rows = sum(r["空值数"] for r in cover)
+
+    by_org = Counter()
+    for r in cover:
+        label = r["组织简称"] or r["组织编码"] or "（空组织）"
+        by_org[label] += 1
+    by_meas = Counter((r["指标编码"], r["指标全称"] or "（字典未命中）", r["单位"])
+                      for r in cover)
+
+    payload = rel_path(out_dir, manifest_path.parent)
+    db_rel = f"{rel(out_dir)}/日指标.sqlite"
+    lines = [
+        "---",
+        f"source: {rel(src)}",
+        f"source_sha256: {digest}",
+        f"payload: {payload}",
+        "converted_by: scripts/realdata.py",
+        f"converted_at: {dt.datetime.now().astimezone().isoformat(timespec='seconds')}",
+        "kind: daily_indicator",
+        f"row_count: {total}",
+        f"org_count: {len(orgs_in_data)}",
+        f"measure_count: {len(meas_in_data)}",
+        f"series_count: {series}",
+        f"time_start: {t0}",
+        f"time_end: {t1}",
+        "---",
+        "",
+        f"# {src.stem} · 现场日指标台账",
+        "",
+        f"源文件 `{rel(src)}`，**{total:,} 行**，"
+        f"覆盖 **{len(orgs_in_data)} 个组织 / {len(meas_in_data)} 个指标 / {series:,} 条序列**"
+        f"（组织 × 机组 × 指标），期间 **{t0} ~ {t1}**。",
+        "",
+        "> 这是**太极系统每日指标的真实导出**，不是设计文档。"
+        "它能回答的是「某个厂站某个指标现场到底有没有日值」。"
+        "组织中文名来自组织表，指标中文名来自指标字典。",
+        "",
+        "## 产物怎么用",
+        "",
+        "| 文件 | 用途 |",
+        "| --- | --- |",
+    ]
+    if has_db:
+        lines.append(f"| `{payload}/日指标.sqlite` | **主产物**。组织 / 指标维表 + 日指标事实表 + 覆盖表 + `v_日指标` 视图。"
+                     "AI 查数一律走 SQL，见下方表结构和范例 |")
+    lines += [
+        f"| `{payload}/覆盖清单.csv` | 一行一个（组织 × 机组 × 指标），共 {series:,} 行，可直接发给现场核对 |",
+        f"| `{manifest_path.name}` | 就是本文件，轻量摘要，**预览请点这里** |",
+    ]
+    if unmatched_orgs:
+        lines.append(f"| `{payload}/未匹配组织.csv` | 组织表里查不到的 {len(unmatched_orgs)} 个编码 |")
+    if unmatched_meas:
+        lines.append(f"| `{payload}/未匹配指标.csv` | 指标字典里查不到的 {len(unmatched_meas)} 个编码 |")
+    lines += [
+        "",
+        f"正文都在 [`{payload}/`]({md_link('./' + payload)}) 下。",
+        "**不要把原始导出文件或 `日指标` 事实表整表读进上下文**"
+        f"（{total:,} 行），用 SQL 取回需要的几十行。",
+        "",
+    ]
+    if has_db:
+        lines += [
+            "## 表结构（写 SQL 前看这里就够）",
+            "",
+            "```",
+            f'sqlite3 "{db_rel}"',
+            "```",
+            "",
+            "| 表 / 视图 | 说明 |",
+            "| --- | --- |",
+            "| `组织` | 组织维表。已按组织表补齐全称 / 简称 / 集控 / 层级。含字典里有但本次导出没有的组织 |",
+            "| `指标` | 指标维表。已按指标字典补齐中文名 / 单位。含字典里有但本次导出没有的指标 |",
+            f"| `日指标` | 事实表，一行一个日值（{total:,} 行）。`日期` 为 `YYYY-MM-DD`，`数值` 空值存 NULL |",
+            f"| `覆盖` | 一行一个（组织 × 机组 × 指标），共 {series:,} 行，带记录数 / 完整率 / 空值数 |",
+            "| `v_日指标` | `日指标` 左连组织、指标，**带中文名，日常查询首选** |",
+            "| `元信息` | 源文件、指纹、列映射、转换时间 |",
+            "",
+            "粒度是（组织 × 机组 × 指标 × 日）。查厂站日值时加上"
+            " `机组编码 = '-1'`（资料未写明 `-1` 的含义，[推断]为厂级汇总，待现场确认）。",
+            "",
+        ]
+    lines += [
+        "## 覆盖情况",
+        "",
+        f"本次导出出现 **{len(orgs_in_data)}** 个组织、**{len(meas_in_data)}** 个指标；"
+        f"组织表 {len(orgs)} 条、指标字典 {len(measures)} 条。",
+        f"序列里厂级（机组编码为 `-1` / 空 / `0`）{len(plant):,} 条，带具体机组编码 {len(unit):,} 条。",
+        "",
+        "### 按组织",
+        "",
+        "| 组织 | 序列数 |",
+        "| --- | ---: |",
+    ]
+    for name, cnt in by_org.most_common():
+        lines.append(f"| {name} | {cnt:,} |")
+    lines += [
+        "",
+        "### 按指标",
+        "",
+        "| 编码 | 名称 | 单位 | 序列数 |",
+        "| --- | --- | --- | ---: |",
+    ]
+    for (code, name, unit), cnt in by_meas.most_common():
+        lines.append(f"| `{code}` | {name} | {unit or '—'} | {cnt:,} |")
+
+    if dict_only_orgs:
+        lines += [
+            "",
+            "### 组织表有、本次导出没有",
+            "",
+            "| 编码 | 简称 | 层级 | 已删除 | 全称 |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        for r in dict_only_orgs:
+            lines.append(f"| `{r['组织编码']}` | {r.get('组织简称') or '—'} | {r.get('层级') or '—'} "
+                         f"| {r.get('已删除') or '—'} | {r.get('组织全称') or '—'} |")
+
+    lines += [
+        "",
+        "## 数据质量体检",
+        "",
+        "| 检查项 | 结果 |",
+        "| --- | --- |",
+        f"| 总行数 | {total:,} |",
+        f"| 期间解析失败 | {issues['期间解析失败']:,} 行 |",
+        f"| 组织编码为空 | {issues['空组织']:,} 行 |",
+        f"| 指标编码为空 | {issues['空指标']:,} 行 |",
+    ]
+    if dupes is not None:
+        lines.append(f"| 同组织同机组同指标同日重复 | {dupes:,} 组 |")
+    lines += [
+        f"| 组织表未命中 | {len(unmatched_orgs):,} 个编码 |",
+        f"| 指标字典未命中 | {len(unmatched_meas):,} 个编码 |",
+        f"| 空值行 | {empty_rows:,}（{round(empty_rows * 100 / total, 1) if total else 0}%） |",
+        f"| 全程无有效数值的序列 | {len(empty_all):,} 条 |",
+        f"| 日历完整率 < 95% 的序列 | {len(low):,} 条（完整率 = 记录数 / 该序列首末日之间的日历天数） |",
+        f"| 全程恒定不变的序列 | {const:,} 条（有数值且值域为单点） |",
+        "",
+        "## 转换口径与溯源",
+        "",
+        "| 项 | 值 |",
+        "| --- | --- |",
+        f"| 源文件 | `{rel(src)}`（{total:,} 行，编码 {issues['编码']}） |",
+        f"| 列映射 | 期间=`{dialect['期间列']}`、组织=`{dialect['组织列']}`、"
+        f"指标=`{dialect['指标列']}`、数值=`{dialect['数值列']}`"
+        + (f"、机组=`{dialect['机组列']}`" if dialect.get("机组列") else "")
+        + (f"，可选列 {'、'.join(f'{k}=`{v}`' for k, v in dialect['可选列'].items())}"
+           if dialect.get("可选列") else "") + " |",
+        f"| 期间格式 | `{issues['期间格式']}` |",
+        "| 组织表 | " + "；".join(f"`{s}`" for s in org_sources or ["（无）"]) + " |",
+        "| 指标字典 | " + "；".join(f"`{s}`" for s in meas_sources or ["（无）"]) + " |",
+        "",
+        "## 已知局限与待确认（重要）",
+        "",
+        "- 脚本只做**格式归一 + 字典对齐**，不做单位换算、不剔异常值、不补缺测。",
+        "- 「完整率」按该序列自己的首末日之间的日历天数算，**是统计口径，不是现场承诺的报送频率**。",
+        "- 空值行（`measure_value` 为空）照样入库，`数值` 存 NULL。空值 ≠ 缺行：前者是导出来了但没填数，后者是这一天根本没有这一行。",
+        "- 组织中文名来自组织表、指标中文名来自指标字典，**字典本身未经现场确认**。",
+        "- `机组编码 = -1` 的含义资料里没有说明，脚本原样保留。写进正式文档前要向现场确认是不是厂级汇总。",
+        "- 检修起止日期、延期原因这类指标在字典里是日期/文本，本次导出的 `measure_value` 若全空，说明**指标定义在、值不在**，不要当成「现场没有这个指标」。",
+        "",
+    ]
+    if has_db:
+        lines += [
+            "## SQL 范例",
+            "",
+            "```bash",
+            "# 1. 某厂站厂级日发电量（-1 的含义待确认）",
+            f'sqlite3 "{db_rel}" \\',
+            "  \"SELECT 日期,组织简称,数值 FROM v_日指标",
+            "   WHERE 指标编码='DL01001' AND 机组编码='-1' AND 组织简称 LIKE '%棉花滩%'",
+            "   ORDER BY 日期;\"",
+            "",
+            "# 2. 某个指标各厂覆盖：有没有数、空值多不多",
+            f'sqlite3 "{db_rel}" \\',
+            '  "SELECT 组织简称,机组编码,记录数,\\"完整率%\\",空值数,最小值,最大值',
+            "   FROM 覆盖 WHERE 指标编码='DL01001' ORDER BY 组织简称;\"",
+            "",
+            "# 3. 全程没有有效数值的指标（定义在、值不在）",
+            f'sqlite3 "{db_rel}" \\',
+            '  "SELECT 指标编码,指标全称,sum(记录数) 行数,sum(空值数) 空值',
+            "   FROM 覆盖 GROUP BY 1,2 HAVING sum(空值数)=sum(记录数) ORDER BY 1;\"",
+            "",
+            "# 4. 组织表有但本次导出没有的厂站",
+            f'sqlite3 "{db_rel}" \\',
+            '  "SELECT 组织编码,组织简称,层级,已删除 FROM 组织',
+            "   WHERE 组织编码 NOT IN (SELECT DISTINCT 组织编码 FROM 日指标);\"",
+            "",
+            "# 5. 某日各厂发电量横比",
+            f'sqlite3 "{db_rel}" \\',
+            "  \"SELECT 组织简称,数值 FROM v_日指标",
+            "   WHERE 指标编码='DL01001' AND 机组编码='-1' AND 日期='2025-08-01'",
+            "   ORDER BY 数值 DESC;\"",
+            "```",
+            "",
+        ]
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def process_product_day(src: Path, dialect: dict, force: bool, dry_run: bool,
+                        want_sqlite: bool) -> bool:
+    size = src.stat().st_size / (1 << 20)
+    log(f"\n▶ {rel(src)}　{size:,.1f} MB")
+    log(f"    形态=日指标 期间={dialect['期间列']}（{dialect['期间格式']}）"
+        f" 组织={dialect['组织列']} 指标={dialect['指标列']} 数值={dialect['数值列']}"
+        + (f" 机组={dialect['机组列']}" if dialect.get("机组列") else "")
+        + (f" 可选={'、'.join(dialect['可选列'])}" if dialect.get("可选列") else ""))
     if dry_run:
         return False
 
-    digest = sha256_of([p for p, _ in files])
-    out_dir = CONVERTED / slugify(src_dir.name)
-    manifest = out_dir / "_manifest.md"
-    if not force and manifest.is_file():
+    digest = sha256_of([src])
+    manifest, out_dir = split_paths(src)
+    if not force and manifest.is_file() and out_dir.is_dir():
+        for line in manifest.read_text(encoding="utf-8").splitlines()[:16]:
+            if line.startswith("source_sha256:") and line.split(":", 1)[1].strip() == digest:
+                log("  ✓ 内容未变，跳过（--force 可强制重建）")
+                return False
+
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+
+    conn = None
+    if want_sqlite:
+        conn = sqlite3.connect(out_dir / "日指标.sqlite")
+        conn.execute("PRAGMA journal_mode=OFF")
+        conn.execute("PRAGMA synchronous=OFF")
+        conn.execute(f'CREATE TABLE 日指标 ({", ".join(chr(34)+c+chr(34) for c in DAY_FACT_COLUMNS)})')
+        conn.execute(f'CREATE TABLE 组织 ({", ".join(chr(34)+c+chr(34) for c in ORG_DICT_FIELDS)})')
+        conn.execute(f'CREATE TABLE 指标 ({", ".join(chr(34)+c+chr(34) for c in MEASURE_DICT_FIELDS)})')
+        conn.execute(f'CREATE TABLE 覆盖 ({", ".join(chr(34)+c+chr(34) for c in COVER_COLUMNS)})')
+        conn.execute("CREATE TABLE 元信息 (键 TEXT, 值 TEXT)")
+
+    log("  · 扫描中…")
+    stats, issues = scan_product_day(src, dialect, conn)
+    if not stats:
+        log("  ⚠ 一行数据都没解析出来，产物未生成")
+        if conn:
+            conn.close()
+        shutil.rmtree(out_dir)
+        return False
+
+    org_dict, org_sources = load_org_dict()
+    meas_dict, meas_sources = load_measure_dict()
+    orgs = build_org_dim(stats, org_dict)
+    measures = build_measure_dim(stats, meas_dict)
+    cover = build_cover(stats, org_dict, meas_dict)
+
+    seen_orgs = {org for org, _, _ in stats}
+    seen_meas = {meas for _, _, meas in stats}
+    unmatched_orgs = sorted(c for c in seen_orgs if c and c not in org_dict)
+    unmatched_meas = sorted(c for c in seen_meas if c and c not in meas_dict)
+    dict_only_orgs = [r for r in orgs if r["组织编码"] not in seen_orgs]
+
+    write_csv(out_dir / "覆盖清单.csv", COVER_COLUMNS, cover)
+    if unmatched_orgs:
+        write_csv(out_dir / "未匹配组织.csv", ORG_DICT_FIELDS,
+                  [r for r in orgs if r["组织编码"] in unmatched_orgs])
+    if unmatched_meas:
+        write_csv(out_dir / "未匹配指标.csv", MEASURE_DICT_FIELDS,
+                  [r for r in measures if r["指标编码"] in unmatched_meas])
+
+    dupes = None
+    if conn is not None:
+        meta = [("源文件", rel(src)), ("源文件指纹", digest),
+                ("转换脚本", "scripts/realdata.py"),
+                ("形态", "product_day"),
+                ("转换时间", dt.datetime.now().astimezone().isoformat(timespec="seconds")),
+                ("总行数", str(issues["总行数"])),
+                ("组织数", str(len(seen_orgs))),
+                ("指标数", str(len(seen_meas))),
+                ("序列数", str(len(cover))),
+                ("组织表", "；".join(org_sources)),
+                ("指标字典", "；".join(meas_sources)),
+                ("列映射",
+                 f"期间={dialect['期间列']},组织={dialect['组织列']},"
+                 f"指标={dialect['指标列']},数值={dialect['数值列']}"
+                 + (f",机组={dialect['机组列']}" if dialect.get("机组列") else ""))]
+        dupes = finish_product_sqlite(conn, orgs, measures, cover, meta)
+
+    write_product_manifest(manifest, out_dir, src, digest, dialect, issues, cover,
+                           orgs, measures, org_sources, meas_sources,
+                           unmatched_orgs, unmatched_meas, dict_only_orgs, dupes, want_sqlite)
+    log(f"  ✓ {issues['总行数']:,} 行 / {len(seen_orgs)} 个组织 / {len(seen_meas)} 个指标"
+        f" / {len(cover):,} 条序列 → {rel(manifest)}"
+        + (f"　未匹配组织 {len(unmatched_orgs)}" if unmatched_orgs else "")
+        + (f"　未匹配指标 {len(unmatched_meas)}" if unmatched_meas else ""))
+    return True
+
+
+def process(src: Path, force: bool, dry_run: bool, want_sqlite: bool,
+            time_format: str | None) -> bool:
+    """一份导出文件 → 一个库。各表之间互相独立，不跨文件合并。"""
+    d = detect(src)
+    if not d:
+        log(f"⚠ {rel(src)}：不是现场数据（表头要能认出 测点/时间/数值，或 期间/组织/指标/数值）")
+        return False
+    if d.get("形态") == "product_day":
+        return process_product_day(src, d, force, dry_run, want_sqlite)
+    files = [(src, d)]
+
+    size = src.stat().st_size / (1 << 20)
+    log(f"\n▶ {rel(src)}　{size:,.1f} MB")
+    log(f"    测点={d['测点列']} 时间={d['时间列']}（{d['时间格式']}） 数值={d['数值列']}"
+        + (f" 可选={'、'.join(d['可选列'])}" if d["可选列"] else ""))
+    if dry_run:
+        return False
+
+    digest = sha256_of([src])
+    manifest, out_dir = split_paths(src)
+    if not force and manifest.is_file() and out_dir.is_dir():
         for line in manifest.read_text(encoding="utf-8").splitlines()[:14]:
             if line.startswith("source_sha256:") and line.split(":", 1)[1].strip() == digest:
                 log("  ✓ 内容未变，跳过（--force 可强制重建）")
@@ -924,7 +1604,7 @@ def process(src_dir: Path, force: bool, dry_run: bool, want_sqlite: bool,
     dupes, dropped = None, []
     if conn is not None:
         dropped = prune_constant_columns(conn, issues)
-        meta = [("源目录", rel(src_dir)), ("源文件指纹", digest),
+        meta = [("源文件", rel(src)), ("源文件指纹", digest),
                 ("转换脚本", "scripts/realdata.py"),
                 ("转换时间", dt.datetime.now().astimezone().isoformat(timespec="seconds")),
                 ("总行数", str(issues["总行数"])), ("测点数", str(len(dim))),
@@ -939,9 +1619,9 @@ def process(src_dir: Path, force: bool, dry_run: bool, want_sqlite: bool,
         kept = [c for c in OPTIONAL_COLUMNS if c not in {col for col, _ in dropped}]
         dupes = finish_sqlite(conn, dim, days, meta, kept)
 
-    write_manifest(out_dir, src_dir.name, src_dir, digest, dim, issues, dict_sources,
+    write_manifest(manifest, out_dir, src.stem, src, digest, dim, issues, dict_sources,
                    dupes, want_sqlite, len(unmatched), dropped)
-    log(f"  ✓ {issues['总行数']:,} 行 / {len(dim):,} 个测点 → {rel(out_dir)}/"
+    log(f"  ✓ {issues['总行数']:,} 行 / {len(dim):,} 个测点 → {rel(manifest)}"
         + (f"　字典未命中 {len(unmatched)} 个" if unmatched else ""))
     return True
 
@@ -950,7 +1630,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description="现场实测数据归一：时序导出 → 可 SQL 检索的 sqlite + 覆盖清单 + 台账")
     ap.add_argument("paths", nargs="*",
-                    help="数据目录（给文件也行，按其所在目录算一个数据集）；省略则自动发现 input/raw/ 下的数据集")
+                    help="导出文件或其所在目录；省略则自动发现 input/raw/ 子目录下的数据文件")
     ap.add_argument("--force", action="store_true", help="忽略缓存强制重建")
     ap.add_argument("--dry-run", action="store_true", help="只打印识别结果和计划")
     ap.add_argument("--no-sqlite", action="store_true", help="不产出 sqlite，只出 csv 和台账")
@@ -958,26 +1638,31 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.paths:
-        dirs = []
+        targets: list[Path] = []
         for p in args.paths:
             path = Path(p) if Path(p).is_absolute() else REPO / p
             if path.is_file():
-                path = path.parent
-            if not path.is_dir():
+                found = [path]
+            elif path.is_dir():
+                # 给目录就把里面认得出来的都处理掉，一份文件一个库
+                found = [f for f in sorted(path.rglob("*"))
+                         if f.is_file() and not f.name.startswith(".") and detect(f)]
+                if not found:
+                    log(f"⚠ {rel(path)}：没有识别到实测数据文件")
+            else:
                 log(f"找不到：{p}")
                 return 1
-            if path not in dirs:
-                dirs.append(path)
+            targets.extend(f for f in found if f not in targets)
     else:
-        dirs = collect_realdata_dirs()
-        if not dirs:
-            log("input/raw/ 下没有发现现场实测数据目录。把导出文件放进 input/raw/ 的一个子目录"
+        targets = collect_realdata_files()
+        if not targets:
+            log("input/raw/ 下没有发现现场实测数据。把导出文件放进 input/raw/ 的一个子目录"
                 "（如 input/raw/现场数据/）再跑一次。")
             return 0
 
     CONVERTED.mkdir(parents=True, exist_ok=True)
-    changed = sum(process(d, args.force, args.dry_run, not args.no_sqlite, args.time_format)
-                  for d in dirs)
+    changed = sum(process(f, args.force, args.dry_run, not args.no_sqlite, args.time_format)
+                  for f in targets)
     if not args.dry_run:
         log(f"\n完成：{changed} 个数据集有更新。")
     return 0

@@ -27,15 +27,21 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 
 产物写入 `input/converted/`，台账写入 `input/INDEX.md`。
 
+**产物落点镜像 `input/raw/`**（规则见 `AGENTS.md` 的「产物落点」一节、实现见 `scripts/layout.py`）：
+一源一产物直接落在镜像目录，一源多产物的正文收进 `SplittingObject/<文件名>/`、
+摘要 `_manifest_<文件名>.md` 留在镜像目录。**报告产物路径时按实际路径写，不要按 converted 根下平铺来说。**
+
 ### HTML 单文件原型（重要）
 
 `.html` / `.htm` 在本工作空间里是 **PM 之间传递可点击原型的载体**，不是「再转一版 Markdown」的文档：
 
 - **不要**期望 pandoc 把页面交互转成可读需求正文；交互以 HTML 预览为准。
-- 转换结果是目录，例如 `input/converted/SC-02-发电计划原型/`：
-  - `*.html` — 可直接预览（看板输入区按网页打开；本地也可双击）
-  - `_manifest.md` — 溯源 frontmatter + 体积/编码 + **可访问性与安全校验表** + 标题结构线索
-- AI 默认读 `_manifest.md` 做台账与摘要；需要点评交互时再结合预览，**不要把整页 HTML 当 PRD 正文抄进去**。
+- 转换结果是「摘要 + 正文目录」，例如 `input/raw/SC-02_发电计划原型.html` →
+  - `input/converted/_manifest_SC-02_发电计划原型.md` — 溯源 frontmatter + 体积/编码 +
+    **可访问性与安全校验表** + 标题结构线索
+  - `input/converted/SplittingObject/SC-02_发电计划原型/*.html` — 可直接预览
+    （看板输入区按网页打开；本地也可双击）
+- AI 默认读 `_manifest_<名>.md` 做台账与摘要；需要点评交互时再结合预览，**不要把整页 HTML 当 PRD 正文抄进去**。
 - 正式、可维护的多页原型仍走阶段四 `prototypes/`（Axhub Make）；raw 里的 HTML 只是输入资料。
 
 看脚本输出，这些情况必须处理，不要转完就当资料齐了：

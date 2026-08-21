@@ -146,13 +146,35 @@ def _put_file(url: str, path: Path, timeout: int = 300) -> None:
         conn.close()
 
 
-def _download(url: str, timeout: int = 300) -> bytes:
-    req = urllib.request.Request(url, headers={"Accept": "*/*"})
+def _download(url: str, timeout: int = 300, retries: int = 5) -> bytes:
+    """下载结果 zip。大文件偶发 SSL EOF，加重试；仍失败再退到 curl。"""
+    import subprocess
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        req = urllib.request.Request(url, headers={"Accept": "*/*", "Connection": "close"})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read()
+        except (urllib.error.HTTPError, urllib.error.URLError, TimeoutError, OSError) as exc:
+            last_exc = exc
+            if attempt < retries:
+                time.sleep(min(2 ** attempt, 20))
+                continue
+    # urllib 连续失败：curl 对部分 CDN/SSL 更稳
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read()
-    except (urllib.error.HTTPError, urllib.error.URLError) as exc:
-        raise MineruError(f"下载结果 zip 失败：{exc}") from exc
+        proc = subprocess.run(
+            ["curl", "-fsSL", "--retry", "3", "--retry-delay", "2",
+             "--connect-timeout", "30", "--max-time", str(timeout), url],
+            capture_output=True, timeout=timeout + 30, check=False,
+        )
+        if proc.returncode == 0 and proc.stdout:
+            return proc.stdout
+        detail = (proc.stderr or b"").decode("utf-8", "replace")[:300]
+        raise MineruError(f"下载结果 zip 失败（urllib: {last_exc}；curl: {detail or proc.returncode}）")
+    except FileNotFoundError as exc:
+        raise MineruError(f"下载结果 zip 失败：{last_exc}") from last_exc
+    except subprocess.TimeoutExpired as exc:
+        raise MineruError(f"下载结果 zip 超时（urllib: {last_exc}；curl 也超时）") from exc
 
 
 # --------------------------------------------------------------------------- #

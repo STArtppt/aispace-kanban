@@ -18,6 +18,10 @@ python3 scripts/ingest.py                             # 转换
   评审时被质疑「这条需求哪来的」，答案必须能落到这里的某个文件。
 - **`converted/`** — 脚本产物，**不要手改**（重跑会覆盖）。发现转换质量有问题，
   改脚本或在 `output/analysis/` 里记录修正，不要改产物。
+  **目录结构镜像 `raw/`**：你在 `raw/` 里怎么分目录，产物就怎么分，删一批资料的产物只要删对应目录。
+  一份源文件拆出多个产物时（xlsx 每个 sheet 一个 csv），正文收进 `SplittingObject/<文件名>/`，
+  摘要 `_manifest_<文件名>.md` 留在外面；整个目录汇总成一份的（点表）收进 `MergedObject/`。
+  规则写在 `scripts/layout.py`。
 - **`assets/`** — 图片资料，按来源分目录：`assets/<文档名>/` 是从那份文档里抽出来的图，
   `assets/未分类/` 是直接放进 `raw/` 的单张图片（附 `_manifest.md` 记来源）。
   Claude 用 Read 工具可以直接看图，流程图、界面截图这类信息量很大的资料别漏掉。
@@ -26,15 +30,16 @@ python3 scripts/ingest.py                             # 转换
 
 | 输入 | 产物 | 工具 |
 | --- | --- | --- |
-| `.docx` `.odt` `.rtf` `.html` `.epub` | 一个 `.md`，图片抽到 `assets/<名字>/` | pandoc |
+| `.docx` `.odt` `.rtf` `.epub` | 一个 `.md`，图片抽到 `assets/<名字>/` | pandoc |
 | `.pdf` `.pptx` | 一个 `.md`，图片抽到 `assets/<名字>/` | **MinerU 在线 API** |
 | `.msg` | 一个 `.md` | markitdown |
-| `.xlsx` `.xlsm` | 一个目录：每个 sheet 一个 `.csv` + `_manifest.md` 导航 | 脚本自带解析 |
+| `.xlsx` `.xlsm` `.xls` | 每个 sheet 一个 `.csv`（进 `SplittingObject/`）+ `_manifest_<名>.md` 导航 | 脚本自带解析 |
+| `.html` `.htm` | 单文件可点击原型：HTML 原件（进 `SplittingObject/`）+ `_manifest_<名>.md` 校验摘要 | 脚本自带解析 |
 | `.md` `.csv` `.json` `.txt` `.yaml` `.xml` | 原样拷贝 | — |
 | `.png` `.jpg` `.gif` `.webp` | 拷到 `assets/未分类/` | — |
 
-**老格式不支持**：`.doc` `.xls` `.ppt` `.wps` `.et` `.dps` 会被跳过并在台账里标记，
-请先用 Office / WPS 另存为新格式。
+**老格式不支持**：`.doc` `.ppt` `.wps` `.et` `.dps` 会被跳过并在台账里标记，
+请先用 Office / WPS 另存为新格式（`.xls` 是例外，脚本自带 BIFF8 解析器）。
 
 ## PDF / PPTX 走 MinerU
 
