@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Papa from 'papaparse';
 import {
   ArrowLeftToLine,
@@ -8,7 +8,10 @@ import {
   ChevronRight,
   Expand,
   FolderOpen,
+  Loader2,
+  RefreshCw,
   SquareArrowOutUpRight,
+  Star,
   X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -25,6 +28,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
 import { useFileManagerName } from '@/hooks/useFileManager';
+import { type IngestControl } from '@/hooks/useIngestJob';
+import { useOutputPins } from '@/hooks/useOutputPins';
 import {
   api,
   type AssetGroup,
@@ -87,6 +92,9 @@ function SourceBar({
   sourceState,
   projectId,
   path,
+  canIngest,
+  ingest,
+  onReconverted,
 }: {
   meta: [string, string][];
   /** 缺省 = 服务端没给（旧进程）或产物没记 source：不显示任何溯源状态 */
@@ -94,19 +102,25 @@ function SourceBar({
   projectId: string;
   /** 产物自身的相对路径，校验接口按它反查 frontmatter 里的来源 */
   path: string;
+  /** 工作空间没有 scripts/ingest.py 时不给「重新转换」，只留校验 */
+  canIngest?: boolean;
+  /** 缺省 = 上层没接转换能力：退回改动前的行为，只有「校验原件」 */
+  ingest?: IngestControl;
+  /** 重转完成后通知上层重读正文（产物已经被脚本改写了） */
+  onReconverted?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<SourceVerification | null>(null);
   const [verifyError, setVerifyError] = useState('');
-  if (!meta.length) return null;
-  const warning = meta.find(([k]) => k === 'warning');
-  const source = meta.find(([k]) => k === 'source');
-  // 扫描给的 stale 是 mtime 推的、会误报，哈希算过就以哈希为准；
-  // unknown 说明压根比不了，那就别拿它盖掉扫描的结论
-  const state = result && result.state !== 'unknown' ? result.state : sourceState;
+  /**
+   * 点「重新转换」那一刻的任务时间戳，null = 没在等。
+   * 记时间戳而不是布尔量：上一轮任务可能已经是 done 停在那儿，
+   * 只看 status 会把「点击前的旧结果」当成本轮跑完。
+   */
+  const [waitFrom, setWaitFrom] = useState<string | null>(null);
 
-  const verify = async () => {
+  const verify = useCallback(async () => {
     setChecking(true);
     setVerifyError('');
     try {
@@ -116,6 +130,38 @@ function SourceBar({
     } finally {
       setChecking(false);
     }
+  }, [projectId, path]);
+
+  // 重转跑完了就自己校验一次：产物刚被脚本改写，扫描给的 stale 已经过期，
+  // 这时候的哈希结论才是这份产物现在的真实状态（省得人再点一次「校验原件」）。
+  const jobStatus = ingest?.job?.status;
+  const jobStartedAt = ingest?.job?.startedAt || '';
+  useEffect(() => {
+    if (waitFrom === null) return;
+    // 任务还没换一轮（起任务被 409 挡下等），或者新任务还在跑：继续等
+    if (!jobStatus || jobStatus === 'running' || jobStartedAt === waitFrom) return;
+    setWaitFrom(null);
+    if (jobStatus === 'done') {
+      onReconverted?.();
+      void verify();
+    }
+  }, [waitFrom, jobStatus, jobStartedAt, verify, onReconverted]);
+
+  if (!meta.length) return null;
+  const warning = meta.find(([k]) => k === 'warning');
+  const source = meta.find(([k]) => k === 'source');
+  const sourceRel = (source?.[1] || '').trim();
+  // 扫描给的 stale 是 mtime 推的、会误报，哈希算过就以哈希为准；
+  // unknown 说明压根比不了，那就别拿它盖掉扫描的结论
+  const state = result && result.state !== 'unknown' ? result.state : sourceState;
+  // 原件动过才给重转：原件已不在（missing）重转不了，没动过重跑一遍也是白跑
+  const canReconvert = Boolean(canIngest && ingest && sourceRel) && state === 'stale';
+  const reconverting = waitFrom !== null && ingest?.running === true;
+
+  const reconvert = () => {
+    if (!ingest || !sourceRel) return;
+    setWaitFrom(jobStartedAt);
+    void ingest.start(sourceRel);
   };
 
   return (
@@ -160,15 +206,42 @@ function SourceBar({
               <Button type="button" variant="outline" size="sm" onClick={verify} disabled={checking}>
                 {checking ? '校验中…' : '校验原件'}
               </Button>
+              {/* 闭环的那一步：确认原件动过之后，就地重跑一次转换，不用回列表找这份资料。
+                  ingest.py 按 sha256 幂等，对着原件再跑一次就会重出这份产物 */}
+              {canReconvert ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={reconvert}
+                  disabled={ingest?.running || checking}
+                >
+                  {reconverting ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" />
+                      重新转换中…
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="size-3.5" />
+                      重新转换
+                    </>
+                  )}
+                </Button>
+              ) : null}
               {/* 列表上的「动过」只是 mtime 说的话（网盘同步、git checkout 都会动它），
                   所以那句措辞不敢说内容变了；这个按钮重算 sha256，才敢下「内容确实变了」的结论 */}
               <span
                 className={cn(
                   'min-w-0 flex-1 text-[11px]',
-                  result?.state === 'stale' ? 'text-destructive' : 'text-muted-foreground',
+                  (result?.state === 'stale' && !reconverting) || ingest?.error
+                    ? 'text-destructive'
+                    : 'text-muted-foreground',
                 )}
               >
                 {verifyError ||
+                  (reconverting
+                    ? ingest?.job?.message || '正在重新转换…'
+                    : ingest?.error) ||
                   (result
                     ? result.state === 'unknown'
                       ? `${VERIFY_TEXT.unknown}：${result.reason || '缺少可比对的信息'}`
@@ -366,7 +439,7 @@ function cacheKey(projectId: string, path: string) {
  * - 无缓存：不立刻亮「读取中」；超过短延迟仍未返回才提示
  * - 切换 path 时保留上一份正文直到新正文到位（或延迟后仍无内容才显示读取中）
  */
-function useFileContent(projectId: string, path: string | null) {
+function useFileContent(projectId: string, path: string | null, refreshKey = 0) {
   const [content, setContent] = useState('');
   /** 当前 content 对应的 path；与请求 path 一致才算已对齐 */
   const [resolvedPath, setResolvedPath] = useState<string | null>(null);
@@ -429,7 +502,8 @@ function useFileContent(projectId: string, path: string | null) {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [projectId, path]);
+    // refreshKey 变化 = 这份文件刚被工作空间脚本改写过，缓存里的正文已经不作数
+  }, [projectId, path, refreshKey]);
 
   const aligned = path !== null && resolvedPath === path;
   // 有对齐正文时绝不因后台刷新闪 loading；仅无正文且已过延迟才提示
@@ -526,6 +600,8 @@ export function Reader({
   onClose,
   expanded = false,
   onToggleExpand,
+  canIngest,
+  ingest,
 }: {
   projectId: string;
   item: FileItem;
@@ -534,8 +610,16 @@ export function Reader({
   expanded?: boolean;
   /** 宽屏提供；窄屏预览本就是全屏，不传则不显示展开按钮 */
   onToggleExpand?: () => void;
+  /** 工作空间有 scripts/ingest.py 时才给「重新转换」 */
+  canIngest?: boolean;
+  /** 与待转换列表共用的转换任务；不传则溯源栏只有「校验原件」 */
+  ingest?: IngestControl;
 }) {
   const fileManager = useFileManagerName();
+  // 收藏只对产出文档有意义：会置顶的那份清单只有「产出文档」视图有
+  const canPin = item.path.startsWith('output/');
+  const { pins, togglePin } = useOutputPins(projectId);
+  const pinned = pins.has(item.path);
   const sheets = useMemo(() => {
     if (isConverted(item) && item.sheets?.length) {
       return item.sheets.map((s) => ({ path: s.path, name: s.name, size: s.size }));
@@ -568,13 +652,21 @@ export function Reader({
         ? item.path
         : null;
 
+  // 重转会就地改写这份产物，正文和 frontmatter 都得重读一次
+  const [reconvertedAt, setReconvertedAt] = useState(0);
+  const onReconverted = useCallback(() => setReconvertedAt(Date.now()), []);
+  useEffect(() => {
+    setReconvertedAt(0);
+  }, [item.path]);
+
   // 表格内容由 TableReader 自行拉取；此处只负责 md / 纯文本
-  const { content, loading, error } = useFileContent(projectId, contentPath);
+  const { content, loading, error } = useFileContent(projectId, contentPath, reconvertedAt);
 
   // 目录型表格包 / html 原型：manifest 做摘要、SQL 指南、校验说明
   const { content: manifestContent, loading: manifestLoading, error: manifestError } = useFileContent(
     projectId,
     (multiSheet || mode === 'html') && isDir ? manifestPath : null,
+    reconvertedAt,
   );
 
   const { meta, body } = useMemo(() => {
@@ -646,6 +738,18 @@ export function Reader({
               )}
             </Button>
           ) : null}
+          {canPin ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              title={pinned ? '取消收藏' : '收藏置顶'}
+              aria-label={pinned ? '取消收藏' : '收藏置顶'}
+              aria-pressed={pinned}
+              onClick={() => togglePin(item.path)}
+            >
+              <Star className={cn('size-4', pinned && 'fill-current')} />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"
@@ -685,6 +789,9 @@ export function Reader({
                   sourceState={sourceState}
                   projectId={projectId}
                   path={item.path}
+                  canIngest={canIngest}
+                  ingest={ingest}
+                  onReconverted={onReconverted}
                 />
                 <Markdown
                   key={item.path}
@@ -740,6 +847,9 @@ export function Reader({
                   sourceState={sourceState}
                   projectId={projectId}
                   path={item.path}
+                  canIngest={canIngest}
+                  ingest={ingest}
+                  onReconverted={onReconverted}
                 />
                     {sqlitePath ? (
                       <p className="mb-4 rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-[11px] text-muted-foreground">
@@ -817,6 +927,9 @@ export function Reader({
                   sourceState={sourceState}
                   projectId={projectId}
                   path={item.path}
+                  canIngest={canIngest}
+                  ingest={ingest}
+                  onReconverted={onReconverted}
                 />
               <Tabs
                 value={htmlTab}

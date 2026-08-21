@@ -1,21 +1,25 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowUpDown,
   Copy,
   FileText,
+  FolderOpen,
   MonitorPlay,
   ScrollText,
   Search,
   Stamp,
+  Star,
+  StarOff,
   type LucideIcon,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
-import { EmptyState, Row, RowActions, SectionTitle, Stat, writeClipboard } from '@/components/Primitives';
-import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { EmptyState, Row, RowActions, Stat, writeClipboard } from '@/components/Primitives';
 import { useFileManagerName } from '@/hooks/useFileManager';
-import type { FileItem, Scan } from '@/lib/api';
+import { useOutputPins } from '@/hooks/useOutputPins';
+import { api, type FileItem, type Scan } from '@/lib/api';
 import { datePrefix, formatRelative, formatWords, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -30,6 +34,8 @@ const GROUPS = [
   { key: 'decisions' as const, title: '决策记录', hint: '一个决策一个文件，只追加不改历史', icon: Stamp },
 ];
 
+type GroupKey = (typeof GROUPS)[number]['key'];
+
 const SORTS = {
   name: '按名称',
   mtimeAsc: '按时间正序',
@@ -39,12 +45,17 @@ const SORTS = {
 type SortKey = keyof typeof SORTS;
 
 const OUTPUT_SORT_KEY = 'aispace-kanban:output-sort';
-/** 列表 / 树形是整个「产出文档」视图共用的偏好，三组一起切 */
-const OUTPUT_VIEW_KEY = 'aispace-kanban:output-view';
+/** 当前停在哪一组：产出多了以后不想每次进来都从头翻 */
+const OUTPUT_TAB_KEY = 'aispace-kanban:output-tab';
 
 function readOutputSort(): SortKey {
   const raw = localStorage.getItem(OUTPUT_SORT_KEY);
   return raw === 'name' || raw === 'mtimeAsc' || raw === 'mtimeDesc' ? raw : 'name';
+}
+
+function readOutputTab(): GroupKey | null {
+  const raw = localStorage.getItem(OUTPUT_TAB_KEY);
+  return GROUPS.some((group) => group.key === raw) ? (raw as GroupKey) : null;
 }
 
 /** 图标选择器：正方形触发器，藏掉默认文案和下拉箭头 */
@@ -84,20 +95,25 @@ function annotationLabel(item: FileItem): string {
 
 function OutputRow({
   item,
-  indent,
   icon: Icon,
+  pinned,
+  onTogglePin,
+  projectId,
+  fileManager,
   openPath,
   onOpen,
 }: {
   item: FileItem;
-  /** 树形视图里的层级；列表视图不传 */
-  indent?: number;
   icon: LucideIcon;
+  pinned: boolean;
+  onTogglePin: (path: string) => void;
+  projectId: string;
+  fileManager: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
 }) {
   return (
-    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
+    <Row onClick={() => onOpen(item)} active={openPath === item.path}>
       {isPresentable(item) ? (
         <MonitorPlay className="size-4 text-muted-foreground" />
       ) : (
@@ -106,6 +122,9 @@ function OutputRow({
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm">{item.title || item.name}</span>
+          {pinned ? (
+            <Star className="size-3.5 shrink-0 fill-current text-muted-foreground" />
+          ) : null}
           {isPresentable(item) ? (
             <Badge variant="muted" className="shrink-0 text-[10px]">
               可演示
@@ -122,10 +141,22 @@ function OutputRow({
       <RowActions
         actions={[
           {
+            label: pinned ? '取消收藏' : '收藏置顶',
+            icon: pinned ? StarOff : Star,
+            onSelect: () => onTogglePin(item.path),
+          },
+          {
             label: '复制路径',
             icon: Copy,
             onSelect: () => {
               void writeClipboard(markdownLink(item.title || item.name, item.path));
+            },
+          },
+          {
+            label: `在${fileManager}中显示`,
+            icon: FolderOpen,
+            onSelect: () => {
+              void api.reveal(projectId, item.path);
             },
           },
         ]}
@@ -138,166 +169,60 @@ function OutputGroup({
   title,
   hint,
   dir,
-  icon: Icon,
+  icon,
   files,
-  sortKey,
-  onSortChange,
-  viewMode,
-  viewToggle,
+  total,
+  searching,
+  pins,
+  onTogglePin,
   projectId,
+  fileManager,
   openPath,
   onOpen,
 }: {
   title: string;
   hint: string;
-  dir: string;
+  dir: GroupKey;
   icon: LucideIcon;
+  /** 已按收藏置顶 + 搜索过滤 + 排序 */
   files: FileItem[];
-  sortKey: SortKey;
-  onSortChange: (key: SortKey) => void;
-  viewMode: ViewMode;
-  /** 视图开关只挂在本视图的第一个有内容的清单上；不是它时不传 */
-  viewToggle?: ReactNode;
+  /** 过滤前的总数，用来区分「这组本来就空」和「没搜到」 */
+  total: number;
+  searching: boolean;
+  pins: Set<string>;
+  onTogglePin: (path: string) => void;
   projectId: string;
+  fileManager: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
 }) {
-  const [query, setQuery] = useState('');
-  const fileManager = useFileManagerName();
-  const [searchOpen, setSearchOpen] = useState(false);
-  const filtered = useMemo(() => {
-    const list = files.filter((item) => matchOutput(item, query));
-    return list.sort((a, b) => {
-      if (sortKey === 'name') {
-        return (a.title || a.name).localeCompare(b.title || b.name, 'zh');
-      }
-      const cmp = (a.mtime || '').localeCompare(b.mtime || '');
-      return sortKey === 'mtimeAsc' ? cmp : -cmp;
-    });
-  }, [files, query, sortKey]);
-  const searching = query.trim().length > 0;
-  const searchExpanded = searchOpen || searching;
-  const treePathOf = useCallback(
-    (item: FileItem) => {
-      const prefix = `output/${dir}/`;
-      return item.path.startsWith(prefix) ? item.path.slice(prefix.length) : item.name;
-    },
-    [dir],
-  );
-
-  if (!files.length) {
-    return (
-      <section className="flex flex-col gap-2">
-        <SectionTitle count={0}>{title}</SectionTitle>
-        <p className="text-xs text-muted-foreground">{hint}</p>
-        <EmptyState title={`output/${dir}/ 还是空的`} />
-      </section>
-    );
-  }
-
   return (
-    <section className="flex flex-col gap-2">
-      {/* 标题左、排序+搜索右：与输入资料「转换产物」同一行布局 */}
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <div className="min-w-0 shrink">
-          <SectionTitle count={files.length}>{title}</SectionTitle>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {viewToggle}
-          <Select
-            value={sortKey}
-            onValueChange={(value) => {
-              if (value === 'name' || value === 'mtimeAsc' || value === 'mtimeDesc') {
-                onSortChange(value);
-              }
-            }}
-          >
-            <SelectTrigger
-              className={ICON_SELECT_TRIGGER}
-              aria-label={`排序${title}`}
-              title="排序"
-            >
-              <ArrowUpDown
-                className={cn(
-                  'size-3.5',
-                  sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
-                )}
-              />
-            </SelectTrigger>
-            <SelectContent align="end" className="min-w-36 w-max">
-              <SelectItem value="name">{SORTS.name}</SelectItem>
-              <SelectItem value="mtimeAsc">{SORTS.mtimeAsc}</SelectItem>
-              <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
-            </SelectContent>
-          </Select>
-          <div
-            className={cn(
-              'relative h-8 transition-[width] duration-200 ease-out',
-              searchExpanded ? 'w-[12rem] sm:w-[14rem]' : 'w-8',
-            )}
-          >
-            <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
-              <Search className="size-3.5" />
-            </span>
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onFocus={() => setSearchOpen(true)}
-              onBlur={() => setSearchOpen(false)}
-              placeholder={searchExpanded ? '按名称搜索…' : ''}
-              className={cn('h-8 text-xs', searchExpanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
-              aria-label={`搜索${title}`}
-              title="搜索"
-            />
-          </div>
-        </div>
-      </div>
-      {searching ? (
-        <p className="text-xs text-muted-foreground">
-          {filtered.length ? `匹配 ${filtered.length} 项` : `没有匹配的${title}`}
-        </p>
-      ) : (
-        <p className="text-xs text-muted-foreground">{hint}</p>
-      )}
-      {filtered.length && viewMode === 'tree' ? (
-        <FileTree
-          items={filtered}
-          treePathOf={treePathOf}
-          keyOf={(item) => item.path}
-          expandAll={searching}
-          renderDirActions={(dirKey) => (
-            <DirActions
-              projectId={projectId}
-              fileManager={fileManager}
-              dirPath={`output/${dir}/${dirKey}`}
-            />
-          )}
-          renderFile={(item, indent) => (
-            <OutputRow
-              item={item}
-              indent={indent}
-              icon={Icon}
-              openPath={openPath}
-              onOpen={onOpen}
-            />
-          )}
-        />
-      ) : filtered.length ? (
+    <div className="flex flex-col gap-2">
+      <p className="text-xs text-muted-foreground">
+        {searching ? (files.length ? `匹配 ${files.length} 项` : `没有匹配的${title}`) : hint}
+      </p>
+      {files.length ? (
         <div className="overflow-hidden rounded-lg border border-border">
-          {filtered.map((item) => (
+          {files.map((item) => (
             <OutputRow
               key={item.path}
               item={item}
-              icon={Icon}
+              icon={icon}
+              pinned={pins.has(item.path)}
+              onTogglePin={onTogglePin}
+              projectId={projectId}
+              fileManager={fileManager}
               openPath={openPath}
               onOpen={onOpen}
             />
           ))}
         </div>
-      ) : (
+      ) : total ? (
         <EmptyState title={`没有匹配的${title}`} hint="试试更短的关键词，或清空搜索" />
+      ) : (
+        <EmptyState title={`output/${dir}/ 还是空的`} />
       )}
-    </section>
+    </div>
   );
 }
 
@@ -311,23 +236,52 @@ export function OutputPanel({
   onOpen: (item: FileItem) => void;
 }) {
   const { output } = scan;
+  const projectId = scan.project.id;
+  const fileManager = useFileManagerName();
+  // 预览头部也有同一个收藏按钮，两处共用一份状态
+  const { pins, togglePin } = useOutputPins(projectId);
   // 旧服务进程不返回 annotations，那时候退回只显示字数
   const marks = output.stats.annotations ?? 0;
   const wordsHint = formatWords(output.stats.words);
   const [sortKey, setSortKey] = useState<SortKey>(readOutputSort);
-  const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(OUTPUT_VIEW_KEY));
+  const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  // 没存过偏好时停在第一组有东西的，省得一进来就看空态
+  const [tab, setTab] = useState<GroupKey>(
+    () => readOutputTab() || GROUPS.find(({ key }) => output[key].length)?.key || 'analysis',
+  );
 
   useEffect(() => {
     localStorage.setItem(OUTPUT_SORT_KEY, sortKey);
   }, [sortKey]);
 
   useEffect(() => {
-    localStorage.setItem(OUTPUT_VIEW_KEY, viewMode);
-  }, [viewMode]);
+    localStorage.setItem(OUTPUT_TAB_KEY, tab);
+  }, [tab]);
 
-  // 空分组只剩一个空态，没有工具栏可挂；开关落在第一个真有文件的分组上
-  const toggleGroup = GROUPS.find(({ key }) => output[key].length)?.key;
-  const viewToggle = <ViewModeToggle mode={viewMode} onChange={setViewMode} label="产出清单" />;
+  // 三组一起算：搜索时每个标签上挂的是「这组有几条命中」，
+  // 才知道要找的东西是不是躺在另一个标签里。
+  const groups = useMemo(
+    () =>
+      GROUPS.map((group) => {
+        const all = output[group.key];
+        const files = all.filter((item) => matchOutput(item, query)).sort((a, b) => {
+          // 收藏的一律在前，排序方式只在组内生效
+          const pin = Number(pins.has(b.path)) - Number(pins.has(a.path));
+          if (pin) return pin;
+          if (sortKey === 'name') {
+            return (a.title || a.name).localeCompare(b.title || b.name, 'zh');
+          }
+          const cmp = (a.mtime || '').localeCompare(b.mtime || '');
+          return sortKey === 'mtimeAsc' ? cmp : -cmp;
+        });
+        return { ...group, files, total: all.length };
+      }),
+    [output, query, sortKey, pins],
+  );
+
+  const searching = query.trim().length > 0;
+  const searchExpanded = searchOpen || searching;
 
   return (
     <div className="flex flex-col gap-6">
@@ -354,23 +308,95 @@ export function OutputPanel({
         />
       </div>
 
-      {GROUPS.map(({ key, title, hint, icon }) => (
-        <OutputGroup
-          key={key}
-          viewToggle={key === toggleGroup ? viewToggle : undefined}
-          projectId={scan.project.id}
-          title={title}
-          hint={hint}
-          dir={key}
-          icon={icon}
-          files={output[key]}
-          sortKey={sortKey}
-          onSortChange={setSortKey}
-          viewMode={viewMode}
-          openPath={openPath}
-          onOpen={onOpen}
-        />
-      ))}
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          if (GROUPS.some((group) => group.key === value)) setTab(value as GroupKey);
+        }}
+        className="gap-4"
+      >
+        {/*
+          标签条与工具栏共用一条下边框，视觉上是同一行。
+          开着预览时看板只有 28rem，搜索框一展开就挤不下三个标签 ——
+          让标签条自己横向滚（超出的标签划一下就出来），不换行，行高始终一致。
+        */}
+        <div className="flex min-w-0 items-center gap-3 border-b border-border">
+          <TabsList variant="line" className="min-w-0 flex-1 border-b-0">
+            {groups.map(({ key, title, files, total }) => (
+              <TabsTrigger key={key} value={key} className="px-2">
+                <span className="truncate">{title}</span>
+                <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                  {searching ? files.length : total}
+                </span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+          <div className="flex shrink-0 items-center gap-2 pb-1">
+            <Select
+              value={sortKey}
+              onValueChange={(value) => {
+                if (value === 'name' || value === 'mtimeAsc' || value === 'mtimeDesc') {
+                  setSortKey(value);
+                }
+              }}
+            >
+              <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="排序产出文档" title="排序">
+                <ArrowUpDown
+                  className={cn(
+                    'size-3.5',
+                    sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
+                  )}
+                />
+              </SelectTrigger>
+              <SelectContent align="end" className="min-w-36 w-max">
+                <SelectItem value="name">{SORTS.name}</SelectItem>
+                <SelectItem value="mtimeAsc">{SORTS.mtimeAsc}</SelectItem>
+                <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
+              </SelectContent>
+            </Select>
+            <div
+              className={cn(
+                'relative h-8 transition-[width] duration-200 ease-out',
+                searchExpanded ? 'w-[10rem] sm:w-[12rem]' : 'w-8',
+              )}
+            >
+              <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
+                <Search className="size-3.5" />
+              </span>
+              <Input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onFocus={() => setSearchOpen(true)}
+                onBlur={() => setSearchOpen(false)}
+                placeholder={searchExpanded ? '按名称搜索…' : ''}
+                className={cn('h-8 text-xs', searchExpanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
+                aria-label="搜索产出文档"
+                title="搜索"
+              />
+            </div>
+          </div>
+        </div>
+
+        {groups.map(({ key, title, hint, icon, files, total }) => (
+          <TabsContent key={key} value={key}>
+            <OutputGroup
+              title={title}
+              hint={hint}
+              dir={key}
+              icon={icon}
+              files={files}
+              total={total}
+              searching={searching}
+              pins={pins}
+              onTogglePin={togglePin}
+              projectId={projectId}
+              fileManager={fileManager}
+              openPath={openPath}
+              onOpen={onOpen}
+            />
+          </TabsContent>
+        ))}
+      </Tabs>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, Loader2, Quote, Search, Table } from 'lucide-react';
+import { AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Search, Table } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
@@ -17,14 +17,13 @@ import {
 } from '@/components/Primitives';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { useFileManagerName } from '@/hooks/useFileManager';
+import { type IngestControl } from '@/hooks/useIngestJob';
 import { api, type ConvertedItem, type FileItem, type IngestJob, type Scan } from '@/lib/api';
 import { formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 /** 待转换 / 转换产物列表一页条数 */
 const LIST_PAGE_SIZE = 12;
-/** 转换任务状态轮询间隔；大 PDF 可能跑几分钟，1.5s 足够且不刷接口 */
-const INGEST_POLL_MS = 1500;
 
 function KindIcon({ item }: { item: { reader: string; isDir?: boolean } }) {
   if (item.reader === 'html') return <AppWindow className="size-4 text-muted-foreground" />;
@@ -90,6 +89,10 @@ function ConvertedRow({
   hasOutputs,
   openPath,
   onOpen,
+  canIngest,
+  ingestRunning,
+  ingestingPath,
+  onIngest,
 }: {
   item: ConvertedItem;
   /** 树形视图里的层级；列表视图不传 */
@@ -97,7 +100,14 @@ function ConvertedRow({
   hasOutputs: boolean;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  canIngest: boolean;
+  ingestRunning: boolean;
+  ingestingPath: string;
+  onIngest: (filePath: string) => void;
 }) {
+  // 原件动过才给「重新转换」：原件已不在（missing）重转不了，没动过也没必要重跑一遍。
+  // ingest.py 按 sha256 幂等，对着原件再跑一次就会重出这份产物。
+  const canReconvert = canIngest && item.sourceState === 'stale' && Boolean(item.source);
   return (
     <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
       <KindIcon item={item} />
@@ -122,7 +132,18 @@ function ConvertedRow({
         </span>
       </div>
       <RowActions
+        busy={ingestRunning && ingestingPath === item.source}
         actions={[
+          ...(canReconvert
+            ? [
+                {
+                  label: '重新转换',
+                  icon: RefreshCw,
+                  disabled: ingestRunning,
+                  onSelect: () => onIngest(item.source || ''),
+                },
+              ]
+            : []),
           {
             label: '复制路径',
             icon: Copy,
@@ -333,12 +354,13 @@ function PendingList({
   );
 }
 
-const REF_FILTERS = {
+const CONVERTED_FILTERS = {
   all: '全部',
   unreferenced: '未被引用',
+  stale: '原件动过',
 } as const;
 
-type RefFilter = keyof typeof REF_FILTERS;
+type ConvertedFilter = keyof typeof CONVERTED_FILTERS;
 
 const SORTS = {
   name: '按名称',
@@ -369,6 +391,10 @@ function ConvertedList({
   projectId,
   openPath,
   onOpen,
+  canIngest,
+  ingestRunning,
+  ingestingPath,
+  onIngest,
 }: {
   items: ConvertedItem[];
   hasOutputs: boolean;
@@ -378,22 +404,35 @@ function ConvertedList({
   projectId: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  canIngest: boolean;
+  ingestRunning: boolean;
+  ingestingPath: string;
+  onIngest: (filePath: string) => void;
 }) {
   const fileManager = useFileManagerName();
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
-  const [refFilter, setRefFilter] = useState<RefFilter>('all');
+  const [filter, setFilter] = useState<ConvertedFilter>('all');
   const [sortKey, setSortKey] = useState<SortKey>(readConvertedSort);
 
   useEffect(() => {
     localStorage.setItem(CONVERTED_SORT_KEY, sortKey);
   }, [sortKey]);
-  // 没产出、或旧服务没给 referencedBy：筛「未被引用」没意义，控件也不出
+  // 没产出、或旧服务没给 referencedBy：筛「未被引用」没意义，那一档就不出
   const canFilterUnreferenced = hasOutputs && items.some((item) => Array.isArray(item.referencedBy));
-  const activeFilter = canFilterUnreferenced ? refFilter : 'all';
+  // 一份都没动过时不给这一档：清单里筛出来必然是空的
+  const staleCount = items.filter((item) => item.sourceState === 'stale').length;
+  const canFilterStale = staleCount > 0;
+  const filterOptions: ConvertedFilter[] = [
+    'all',
+    ...(canFilterUnreferenced ? (['unreferenced'] as const) : []),
+    ...(canFilterStale ? (['stale'] as const) : []),
+  ];
+  const activeFilter = filterOptions.includes(filter) ? filter : 'all';
   const filtered = useMemo(() => {
     const list = items.filter((item) => {
       if (activeFilter === 'unreferenced' && item.referencedBy?.length !== 0) return false;
+      if (activeFilter === 'stale' && item.sourceState !== 'stale') return false;
       return matchConverted(item, query);
     });
     return list.sort((a, b) => {
@@ -453,28 +492,29 @@ function ConvertedList({
               <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
             </SelectContent>
           </Select>
-          {canFilterUnreferenced ? (
+          {filterOptions.length > 1 ? (
             <Select
-              value={refFilter}
+              value={activeFilter}
               onValueChange={(value) => {
-                if (value === 'all' || value === 'unreferenced') setRefFilter(value);
+                if (filterOptions.includes(value as ConvertedFilter)) {
+                  setFilter(value as ConvertedFilter);
+                }
               }}
             >
-              <SelectTrigger
-                className={ICON_SELECT_TRIGGER}
-                aria-label="筛选转换产物"
-                title="筛选引用"
-              >
-                <Quote
+              <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="筛选转换产物" title="筛选">
+                <ListFilter
                   className={cn(
                     'size-3.5',
-                    refFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
+                    activeFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
                   )}
                 />
               </SelectTrigger>
               <SelectContent align="end" className="min-w-36 w-max">
-                <SelectItem value="all">{REF_FILTERS.all}</SelectItem>
-                <SelectItem value="unreferenced">{REF_FILTERS.unreferenced}</SelectItem>
+                {filterOptions.map((option) => (
+                  <SelectItem key={option} value={option}>
+                    {CONVERTED_FILTERS[option]}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           ) : null}
@@ -500,6 +540,16 @@ function ConvertedList({
           </div>
         </div>
       </div>
+      {/* 原件动过的产物「已经转过」，所以不会回到待转换列表 —— 不说这句，人会在那边一直找不到它 */}
+      {staleCount ? (
+        <p className="text-xs text-muted-foreground">
+          有 <span className="text-destructive">{staleCount} 份原件在转换后动过</span>
+          ，产物可能已经不对。它们已经有产物，不会回到待转换列表；右上角筛选可以只看这些。
+          {canIngest
+            ? '行内「更多」点「重新转换」只重转那一份，上面的「开始转换」会把动过的一起重跑。'
+            : '在工作空间里重跑一次 scripts/ingest.py 即可，只有动过的会重转。'}
+        </p>
+      ) : null}
       {searching ? (
         <p className="text-xs text-muted-foreground">
           {filtered.length ? `匹配 ${filtered.length} 项` : '没有匹配的转换产物'}
@@ -529,6 +579,10 @@ function ConvertedList({
               hasOutputs={hasOutputs}
               openPath={openPath}
               onOpen={onOpen}
+              canIngest={canIngest}
+              ingestRunning={ingestRunning}
+              ingestingPath={ingestingPath}
+              onIngest={onIngest}
             />
           )}
         />
@@ -541,6 +595,10 @@ function ConvertedList({
               hasOutputs={hasOutputs}
               openPath={openPath}
               onOpen={onOpen}
+              canIngest={canIngest}
+              ingestRunning={ingestRunning}
+              ingestingPath={ingestingPath}
+              onIngest={onIngest}
             />
           ))}
           <ListPager
@@ -557,100 +615,11 @@ function ConvertedList({
           title="没有未被引用的资料"
           hint="产出正文里出现它的路径或文件名就算引用"
         />
+      ) : activeFilter === 'stale' ? (
+        <EmptyState title="没有原件动过的产物" hint="每份产物都还对得上转换时的原件" />
       ) : null}
     </div>
   );
-}
-
-/**
- * 在看板里触发 scripts/ingest.py。
- * canIngest 缺失（旧服务）时整块不渲染，退回文案里的终端命令提示。
- * 写盘由工作空间脚本完成，看板只负责 spawn + 轮询状态；文件变化走已有 SSE。
- * 状态提到 InputPanel 是为了让待转换列表的单行「转换」和整目录按钮共用同一轮任务。
- */
-function useIngestJob(projectId: string, canIngest?: boolean) {
-  const [job, setJob] = useState<IngestJob | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState('');
-  /** 为 true 时 effect 持续轮询，直到状态离开 running */
-  const [polling, setPolling] = useState(false);
-
-  const applyJob = useCallback((next: IngestJob) => {
-    setJob(next);
-    if (next.status === 'running') setPolling(true);
-    else setPolling(false);
-    if (next.status === 'error') setError(next.message || '转换失败');
-    else if (next.status === 'done') setError('');
-  }, []);
-
-  // 切项目：清状态，并查一次是否已有进行中的任务（刷新页面后还能接上）
-  useEffect(() => {
-    if (!canIngest || !projectId) {
-      setJob(null);
-      setError('');
-      setBusy(false);
-      setPolling(false);
-      return undefined;
-    }
-    let cancelled = false;
-    void api
-      .ingestStatus(projectId)
-      .then((status) => {
-        if (!cancelled) applyJob(status);
-      })
-      .catch(() => {
-        // 旧服务没有这个接口：静默；点「开始转换」时再报错
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, canIngest, applyJob]);
-
-  useEffect(() => {
-    if (!polling || !projectId) return undefined;
-    let cancelled = false;
-    const timer = setInterval(() => {
-      void api
-        .ingestStatus(projectId)
-        .then((status) => {
-          if (!cancelled) applyJob(status);
-        })
-        .catch((err) => {
-          if (!cancelled) {
-            setPolling(false);
-            setError((err as Error).message);
-          }
-        });
-    }, INGEST_POLL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [polling, projectId, applyJob]);
-
-  const start = useCallback(
-    async (filePath?: string) => {
-      setBusy(true);
-      setError('');
-      try {
-        const started = await api.startIngest(projectId, filePath);
-        applyJob(started);
-      } catch (err) {
-        setError((err as Error).message);
-        setPolling(false);
-      } finally {
-        setBusy(false);
-      }
-    },
-    [projectId, applyJob],
-  );
-
-  return {
-    job,
-    running: job?.status === 'running' || busy,
-    error,
-    start,
-  };
 }
 
 function IngestControls({
@@ -745,17 +714,19 @@ export function InputPanel({
   projectId,
   openPath,
   onOpen,
+  ingest,
 }: {
   scan: Scan;
   projectId: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  /** 转换任务状态在 App 里，待转换列表和预览页共用同一轮任务 */
+  ingest: IngestControl;
 }) {
   const { input } = scan;
   const hasOutputs = scan.output.stats.total > 0;
   // 旧服务进程没有 canIngest：整块按钮不出现，只保留终端命令提示
   const canIngest = Boolean(input.canIngest);
-  const ingest = useIngestJob(projectId, canIngest);
   const [ignoringPath, setIgnoringPath] = useState('');
   const [ignoreError, setIgnoreError] = useState('');
   // 旧服务进程没有 assetGroups：退回平铺网格
@@ -908,6 +879,10 @@ export function InputPanel({
             projectId={projectId}
             openPath={openPath}
             onOpen={onOpen}
+            canIngest={canIngest}
+            ingestRunning={ingest.running}
+            ingestingPath={ingest.job?.path || ''}
+            onIngest={(filePath) => void ingest.start(filePath)}
           />
         ) : (
           <>

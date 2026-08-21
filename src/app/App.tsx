@@ -23,6 +23,7 @@ import { OverviewPanel } from '@/components/OverviewPanel';
 import { PrototypePanel } from '@/components/PrototypePanel';
 import { Reader } from '@/components/Reader';
 import { UnavailableWorkspace, WorkspaceDialog } from '@/components/WorkspaceSettings';
+import { useIngestJob } from '@/hooks/useIngestJob';
 import { useProjects, useScan } from '@/hooks/useWorkspace';
 import { api, type FileItem, type Project } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
@@ -340,6 +341,10 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false);
   const { dark, toggle } = useTheme();
   const { mountedFile, visible: previewVisible } = usePreviewPresence(openFile);
+  // 转换任务提到这一层：待转换列表和预览页的「重新转换」共用同一轮任务
+  // （服务端每个项目只允许一个，各持一份状态会让第二处显示成「没反应」）
+  const canIngest = Boolean(scan?.input?.canIngest);
+  const ingest = useIngestJob(activeId, canIngest);
   const isWide = useIsWide();
   // 布局侧：真正打开中（含离场动画期）
   const previewActive = Boolean(mountedFile);
@@ -437,6 +442,7 @@ export default function App() {
               projectId={activeId}
               openPath={openFile?.path || mountedFile?.path || ''}
               onOpen={setOpenFile}
+              ingest={ingest}
             />
           ) : null}
           {view === 'output' ? (
@@ -596,6 +602,8 @@ export default function App() {
               <Reader
                 projectId={activeId}
                 item={mountedFile}
+                ingest={ingest}
+                canIngest={canIngest}
                 onClose={() => setOpenFile(null)}
                 expanded={previewExpanded}
                 onToggleExpand={() => setPreviewExpanded((v) => !v)}
