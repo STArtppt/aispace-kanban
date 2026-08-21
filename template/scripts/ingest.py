@@ -131,6 +131,25 @@ def is_pointtable(src: Path) -> bool:
         return False
 
 
+def is_realdata(src: Path) -> bool:
+    """这个文件是不是该由 scripts/realdata.py 处理的现场实测数据？
+
+    现场导出的时序数据是几十万行的 csv：拷进 converted/ 谁也读不动，
+    价值在于建成能按测点、按时间检索的库。这里复用 realdata.py 的探测保证两边一致。
+    散放在 input/raw/ 根下的单个文件不算一个数据集（realdata.py 按目录成集），仍按普通文本走。
+    """
+    if src.parent == RAW:
+        return False
+    try:
+        import realdata
+    except ImportError:
+        return False
+    try:
+        return realdata.detect(src) is not None
+    except (OSError, ValueError):
+        return False
+
+
 def frontmatter(source: Path, digest: str, tool: str, extra: dict | None = None) -> str:
     meta = {
         "source": str(source.relative_to(REPO)),
@@ -898,6 +917,9 @@ def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
             # 点表由 scripts/pointtable.py 汇总成测点主表，这里让路：
             # 否则几百个同构点表会各自转出一个 csv 目录，分段型 .txt 还会被当纯文本拷进 converted/。
             out.append((src, "pointtable", Path()))
+        elif is_realdata(src):
+            # 现场实测数据由 scripts/realdata.py 建成时序库，这里让路（同上）
+            out.append((src, "realdata", Path()))
         elif ext in SPREADSHEET or ext in LEGACY_SPREADSHEET:
             out.append((src, "spreadsheet", CONVERTED / slug))
         elif ext in HTML_PROTOTYPE:
@@ -1093,11 +1115,13 @@ def main() -> int:
     failures = 0
     deferred: list[tuple[Path, str, Path]] = []   # MinerU 的任务攒起来一批提交
     pointtable_dirs: dict[str, int] = {}          # 点表按目录汇总，不逐个刷屏
+    realdata_dirs: dict[str, int] = {}            # 现场实测数据同理
     for src, how, target in tasks:
         rel = src.relative_to(REPO) if src.is_relative_to(REPO) else src
-        if how == "pointtable":
-            top = rel.parts[2] if len(rel.parts) > 2 else rel.name   # input/raw/<点表集>/...
-            pointtable_dirs[top] = pointtable_dirs.get(top, 0) + 1
+        if how in ("pointtable", "realdata"):
+            top = rel.parts[2] if len(rel.parts) > 2 else rel.name   # input/raw/<数据集>/...
+            bucket = pointtable_dirs if how == "pointtable" else realdata_dirs
+            bucket[top] = bucket.get(top, 0) + 1
             continue
         if how == "legacy":
             log(f"⚠ 跳过 {rel}：老格式不受支持，请先另存为 .{LEGACY[src.suffix.lower()]}")
@@ -1192,6 +1216,17 @@ def main() -> int:
             "source": f"input/raw/{name}/", "kind": f"点表 ×{count}",
             "target": f"converted/{slugify(name)}/_manifest.md" if done else "",
             "status": "✓ 已汇总为测点主表" if done else "⚠ 待运行 pointtable.py",
+        })
+
+    for name, count in sorted(realdata_dirs.items()):
+        converted = CONVERTED / slugify(name)
+        done = (converted / "_manifest.md").is_file()
+        log(f"· 现场数据 input/raw/{name}/：{count} 个文件交给 scripts/realdata.py"
+            + ("" if done else "（尚未处理，请运行 python3 scripts/realdata.py）"))
+        records.append({
+            "source": f"input/raw/{name}/", "kind": f"现场实测数据 ×{count}",
+            "target": f"converted/{slugify(name)}/_manifest.md" if done else "",
+            "status": "✓ 已建成时序库" if done else "⚠ 待运行 realdata.py",
         })
 
     write_assets_manifest(records)

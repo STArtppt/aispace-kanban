@@ -75,6 +75,7 @@ PM 接手项目最大的风险是**把自己的推断当成项目事实**，然�
 | [`skills/pm-project-meta`](skills/pm-project-meta/SKILL.md) | 阶段一之后：从合同 / 招标 / 立项文件提取元信息，补 `project.yaml` |
 | [`skills/pm-project-handover`](skills/pm-project-handover/SKILL.md) | 阶段二：摸清项目现状，产出现状基线和澄清问题清单 |
 | [`skills/pm-requirement-analysis`](skills/pm-requirement-analysis/SKILL.md) | 阶段二：需求拆解、优先级、验收标准、追溯矩阵 |
+| [`skills/pm-field-data`](skills/pm-field-data/SKILL.md) | 阶段二之外：现场真实运行数据进来时，核验数据可用性、拿场景可行性的证据 |
 | [`skills/pm-prd-writing`](skills/pm-prd-writing/SKILL.md) | 阶段三：写 PRD / 需求规格说明书 |
 | [`skills/pm-prototype-brief`](skills/pm-prototype-brief/SKILL.md) | 阶段四：把文档收敛成原型输入，衔接 Axhub Make |
 | [`skills/skill-creator`](skills/skill-creator/SKILL.md) | 工作中发现重复套路时，把它固化成新技能 |
@@ -177,6 +178,51 @@ sqlite3 input/converted/集控点表/测点.sqlite \
 分段型点表的「设备名」是内容启发式推断的，写进正式文档前要按解析规则文档核对，
 并按溯源要求标 `[推断]`。
 
+## 阶段一之三：现场实测数据归一
+
+客户/现场会陆续交来**已接入数据库导出的真实运行数据**：一个几十上百 MB 的 csv，
+几十万行，列名是 `senid` / `time` / `v` 这种系统内部字段。它人读不了、也不能读进上下文，
+但它是**验证需求可行性的硬证据**——某个测点现场到底有没有数、多久来一次、有没有断流、
+值合不合理。资料只说明设计上应该有什么，这类数据说明实际上有什么。
+
+```bash
+python3 scripts/realdata.py                    # 自动发现 input/raw/ 下的现场数据目录（幂等）
+python3 scripts/realdata.py --dry-run          # 先看识别到的列映射和时间格式
+python3 scripts/realdata.py input/raw/现场数据  # 只处理指定目录（给文件也行，按其所在目录成集）
+python3 scripts/realdata.py --force            # 强制重建
+python3 scripts/realdata.py --time-format "%m/%d/%Y %H:%M:%S"   # 日月顺序有歧义时手工指定
+```
+
+**一个数据集一个子目录**（如 `input/raw/现场数据/`），别散放在 `input/raw/` 根下——
+按目录成集是脚本识别数据集的方式。识别靠**表头**不看扩展名：只要认得出
+「测点标识列 + 时间列 + 数值列」（别名表在 `scripts/realdata.py` 顶部，遇到新系统加一行），
+csv / txt 都能进。
+
+产物在 `input/converted/<数据集名>/`：
+
+- **`_manifest.md`** — 轻量台账：规模、时间范围、覆盖分布、质量体检、**表结构和 SQL 范例**。
+  **看板预览点这个**；AI 要写 SQL 读这一份就够
+- `实测数据.sqlite` — 主产物：`测点` 维表（已按测点字典补齐流域/场站/中文名/单位）
+  + `实测` 事实表 + `日统计` 预聚合 + `v_实测` / `v_日统计` 视图，建好索引
+- `测点覆盖清单.csv` — 一行一个测点，可直接发给现场对接人核对
+- `日统计.csv` — 一行一个测点一天，Excel 就能看趋势
+- `未匹配测点.csv` — 字典里查不到的测点（有才生成）——**这就是缺口本身**
+
+```bash
+sqlite3 -header -column input/converted/现场数据/实测数据.sqlite \
+  "SELECT 场站名称,测点名称,采样间隔秒,\"间隔规律性%\",\"完整率%\"
+   FROM 测点 WHERE 测点名称 LIKE '%坝上水位%' ORDER BY \"完整率%\" LIMIT 20;"
+```
+
+`ingest.py` 识别到现场数据同样让路（打一行汇总日志并记进 INDEX 台账）。
+
+**边界**：脚本只做格式归一 + 字典对齐，不做单位换算、不剔异常值、不补缺测。
+台账里的「采样间隔」是相邻两点间隔的中位数、「完整率」是据此推算的，
+**都是统计口径，不是现场承诺的采集频率**；先看 `间隔规律性%` 再看 `完整率%`——
+规律性低于 60% 的是雨量这类事件驱动测点，脚本不给它们算完整率，别当缺测报。
+状态码 / 质量位的含义资料里通常没写，原样保留、不做解释，写进待确认清单去问。
+详细做法见 [`skills/pm-field-data`](skills/pm-field-data/SKILL.md)。
+
 ## 演示与汇报材料（HTML）
 
 要给客户汇报、评审、演示的材料，如果产出是 HTML，**放 `output/docs/`，和它的 `.md` 源文并排**，
@@ -221,6 +267,7 @@ output/docs/2026-08-18-需求评审材料.html    ← 渲染产物，一起改
 ## 不要做的事
 
 - **不要主动读取 `input/raw/` 下的原始文件**（除非用户明确要求）。分析、写文档、追溯一律优先用 `input/converted/` 和 `input/INDEX.md`。原始文件（尤其 PDF / docx / xlsx）体积大、进上下文烧 token，且内容已由 `scripts/ingest.py` 转成可读文本——默认读转换产物即可。用户说「打开原件」「对照 raw 里的某某」「看一下原始 PDF」时才读 `input/raw/`。
+- **不要把现场实测数据的原始 csv 或 `实测数据.sqlite` 的事实表整表读进上下文**（几十万行）。查数走 SQL 只取回需要的几十行，看全局读 `_manifest.md`。
 - **不要把 `测点主表.csv` 整个读进上下文**（动辄十几万行）。查测点走 `测点.sqlite` 的 SQL，只把命中的几十行拿回来；要看全局分布读 `_manifest.md`。
 - 不要修改或删除 `input/raw/` 里的任何文件。
 - 不要手改 `input/converted/` 的产物，改脚本或在 `output/analysis/` 里记录修正。
