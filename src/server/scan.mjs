@@ -15,6 +15,14 @@ const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.csv', '.tsv', '.json', '
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 /** 图片资料的兜底分组：没有归到某份文档名下的图都算这一堆（ingest.py 的落点同名） */
 const UNSORTED_ASSETS = '未分类';
+/**
+ * 一份产物的**正文容器**，本身不是产物 —— 它属于旁边那份 `_manifest_<名>.md`。
+ * 工作空间的 scripts/layout.py 定义了这套落点：converted/ 的目录结构镜像 raw/，
+ * 一源多产物的正文收进 SplittingObject/<名>/，整目录合并的收进 MergedObject/。
+ */
+const PAYLOAD_DIRS = new Set(['SplittingObject', 'MergedObject']);
+/** 镜像目录里的产物入口文件名 */
+const MANIFEST_RE = /^_manifest_(.+)\.md$/;
 
 function rel(root, abs) {
   return path.relative(root, abs).split(path.sep).join('/');
@@ -23,7 +31,8 @@ function rel(root, abs) {
 /**
  * 读 input/.ingestignore —— 不进转换、也不算「待转换」的资料清单。
  * gitignore 风格：一行一个模式，# 是注释，路径相对 input/ 写。
- * scripts/ingest.py 的 load_ignore() 读的是同一份，两边规则改动要同步。
+ * 工作空间 scripts/layout.py 的 load_ignore()（三个转换脚本共用）读的是同一份，
+ * 两边规则改动要同步。
  */
 function readIgnorePatterns(root) {
   const file = path.join(root, 'input', '.ingestignore');
@@ -102,37 +111,75 @@ function readTextSafe(abs, limit = 2 * 1024 * 1024) {
   }
 }
 
-/** input/converted 下的一个产物：.md、xlsx 拆目录、或 html 原型目录。 */
+/**
+ * input/converted 下的一份产物。三种形态：
+ *
+ *  1. `_manifest_<名>.md` —— 新布局的产物入口。正文在 frontmatter `payload:` 指的同级容器目录里
+ *     （SplittingObject/<名>/ 或 MergedObject/），摘要留在镜像目录，界面上按「一份产物」呈现。
+ *  2. 单个 .md / .csv —— 一源一产物，文件自己就是全部。
+ *  3. 目录 + 里面的 `_manifest.md` —— 旧布局的目录型产物。旧工作空间还没搬迁就靠这一支。
+ *
+ * `path` 指的是产物的「包」（有正文目录就是正文目录，否则就是文件本身），`manifestPath` 单独给
+ * 出摘要在哪 —— 新布局里摘要不在正文目录内，前端不能再按 `path + '/_manifest.md'` 拼。
+ */
 function describeConverted(root, abs) {
-  const isDir = fs.statSync(abs).isDirectory();
-  const manifest = isDir ? path.join(abs, '_manifest.md') : abs;
-  const ext = path.extname(abs).toLowerCase();
+  const convertedDir = path.join(root, 'input', 'converted');
+  const isDirEntry = fs.statSync(abs).isDirectory();
+  const nameHit = isDirEntry ? null : path.basename(abs).match(MANIFEST_RE);
+
+  // 产物入口：要读正文、算字数、取溯源的那一份
+  const entry = isDirEntry ? path.join(abs, '_manifest.md') : abs;
+  const hasManifest = entry.endsWith('.md') && fs.existsSync(entry);
+  const { meta, body } = hasManifest
+    ? parseFrontmatter(readTextSafe(entry))
+    : { meta: {}, body: '' };
+
+  // 正文目录。旧布局就是产物目录本身；新布局按 payload 找同级容器。
+  let payload = isDirEntry ? abs : '';
+  if (!payload && nameHit && meta.payload) {
+    const candidate = path.resolve(path.dirname(abs), String(meta.payload));
+    // frontmatter 是工作空间里的用户内容，不许它把路径指到 converted/ 外面去
+    const inside = candidate === convertedDir || candidate.startsWith(convertedDir + path.sep);
+    if (inside && fs.existsSync(candidate)) payload = candidate;
+  }
+
+  const isDir = Boolean(payload);
+  const ext = isDirEntry ? '' : path.extname(abs).toLowerCase();
+  // 转换产物用文件名当标题，不用正文一级标题：模板/手册类文档的 h1 经常是
+  // 「文档概述」这类章节名，复制引用时对不上磁盘上的那份文件。
+  const label = nameHit ? nameHit[1] : path.basename(abs, isDirEntry ? '' : ext);
   const item = {
-    path: rel(root, abs),
-    name: path.basename(abs),
+    path: rel(root, payload || abs),
+    name: nameHit ? nameHit[1] : path.basename(abs),
     isDir,
     ext,
     reader: isDir ? 'markdown' : readerKind(ext),
-    // 转换产物用文件名当标题，不用正文一级标题：模板/手册类文档的 h1 经常是
-    // 「文档概述」这类章节名，复制引用时对不上磁盘上的那份文件。
-    title: path.basename(abs, isDir ? '' : ext),
-    ...stat(isDir ? manifest : abs),
+    title: label,
+    /**
+     * 产物在目录树里的位置，相对 input/converted/。新布局下 converted/ 与 raw/ 同构，
+     * 所以这就是资料自己的整理方式；摘要文件在树里显示成产物名（去掉 `_manifest_` 前缀），
+     * 不然树里全是 `_manifest_xxx.md`，正文却藏在 SplittingObject/ 下面看不见。
+     */
+    treePath: rel(convertedDir, nameHit ? path.join(path.dirname(abs), label) : abs),
+    ...stat(hasManifest ? entry : abs),
   };
+  if (hasManifest) item.manifestPath = rel(root, entry);
+
   if (isDir) {
     // 顶层文件：html 原型只看一层；csv 递归（点表分册在 分册/*.csv）
-    const topFiles = listFiles(abs, { recursive: false });
-    const allFiles = listFiles(abs, { recursive: true });
+    const topFiles = listFiles(payload, { recursive: false });
+    const allFiles = listFiles(payload, { recursive: true });
     const sheets = allFiles
       .filter((f) => /\.(csv|tsv)$/i.test(f))
       .sort((a, b) => a.localeCompare(b, 'zh'))
       .map((f) => {
-        // 用相对转换目录的路径当显示名，区分 测点主表.csv 与 分册/xx.csv
-        const name = path.relative(abs, f).split(path.sep).join('/');
-        const ext = path.extname(f).toLowerCase();
+        // 用相对正文目录的路径当显示名，区分 测点主表.csv 与 分册/xx.csv
+        const name = path.relative(payload, f).split(path.sep).join('/');
+        const sheetExt = path.extname(f).toLowerCase();
         return {
           path: rel(root, f),
           name,
-          ext,
+          ext: sheetExt,
           reader: 'table',
           title: name.replace(/\.(csv|tsv)$/i, ''),
           ...stat(f),
@@ -144,7 +191,7 @@ function describeConverted(root, abs) {
     const sqlite = allFiles.find((f) => /\.sqlite$/i.test(f));
     if (sqlite) item.sqlitePath = rel(root, sqlite);
 
-    // 单文件 HTML 原型包：目录内保留 .html + _manifest.md
+    // 单文件 HTML 原型包：正文目录里保留 .html
     const htmlFiles = topFiles
       .filter((f) => /\.html?$/i.test(f))
       .sort((a, b) => a.localeCompare(b));
@@ -153,31 +200,31 @@ function describeConverted(root, abs) {
       item.reader = 'html';
       item.htmlPath = rel(root, htmlAbs);
       item.htmlName = path.basename(htmlAbs);
-      item.size = stat(htmlAbs).size + (fs.existsSync(manifest) ? stat(manifest).size : 0);
+      item.size = stat(htmlAbs).size + (hasManifest ? stat(entry).size : 0);
     } else {
       item.size = sheets.reduce((sum, s) => sum + s.size, 0);
-      // 有 csv 的目录型产物（xlsx 拆表 / 点表）按表格读；摘要在 _manifest.md
+      // 有 csv 的目录型产物（xlsx 拆表 / 点表）按表格读；摘要在 manifest 里
       if (sheets.length) item.reader = 'table';
     }
   }
+
   // frontmatter 里带着溯源信息，是这个看板最有价值的部分
-  if (fs.existsSync(manifest) && manifest.endsWith('.md')) {
-    const { meta, body } = parseFrontmatter(readTextSafe(manifest));
+  if (hasManifest) {
     item.source = meta.source || '';
     // 点表这类产物汇总整个目录（几百个源文件 → 一份主表），source 记的是目录。
     // 这两个字段告诉扫描器该目录下哪些扩展名已被消费，见 scanInput 的 pending 计算。
     item.sourceIsDir = String(meta.source_is_dir || '') === 'true';
     item.sourceKinds = String(meta.source_kinds || '')
-      .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+      .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
     item.sourceSha256 = meta.source_sha256 || '';
     item.convertedBy = meta.converted_by || '';
     item.convertedAt = meta.converted_at || '';
     item.warning = meta.warning || '';
     item.extractedImages = Number(meta.extracted_images || 0);
     item.words = countWords(body);
-    // manifest 可写 preview: foo.html，优先用它
+    // manifest 可写 preview: <正文目录>/foo.html，相对 manifest 自己所在目录
     if (item.reader === 'html' && meta.preview) {
-      const previewAbs = path.join(abs, meta.preview);
+      const previewAbs = path.join(path.dirname(entry), String(meta.preview));
       if (fs.existsSync(previewAbs)) {
         item.htmlPath = rel(root, previewAbs);
         item.htmlName = path.basename(previewAbs);
@@ -185,6 +232,30 @@ function describeConverted(root, abs) {
     }
   }
   return item;
+}
+
+/**
+ * 递归走 input/converted/，把产物认出来。目录结构镜像 input/raw/，中间那些镜像目录
+ * 本身不是产物，要走进去；SplittingObject/ MergedObject/ 是正文容器，跳过不进
+ * （它们的内容已经挂在旁边那份 manifest 的 sheets 上了）。
+ */
+function collectConverted(root, dir, out) {
+  if (!fs.existsSync(dir)) return;
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP.has(entry.name) || entry.name.startsWith('.')) continue;
+    const abs = path.join(dir, entry.name);
+    if (!entry.isDirectory()) {
+      out.push(describeConverted(root, abs));
+      continue;
+    }
+    if (PAYLOAD_DIRS.has(entry.name)) continue;
+    // 旧布局的目录型产物：目录里直接躺着 _manifest.md，整个目录算一份产物
+    if (fs.existsSync(path.join(abs, '_manifest.md'))) {
+      out.push(describeConverted(root, abs));
+      continue;
+    }
+    collectConverted(root, abs, out);
+  }
 }
 
 /**
@@ -232,10 +303,10 @@ function groupAssets(root, assets, converted) {
     byKey.get(key).push(item);
   }
 
+  // 图库目录名跟着源文件名走，产物名也是 —— 但产物已经不在 converted/ 根下了
+  // （目录结构镜像 raw/），所以按名字认，不按路径拼。
   const docTitle = (key) => {
-    const doc = converted.find(
-      (c) => c.path === `input/converted/${key}.md` || c.path === `input/converted/${key}`,
-    );
+    const doc = converted.find((c) => c.title === key || c.name === key || c.name === `${key}.md`);
     return doc ? doc.title || doc.name : '';
   };
 
@@ -394,12 +465,7 @@ function scanInput(root) {
 
   const convertedDir = path.join(inputDir, 'converted');
   const converted = [];
-  if (fs.existsSync(convertedDir)) {
-    for (const entry of fs.readdirSync(convertedDir, { withFileTypes: true })) {
-      if (SKIP.has(entry.name) || entry.name.startsWith('.')) continue;
-      converted.push(describeConverted(root, path.join(convertedDir, entry.name)));
-    }
-  }
+  collectConverted(root, convertedDir, converted);
   attachSourceState(root, converted);
 
   // 只收图片：assets/ 下还有 ingest.py 写的 _manifest.md，它不该出现在图库里

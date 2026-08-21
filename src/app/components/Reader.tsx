@@ -629,7 +629,11 @@ export function Reader({
   // 目录型转换产物：csv → 表格；html 原型 → iframe；否则读 _manifest.md
   const multiSheet = sheets.length > 0;
   const isDir = isConverted(item) && item.isDir;
-  const manifestPath = isDir ? `${item.path.replace(/\/$/, '')}/_manifest.md` : '';
+  // 摘要位置由服务端给：新布局里摘要在镜像目录、正文在 SplittingObject/ 下，两者不同级，
+  // 拼不出来。旧服务进程不给这个字段，退回旧布局的「产物目录里就有 _manifest.md」。
+  const manifestPath = isConverted(item)
+    ? item.manifestPath || (isDir ? `${item.path.replace(/\/$/, '')}/_manifest.md` : '')
+    : '';
   const htmlPath =
     isConverted(item) && item.reader === 'html'
       ? item.htmlPath || (item.ext === '.html' || item.ext === '.htm' ? item.path : '')

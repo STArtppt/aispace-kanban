@@ -68,20 +68,25 @@ function referenceLabel(item: ConvertedItem, hasOutputs: boolean): string {
 const UNKNOWN_SOURCE = '未知来源';
 
 /**
- * 产物在树里的位置：跟着**原件**在 input/raw/ 下的目录走。
- * input/converted/ 本身是平的（服务端只扫一层），按产物自己的路径建树等于没建；
- * 按原件目录建，树形结构就是自己在 raw/ 里的整理方式。
- * 一份产物都没记来源时（旧 ingest.py 的产物）整棵树平铺，不平白多出一层「未知来源」。
+ * 产物在树里的位置。
+ *
+ * 服务端给了 treePath 就用它：新布局下 input/converted/ 与 input/raw/ 同构，产物自己的
+ * 路径就是资料的整理方式，最准。旧布局（产物平铺在 converted/ 根下）没有这层结构，
+ * 按产物自己的路径建树等于没建，退回跟着**原件**在 input/raw/ 下的目录走。
+ * 两条路都认不出来时整棵树平铺，不平白多出一层「未知来源」。
  */
 function convertedTreePath(item: ConvertedItem, hasAnySource: boolean): string {
+  if (item.treePath && item.treePath.includes('/')) return item.treePath;
   const prefix = 'input/raw/';
   const source = item.source || '';
   // 来源不在 input/raw/ 下（理论上不该有）一并算「未知来源」：目录行的动作要按
   // input/raw/<树内路径> 反推真实目录，认不回去的就别给动作，免得指到不存在的路径
-  if (!source.startsWith(prefix)) return hasAnySource ? `${UNKNOWN_SOURCE}/${item.name}` : item.name;
+  if (!source.startsWith(prefix)) {
+    return item.treePath || (hasAnySource ? `${UNKNOWN_SOURCE}/${item.name}` : item.name);
+  }
   const rel = source.slice(prefix.length);
   const cut = rel.lastIndexOf('/');
-  return cut > 0 ? `${rel.slice(0, cut)}/${item.name}` : item.name;
+  return cut > 0 ? `${rel.slice(0, cut)}/${item.name}` : item.treePath || item.name;
 }
 
 function ConvertedRow({

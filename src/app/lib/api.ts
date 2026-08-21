@@ -39,6 +39,16 @@ export interface FileItem {
 
 export interface ConvertedItem extends FileItem {
   isDir: boolean;
+  /**
+   * 产物在目录树里的位置，相对 input/converted/。新布局下 converted/ 与 raw/ 同构，
+   * 树就是资料自己的整理方式。可选：旧服务进程不返回它，缺了就退回按原件目录建树。
+   */
+  treePath?: string;
+  /**
+   * 摘要 `_manifest*.md` 的路径。新布局里摘要在镜像目录、正文在 SplittingObject/ 下，
+   * 两者不同级，不能再按 `path + '/_manifest.md'` 拼。可选：旧服务进程不返回。
+   */
+  manifestPath?: string;
   sheets?: FileItem[];
   /** html 原型包：目录内可预览的 .html 相对路径 */
   htmlPath?: string;
