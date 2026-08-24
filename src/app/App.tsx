@@ -23,13 +23,12 @@ import { OverviewPanel } from '@/components/OverviewPanel';
 import { PrototypePanel } from '@/components/PrototypePanel';
 import { Reader } from '@/components/Reader';
 import { UnavailableWorkspace, WorkspaceDialog } from '@/components/WorkspaceSettings';
+import { useBoardSession, type View } from '@/hooks/useBoardSession';
 import { useIngestJob } from '@/hooks/useIngestJob';
 import { useProjects, useScan } from '@/hooks/useWorkspace';
 import { api, type FileItem, type Project } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
-
-type View = 'overview' | 'input' | 'output' | 'prototypes';
 
 /** 预览挂载/离场时长，需与下方 transition duration 一致 */
 const PREVIEW_MOTION_MS = 320;
@@ -334,8 +333,7 @@ function SidebarBody({
 export default function App() {
   const { projects, activeId, select, reload: reloadProjects } = useProjects();
   const { scan, loading, error, reload, refreshedAt } = useScan(activeId);
-  const [view, setView] = useState<View>('overview');
-  const [openFile, setOpenFile] = useState<FileItem | null>(null);
+  const { view, setView, openFile, selectFile } = useBoardSession(activeId, scan);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [settingsFor, setSettingsFor] = useState<Project | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -350,7 +348,6 @@ export default function App() {
   const previewActive = Boolean(mountedFile);
 
   useEffect(() => {
-    setOpenFile(null);
     setPreviewExpanded(false);
   }, [activeId]);
 
@@ -434,14 +431,14 @@ export default function App() {
       {scan && scan.available !== false ? (
         <>
           {view === 'overview' ? (
-            <OverviewPanel scan={scan} onOpen={setOpenFile} onGoto={setView} />
+            <OverviewPanel scan={scan} onOpen={selectFile} onGoto={setView} />
           ) : null}
           {view === 'input' ? (
             <InputPanel
               scan={scan}
               projectId={activeId}
               openPath={openFile?.path || mountedFile?.path || ''}
-              onOpen={setOpenFile}
+              onOpen={selectFile}
               ingest={ingest}
             />
           ) : null}
@@ -449,7 +446,7 @@ export default function App() {
             <OutputPanel
               scan={scan}
               openPath={openFile?.path || mountedFile?.path || ''}
-              onOpen={setOpenFile}
+              onOpen={selectFile}
             />
           ) : null}
           {view === 'prototypes' ? <PrototypePanel prototypes={scan.prototypes} /> : null}
@@ -604,7 +601,7 @@ export default function App() {
                 item={mountedFile}
                 ingest={ingest}
                 canIngest={canIngest}
-                onClose={() => setOpenFile(null)}
+                onClose={() => selectFile(null)}
                 expanded={previewExpanded}
                 onToggleExpand={() => setPreviewExpanded((v) => !v)}
               />
