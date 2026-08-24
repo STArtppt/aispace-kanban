@@ -30,12 +30,6 @@ export function parseFrontmatter(text) {
   return { meta, body, raw };
 }
 
-/** 正文里第一个 h1/h2 当标题，没有就返回空。 */
-export function firstHeading(body) {
-  const m = /^#{1,2}\s+(.+)$/m.exec(body);
-  return m ? m[1].trim() : '';
-}
-
 /** 中英文混排的篇幅：CJK 按字计，拉丁按词计。 */
 export function countWords(body) {
   const text = body.replace(/```[\s\S]*?```/g, ' ').replace(/[#>*_`|-]/g, ' ');

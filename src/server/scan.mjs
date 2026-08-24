@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { countAnnotations, linkReferences } from './citations.mjs';
-import { countWords, firstHeading, parseFrontmatter } from './frontmatter.mjs';
+import { countWords, parseFrontmatter } from './frontmatter.mjs';
 import { readMeta } from './meta.mjs';
 import { scanPrototypes } from './prototypes.mjs';
 
@@ -276,7 +276,9 @@ function describeOutput(root, abs) {
     return { item, body: '' };
   }
   const { meta, body } = parseFrontmatter(readTextSafe(abs));
-  item.title = firstHeading(body) || path.basename(abs, ext);
+  // 列表标题用文件名，不取正文一级标题：h1 常是「XX核验（日期）」这类文结名，
+  // 与磁盘上的文件对不上，按文件名找才找得到。与 describeConverted 改用文件名是同一条理由。
+  item.title = path.basename(abs, ext);
   item.words = countWords(body);
   if (meta.status) item.status = meta.status;
   if (meta.date) item.date = meta.date;
