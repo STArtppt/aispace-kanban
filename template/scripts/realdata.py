@@ -42,7 +42,7 @@
 测点字典
 --------
 实测数据里只有 senid，没有中文名。脚本会自动到 `input/converted/` 找已转换的**测点字典**
-（标准化测点表 `测点表point-info.csv`，兜底用「ID + 名称」两列的测点清单），
+（标准化测点表 `测点表point_info.csv` / `point-info`，兜底用「ID + 名称」两列的测点清单），
 按 code_sd / code_jk / point_code 多键匹配，把流域、场站、测点名称、单位补齐，
 并在 `字典来源` 列里记下这条信息是从哪份字典来的（溯源要求）。
 **匹配不上的测点不丢弃、不猜名字**，单独出一份 `未匹配测点.csv`。
@@ -381,7 +381,11 @@ def load_point_dict() -> tuple[dict[str, dict], list[str]]:
     index: dict[str, dict] = {}
     used: list[str] = []
 
-    for path in sorted(CONVERTED.rglob("*point-info*.csv")):
+    # 文件名里 point-info / point_info 都见过（随源表 sheet 名而变），两种都认
+    def _is_point_info(name: str) -> bool:
+        return "point-info" in name or "point_info" in name
+
+    for path in sorted(p for p in CONVERTED.rglob("*.csv") if _is_point_info(p.name)):
         rows = _read_csv(path)
         if not rows or "point_code" not in rows[0]:
             continue
@@ -407,7 +411,7 @@ def load_point_dict() -> tuple[dict[str, dict], list[str]]:
         used.append(rel(path))
 
     for path in sorted(CONVERTED.rglob("*.csv")):
-        if "point-info" in path.name:
+        if _is_point_info(path.name):
             continue
         try:
             with path.open(newline="", encoding="utf-8-sig", errors="replace") as fh:
