@@ -1,4 +1,4 @@
-# 项目接手工作空间 · Agent 工作约定
+# 产品经理AI空间 · Agent 工作约定
 
 本文件是所有 AI Agent 在这个工作空间里的**唯一约定来源**。
 `CLAUDE.md` 只是指向本文件的入口，不要把约定重复写在那边。
@@ -103,7 +103,13 @@ PM 接手项目最大的风险是**把自己的推断当成项目事实**，然�
 - **每个非 null 字段都要在 `provenance` 里有来源**（点号路径 → 文件和小节）。
 - **推断和口述记在 `confidence` 里**（`推断` / `口述待确认`），资料写明的不记。
 
-新建工作空间：`python3 scripts/init_workspace.py --name "项目名" --path <目录>`。
+新建工作空间：在 aispace-kanban 看板里点「新建」，选「产品经理AI空间模板」。命令行也可以：
+
+```bash
+python3 /path/to/aispace-kanban/templates/init_workspace.py \
+  --from /path/to/aispace-kanban/templates/pm-aispace \
+  --name "项目名" --path <目录>
+```
 
 ## 技能
 
@@ -346,13 +352,12 @@ output/docs/2026-08-18-需求评审材料.html    ← 渲染产物，一起改
 
 ## 模板改动回同步源
 
-本工作空间由模板 `/Users/sunchao/Desktop/LIFE/coding/myproj/aispace-kanban/template` 生成。
-模板随 **aispace-kanban** 看板仓库一起维护（原先独立的 `pmwork-template` 已并入该目录；
-看板「新建工作空间」也是调这里的 `scripts/init_workspace.py`）。
+本工作空间由 aispace-kanban 仓库的 `templates/pm-aispace` 生成。
+模板随看板仓库一起维护；看板「新建工作空间」调的是仓库里的
+`templates/init_workspace.py --from templates/pm-aispace`。
 
-**凡是改动了模板自带文件**（如 `scripts/ingest.py`、`scripts/init_workspace.py`、
-`skills/` 下的通用技能、`AGENTS.md` 等），在改动完成后必须同步回模板源，
-否则下次新建工作空间会丢失这些优化。
+**凡是改动了模板自带文件**（如 `scripts/ingest.py`、`skills/` 下的通用技能、`AGENTS.md` 等），
+在改动完成后必须同步回模板源，否则下次新建工作空间会丢失这些优化。
 
 同步规则：
 

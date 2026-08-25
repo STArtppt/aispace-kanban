@@ -3,20 +3,18 @@ import {
   AlertTriangle,
   FolderInput,
   FolderOutput,
-  FolderPlus,
   LayoutDashboard,
   Menu,
   MonitorPlay,
   Moon,
-  Plus,
   RefreshCw,
   Settings2,
   Sun,
   X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { CreateWorkspaceDialog } from '@/components/CreateWorkspaceDialog';
 import { InputPanel } from '@/components/InputPanel';
 import { OutputPanel } from '@/components/OutputPanel';
 import { OverviewPanel } from '@/components/OverviewPanel';
@@ -126,99 +124,6 @@ function useTheme() {
   return { dark, toggle: () => setDark((v) => !v) };
 }
 
-type FormMode = '' | 'add' | 'create';
-
-/**
- * 两个入口：
- *   登记已有目录 —— 只把目录挂进看板
- *   新建工作空间 —— 调模板的 init_workspace.py 铺骨架，再挂进来
- */
-function WorkspaceForms({ onDone }: { onDone: (id: string) => void }) {
-  const [mode, setMode] = useState<FormMode>('');
-  const [root, setRoot] = useState('');
-  const [name, setName] = useState('');
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-
-  const close = () => {
-    setMode('');
-    setError('');
-    setRoot('');
-    setName('');
-  };
-
-  const submit = async () => {
-    if (!root.trim() || (mode === 'create' && !name.trim())) return;
-    setBusy(true);
-    setError('');
-    try {
-      const project =
-        mode === 'create'
-          ? await api.createWorkspace(name.trim(), root.trim())
-          : await api.addProject(root.trim());
-      close();
-      onDone(project.id);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (!mode) {
-    return (
-      <div className="flex flex-col">
-        <Button variant="ghost" size="sm" className="justify-start" onClick={() => setMode('create')}>
-          <FolderPlus className="size-3.5" />
-          新建工作空间
-        </Button>
-        <Button variant="ghost" size="sm" className="justify-start" onClick={() => setMode('add')}>
-          <Plus className="size-3.5" />
-          登记已有目录
-        </Button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border p-2">
-      <span className="text-[11px] text-muted-foreground">
-        {mode === 'create' ? '从模板新建，元信息之后再补' : '登记一个已经存在的工作空间'}
-      </span>
-      {mode === 'create' ? (
-        <Input
-          autoFocus
-          value={name}
-          placeholder="工作空间名称"
-          onChange={(e) => setName(e.target.value)}
-          onKeyDown={(e) => e.key === 'Escape' && close()}
-          className="h-8 text-xs"
-        />
-      ) : null}
-      <Input
-        autoFocus={mode === 'add'}
-        value={root}
-        placeholder="目录绝对路径"
-        onChange={(e) => setRoot(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') void submit();
-          if (e.key === 'Escape') close();
-        }}
-        className="h-8 text-xs"
-      />
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      <div className="flex gap-2">
-        <Button size="sm" disabled={busy} onClick={() => void submit()}>
-          {mode === 'create' ? '创建' : '登记'}
-        </Button>
-        <Button variant="ghost" size="sm" onClick={close}>
-          取消
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 function SidebarBody({
   projects,
   activeId,
@@ -319,7 +224,7 @@ function SidebarBody({
             </div>
           );
         })}
-        <WorkspaceForms onDone={onProjectAdded} />
+        <CreateWorkspaceDialog onDone={onProjectAdded} />
       </div>
 
       <div className="flex flex-col gap-1">

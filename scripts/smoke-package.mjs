@@ -135,6 +135,16 @@ try {
   if (!assetRes.ok) die(`前端资源拿不到：${asset[0]}（${assetRes.status}）`);
   ok('首页和前端资源都能取到');
 
+  // ── 3b 模板列表（多模板扫描，缺了选择器就空）────────────────────────────
+  const listed = await fetch(`${base}/api/templates`).then((r) => r.json());
+  if (!Array.isArray(listed.templates) || !listed.templates.some((t) => t.id === 'pm-aispace')) {
+    die('GET /api/templates 没有 pm-aispace', JSON.stringify(listed));
+  }
+  if (!listed.createPrompt || !String(listed.createPrompt).includes(listed.userRoot || '')) {
+    die('创建模板提示词没有代入 userRoot', String(listed.createPrompt || '').slice(0, 200));
+  }
+  ok(`模板列表含 pm-aispace（共 ${listed.templates.length} 份）`);
+
   // ── 4 新建工作空间（串起 Python + 模板 + 注册表，最容易在打包后崩的一条链）──
   const created = await fetch(`${base}/api/workspaces`, {
     method: 'POST',
@@ -150,7 +160,15 @@ try {
   ok(`新建工作空间成功：${created.id}`);
 
   // ── 5 铺出来的骨架是不是完整的（npm 会吃掉 .gitignore 和软链接）───────────
-  const must = ['project.yaml', 'AGENTS.md', '.gitignore', 'input/raw/.gitkeep', 'input/.ingestignore', '.claude/skills/pm-doc-ingest/SKILL.md'];
+  const must = [
+    'project.yaml',
+    'AGENTS.md',
+    '.gitignore',
+    'input/raw/.gitkeep',
+    'input/.ingestignore',
+    '.claude/skills/pm-doc-ingest/SKILL.md',
+    '.claude/skills/skill-creator/SKILL.md',
+  ];
   const missing = must.filter((rel) => !fs.existsSync(path.join(wsPath, rel)));
   if (missing.length) die(`新工作空间缺文件：${missing.join('、')}`);
   const skills = path.join(wsPath, 'skills');
@@ -246,6 +264,34 @@ try {
     die(`input/raw/ 以外的路径没被拒（返回 ${ignoreOutside.status}，应该是 400）`);
   }
   ok('忽略只认 input/raw/，越界路径被挡住');
+
+  // ── 7c 用户自建模板：丢进 ~/.pmwork/templates 立刻能被扫到，并能拿来新建 ──
+  const userTpl = path.join(fakeHome, '.pmwork', 'templates', 'smoke-role');
+  fs.mkdirSync(path.join(userTpl, '.claude', 'skills'), { recursive: true });
+  fs.writeFileSync(
+    path.join(userTpl, 'template.yaml'),
+    'id: smoke-role\nname: 冒烟角色模板\ndescription: 冒烟用的最小模板\n',
+  );
+  fs.writeFileSync(path.join(userTpl, 'AGENTS.md'), '# 冒烟角色\n');
+  fs.writeFileSync(path.join(userTpl, 'project.yaml'), 'workspace:\n  name: null\n  created_at: null\n');
+  const listedUser = await fetch(`${base}/api/templates`).then((r) => r.json());
+  if (!listedUser.templates?.some((t) => t.id === 'smoke-role' && t.builtin === false)) {
+    die('用户自建模板没出现在列表里', JSON.stringify(listedUser.templates));
+  }
+  const userWs = path.join(work, '用户模板工作空间');
+  const createdUser = await fetch(`${base}/api/workspaces`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name: '用户模板工作空间', path: userWs, template: 'smoke-role' }),
+  }).then((r) => r.json());
+  if (!createdUser.id) die(`用用户模板新建失败：${createdUser.error}`);
+  if (!fs.existsSync(path.join(userWs, '.claude', 'skills', 'skill-creator', 'SKILL.md'))) {
+    die('用户模板漏了 skill-creator，共享 init 没有补上');
+  }
+  if (!fs.existsSync(path.join(userWs, 'input', 'raw')) || !fs.existsSync(path.join(userWs, 'output'))) {
+    die('用户模板铺出来缺 input/ 或 output/');
+  }
+  ok('用户自建模板能被扫到，新建后带 skill-creator');
 
   // ── 8 注册表没写到真 HOME ─────────────────────────────────────────────────
   if (!fs.existsSync(path.join(fakeHome, '.pmwork', 'dashboard', 'projects.json'))) {

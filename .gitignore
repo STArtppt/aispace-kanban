@@ -7,14 +7,13 @@ npm-package/
 *.local
 .env
 
-# template/ 是空骨架，不带任何示例内容 —— 新建工作空间从它铺出来，
-# 带了示例就会跟着复制过去（init_workspace.py 的 render_project_yaml 就是拿它当骨架的）。
-# 完整示例改成 Releases 里的 zip 单独发。
-# 下面两条是防呆：本地往模板里丢资料试脚本时，别顺手提交进来。
-template/input/raw/*
-!template/input/raw/.gitkeep
-template/input/assets/*
-!template/input/assets/.gitkeep
+# templates/ 里是空骨架，不带任何示例内容 —— 新建工作空间从选中的模板铺出来，
+# 带了示例就会跟着复制过去。完整示例改成 Releases 里的 zip 单独发。
+# 下面是防呆：本地往模板里丢资料试脚本时，别顺手提交进来。
+templates/*/input/raw/*
+!templates/*/input/raw/.gitkeep
+templates/*/input/assets/*
+!templates/*/input/assets/.gitkeep
 
 # 打给 Releases 的产物 + 示例资料原件（含真实截图，不入库）
 release/

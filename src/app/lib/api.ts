@@ -9,7 +9,7 @@ export type ReaderKind =
   | 'gallery';
 
 /**
- * 产出正文里的标注计数（约定见 template 的 pm-project-handover 技能）：
+ * 产出正文里的标注计数（约定见 templates/pm-aispace 的 pm-project-handover 技能）：
  * 推断 = 资料没写、AI 推出来的；口述待确认 = 来自会议或聊天；空白 = 该有结论但资料里没有。
  * 这三类是**有意留下的产出**，不是缺陷，所以界面上用中性灰，不上 orange。
  */
@@ -222,6 +222,23 @@ export interface RelinkCandidate {
 }
 
 /**
+ * 一份可用来「新建工作空间」的模板。
+ * 整份 TemplateList 都可选：老服务没有 /api/templates，前端就藏选择器和复制按钮。
+ */
+export interface WorkspaceTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  builtin?: boolean;
+}
+
+export interface TemplateList {
+  templates?: WorkspaceTemplate[];
+  userRoot?: string;
+  createPrompt?: string;
+}
+
+/**
  * POST/GET /api/projects/:id/ingest 的任务状态。
  * idle = 这个进程里还没跑过；running 时前端轮询；done/error 时展示 message。
  */
@@ -284,9 +301,17 @@ export const api = {
   projects: () => request<{ projects: Project[]; activeProjectId: string }>('/api/projects'),
   addProject: (root: string, name?: string) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ root, name }) }),
-  createWorkspace: (name: string, path: string) =>
-    request<Project>('/api/workspaces', { method: 'POST', body: JSON.stringify({ name, path }) }),
+  createWorkspace: (name: string, path: string, template?: string) =>
+    request<Project>('/api/workspaces', {
+      method: 'POST',
+      body: JSON.stringify({ name, path, ...(template ? { template } : {}) }),
+    }),
   template: () => request<{ root: string; ok: boolean }>('/api/template'),
+  /**
+   * 列出内置 + 用户自建模板，并给出「创建模板」提示词。
+   * 老服务没有这个接口（404），调用方要自己兜住，退回不选模板直接建。
+   */
+  templates: () => request<TemplateList>('/api/templates'),
   updateProject: (id: string, patch: { root?: string; name?: string }) =>
     request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   candidates: (id: string) =>

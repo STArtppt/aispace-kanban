@@ -1,9 +1,10 @@
-# 项目接手工作空间模板
+# 产品经理AI空间模板
 
 产品经理 / 需求分析师**接手既有项目**时用的 AI 工作空间模板。
 
-本目录是 [aispace-kanban](../) 看板仓库内的模板源（`template/`）：看板「新建工作空间」
-会调这里的 `scripts/init_workspace.py`。原先独立的 `pmwork-template` 仓库已并入此处。
+本目录是 [aispace-kanban](../../) 看板仓库内的一份模板（`templates/pm-aispace/`）。
+看板「新建工作空间」会调仓库里的 `templates/init_workspace.py --from` 指向这里。
+原先独立的 `pmwork-template` 仓库已并入此处。
 
 一句话说明它解决什么问题：接手项目时你会收到一堆 docx、PDF、Excel，人能看但 AI 读不了；
 这个模板把「资料 → 分析 → 文档 → 原型」四步串成一条 AI 能全程参与的流水线。
@@ -12,9 +13,10 @@
 
 ```bash
 # 1. 从模板起一个新工作空间（二选一）
-#    a) 在 aispace-kanban 看板里点「新建工作空间」
+#    a) 在 aispace-kanban 看板里点「新建」，选「产品经理AI空间模板」
 #    b) 命令行：
-python3 /path/to/aispace-kanban/template/scripts/init_workspace.py \
+python3 /path/to/aispace-kanban/templates/init_workspace.py \
+  --from /path/to/aispace-kanban/templates/pm-aispace \
   --name "项目名" --path ~/work/某个工作空间
 cd ~/work/某个工作空间
 

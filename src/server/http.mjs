@@ -6,14 +6,19 @@ import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import {
   addProject,
+  DEFAULT_TEMPLATE_ID,
   getProject,
   inspectWorkspace,
+  listTemplates,
   projectStatus,
+  readCreatePrompt,
   readProjects,
   removeProject,
+  resolveTemplate,
   resolveTemplateRoot,
   suggestRelinkCandidates,
   updateProject,
+  userTemplatesRoot,
 } from './config.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
@@ -172,11 +177,17 @@ function runInitOnce(bin, args, cwd) {
   });
 }
 
-/** 跑模板仓的初始化脚本，把它的 JSON 输出捞回来。解释器名各平台不同，挨个试。 */
-async function runInit(templateRoot, name, target) {
-  const script = [path.join(templateRoot, 'scripts', 'init_workspace.py'), '--name', name, '--path', target, '--json'];
+/** 跑共享的初始化脚本，把它的 JSON 输出捞回来。解释器名各平台不同，挨个试。 */
+async function runInit(templatesRoot, fromDir, name, target) {
+  const script = [
+    path.join(templatesRoot, 'init_workspace.py'),
+    '--from', fromDir,
+    '--name', name,
+    '--path', target,
+    '--json',
+  ];
   for (const [bin, ...prefix] of PYTHON_CANDIDATES) {
-    const result = await runInitOnce(bin, [...prefix, ...script], templateRoot);
+    const result = await runInitOnce(bin, [...prefix, ...script], templatesRoot);
     if (!result.missing) return result;
   }
   return {
@@ -570,20 +581,42 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return json(res, 200, { root, ok: Boolean(root) });
   }
 
-  // 新建工作空间：调模板的 init_workspace.py（默认是本仓 template/），建完自动登记
+  if (head === 'templates') {
+    const root = resolveTemplateRoot();
+    const templates = listTemplates().map(({ id, name, description, builtin }) => ({
+      id,
+      name,
+      description,
+      builtin,
+    }));
+    return json(res, 200, {
+      templates,
+      userRoot: userTemplatesRoot(),
+      createPrompt: readCreatePrompt(),
+      root,
+      ok: Boolean(root) || templates.length > 0,
+    });
+  }
+
+  // 新建工作空间：调共享 init_workspace.py 铺选中的模板，建完自动登记
   if (head === 'workspaces' && req.method === 'POST') {
     if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
     const body = await readBody(req);
     const name = (body.name || '').trim();
     const target = (body.path || '').trim();
     if (!name || !target) return json(res, 400, { error: '名称和路径都要填' });
-    const templateRoot = resolveTemplateRoot();
-    if (!templateRoot) {
+    const templatesRoot = resolveTemplateRoot();
+    if (!templatesRoot) {
       return json(res, 500, {
-        error: '找不到工作空间模板。它应该在看板仓库的 template/ 下，或用 PMWORK_TEMPLATE_ROOT 环境变量指过去。',
+        error: '找不到工作空间模板。它应该在看板仓库的 templates/ 下，或用 PMWORK_TEMPLATE_ROOT 环境变量指过去。',
       });
     }
-    const result = await runInit(templateRoot, name, target);
+    const templateId = (body.template || DEFAULT_TEMPLATE_ID).trim();
+    const tpl = resolveTemplate(templateId);
+    if (!tpl) {
+      return json(res, 400, { error: `没有这个模板：${templateId}` });
+    }
+    const result = await runInit(templatesRoot, tpl.root, name, target);
     if (!result.ok) return json(res, 400, { error: result.error });
     const project = addProject(result.root, name);
     return json(res, 200, project);

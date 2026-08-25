@@ -6,30 +6,114 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import YAML from 'yaml';
 
 export const CONFIG_DIR = path.join(os.homedir(), '.pmwork', 'dashboard');
 export const PROJECTS_FILE = path.join(CONFIG_DIR, 'projects.json');
+export const DEFAULT_TEMPLATE_ID = 'pm-aispace';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EMPTY = { schemaVersion: 1, activeProjectId: '', templateRoot: '', projects: [] };
 
+/** 用户自建模板落这里，升级 npm 包不会被覆盖。 */
+export function userTemplatesRoot() {
+  return path.join(os.homedir(), '.pmwork', 'templates');
+}
+
 /**
- * 找工作空间模板的位置 —— 新建工作空间时要调它的 init_workspace.py。
- * 模板随本仓一起维护，就在仓库根的 template/；配置和环境变量仍可覆盖。
- * 顺序：配置里写死的 > 环境变量 > 仓库内 template/。
+ * 内置模板目录（templates/，里面有 init_workspace.py 和各模板子目录）。
+ * 顺序：配置里写死的 > 环境变量 > 仓库内 templates/。
+ * 判定文件是共享的 init_workspace.py，不再是某个模板自己的 scripts/。
  */
 export function resolveTemplateRoot() {
   const candidates = [
     readProjects().templateRoot,
     process.env.PMWORK_TEMPLATE_ROOT,
-    path.resolve(HERE, '../../template'),
+    path.resolve(HERE, '../../templates'),
   ];
   for (const candidate of candidates) {
-    if (candidate && fs.existsSync(path.join(candidate, 'scripts', 'init_workspace.py'))) {
+    if (candidate && fs.existsSync(path.join(candidate, 'init_workspace.py'))) {
       return path.resolve(candidate);
     }
   }
   return '';
+}
+
+function readTemplateMeta(dir) {
+  try {
+    const raw = fs.readFileSync(path.join(dir, 'template.yaml'), 'utf8');
+    const data = YAML.parse(raw);
+    if (!data || typeof data !== 'object') return null;
+    const name = typeof data.name === 'string' ? data.name.trim() : '';
+    if (!name) return null;
+    const id = typeof data.id === 'string' ? data.id.trim() : '';
+    const description = typeof data.description === 'string' ? data.description.trim() : '';
+    return { id, name, description };
+  } catch {
+    return null;
+  }
+}
+
+function scanTemplateDir(root, builtin, byId) {
+  if (!root) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name.startsWith('_')) continue;
+    const abs = path.join(root, entry.name);
+    const meta = readTemplateMeta(abs);
+    if (!meta) continue;
+    const id = meta.id || entry.name;
+    byId.set(id, {
+      id,
+      name: meta.name,
+      description: meta.description,
+      root: abs,
+      builtin,
+    });
+  }
+}
+
+/**
+ * 列出可用模板。先扫内置 templates/，再扫 ~/.pmwork/templates/；同 id 用户覆盖内置。
+ * 读失败的目录直接跳过，不让列表接口崩。
+ */
+export function listTemplates() {
+  const byId = new Map();
+  scanTemplateDir(resolveTemplateRoot(), true, byId);
+  scanTemplateDir(userTemplatesRoot(), false, byId);
+  return [...byId.values()].sort((a, b) => {
+    if (a.builtin !== b.builtin) return a.builtin ? -1 : 1;
+    return a.name.localeCompare(b.name, 'zh');
+  });
+}
+
+export function resolveTemplate(id) {
+  const key = (id || '').trim();
+  if (!key) return null;
+  return listTemplates().find((item) => item.id === key) || null;
+}
+
+/** 把 create-prompt.md 里的路径占位符换成这台机器上的真实路径。读不到就返回空串。 */
+export function readCreatePrompt() {
+  const bundled = resolveTemplateRoot();
+  if (!bundled) return '';
+  let text = '';
+  try {
+    text = fs.readFileSync(path.join(bundled, 'create-prompt.md'), 'utf8');
+  } catch {
+    return '';
+  }
+  const skillCreator = path.join(bundled, 'pm-aispace', '.claude', 'skills', 'skill-creator');
+  const initScript = path.join(bundled, 'init_workspace.py');
+  return text
+    .replaceAll('{{userRoot}}', userTemplatesRoot())
+    .replaceAll('{{skillCreator}}', skillCreator)
+    .replaceAll('{{initScript}}', initScript);
 }
 
 export function readProjects() {
