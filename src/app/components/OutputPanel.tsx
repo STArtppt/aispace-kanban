@@ -4,13 +4,12 @@ import {
   Copy,
   FileText,
   FolderOpen,
+  Image,
   MonitorPlay,
-  ScrollText,
   Search,
-  Stamp,
   Star,
   StarOff,
-  type LucideIcon,
+  Table,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -28,10 +27,9 @@ const GROUPS = [
     key: 'analysis' as const,
     title: '分析中间产物',
     hint: '现状基线、需求拆解、澄清问题清单',
-    icon: ScrollText,
   },
-  { key: 'docs' as const, title: '对外交付文档', hint: 'PRD、需求规格、评审材料', icon: FileText },
-  { key: 'decisions' as const, title: '决策记录', hint: '一个决策一个文件，只追加不改历史', icon: Stamp },
+  { key: 'docs' as const, title: '对外交付文档', hint: 'PRD、需求规格、评审材料' },
+  { key: 'decisions' as const, title: '决策记录', hint: '一个决策一个文件，只追加不改历史' },
 ];
 
 type GroupKey = (typeof GROUPS)[number]['key'];
@@ -70,6 +68,21 @@ function matchOutput(item: FileItem, query: string): boolean {
   return q.split(/\s+/).every((part) => hay.includes(part));
 }
 
+function KindIcon({ item }: { item: { reader: string; ext?: string } }) {
+  if (item.reader === 'html') return <MonitorPlay className="size-4 text-muted-foreground" />;
+  if (
+    item.reader === 'table' ||
+    item.ext === '.xlsx' ||
+    item.ext === '.xls' ||
+    item.ext === '.csv' ||
+    item.ext === '.tsv'
+  ) {
+    return <Table className="size-4 text-muted-foreground" />;
+  }
+  if (item.reader === 'image') return <Image className="size-4 text-muted-foreground" />;
+  return <FileText className="size-4 text-muted-foreground" />;
+}
+
 /**
  * 汇报 / 演示用的 HTML 产出：能在预览里直接全屏放给客户看，
  * 和同名的 .md 源文并排躺在 output/docs/。列表里认得出来才不会临上场翻半天。
@@ -95,7 +108,6 @@ function annotationLabel(item: FileItem): string {
 
 function OutputRow({
   item,
-  icon: Icon,
   pinned,
   onTogglePin,
   projectId,
@@ -104,7 +116,6 @@ function OutputRow({
   onOpen,
 }: {
   item: FileItem;
-  icon: LucideIcon;
   pinned: boolean;
   onTogglePin: (path: string) => void;
   projectId: string;
@@ -114,11 +125,7 @@ function OutputRow({
 }) {
   return (
     <Row onClick={() => onOpen(item)} active={openPath === item.path}>
-      {isPresentable(item) ? (
-        <MonitorPlay className="size-4 text-muted-foreground" />
-      ) : (
-        <Icon className="size-4 text-muted-foreground" />
-      )}
+      <KindIcon item={item} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2">
           <span className="truncate text-sm">{item.title || item.name}</span>
@@ -169,7 +176,6 @@ function OutputGroup({
   title,
   hint,
   dir,
-  icon,
   files,
   total,
   searching,
@@ -183,7 +189,6 @@ function OutputGroup({
   title: string;
   hint: string;
   dir: GroupKey;
-  icon: LucideIcon;
   /** 已按收藏置顶 + 搜索过滤 + 排序 */
   files: FileItem[];
   /** 过滤前的总数，用来区分「这组本来就空」和「没搜到」 */
@@ -207,7 +212,6 @@ function OutputGroup({
             <OutputRow
               key={item.path}
               item={item}
-              icon={icon}
               pinned={pins.has(item.path)}
               onTogglePin={onTogglePin}
               projectId={projectId}
@@ -377,13 +381,12 @@ export function OutputPanel({
           </div>
         </div>
 
-        {groups.map(({ key, title, hint, icon, files, total }) => (
+        {groups.map(({ key, title, hint, files, total }) => (
           <TabsContent key={key} value={key}>
             <OutputGroup
               title={title}
               hint={hint}
               dir={key}
-              icon={icon}
               files={files}
               total={total}
               searching={searching}
