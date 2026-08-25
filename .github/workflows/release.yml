@@ -61,8 +61,9 @@ jobs:
 
       # 可信发布要 npm ≥ 11.5（Node 20 自带的是 10.x）。放在冒烟之后：
       # 冒烟仍跑在 Node 20 自带的 npm 上，和用户实际装包的环境一致。
+      # 钉 11 不用 @latest：npm 12 起要求 Node ≥ 22，会把本 job 钉死的 Node 20 顶掉（EBADENGINE）。
       - name: 升级 npm（可信发布需要 ≥ 11.5）
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
 
       # 无 NODE_AUTH_TOKEN：npm ≥ 11.5 在 GitHub Actions 里会自动改用 OIDC 凭证
       - name: npm publish

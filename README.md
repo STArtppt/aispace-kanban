@@ -227,13 +227,11 @@ node bin/cli.mjs serve                      # 起服务 → http://localhost:778
 
 ## 设计系统
 
-UI 组件来自 [startist-ui](../startist-ui),通过 shadcn registry 拉取(copy-in)。
-registry 还没部署到公网,本地更新组件的方法:
+UI 组件来自 startist-ui(暂未开源,demo 见 <https://ui.startist.top/>),
+通过 shadcn registry 拉取(copy-in)。更新组件的方法:
 
 ```bash
-cd ../startist-ui && npm run registry:build
-python3 -m http.server 5199 --directory public &     # 临时喂给 shadcn
-cd ../aispace-kanban && npx shadcn@latest add @startist/<组件名> --yes
+npx shadcn@latest add https://ui.startist.top/r/<组件名>.json --yes --overwrite
 ```
 
 配色遵守 startist 的硬约束:黑白灰为主,**orange(`--destructive`)只用于"需要注意"** ——
