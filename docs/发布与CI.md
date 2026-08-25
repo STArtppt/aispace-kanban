@@ -84,10 +84,55 @@ pnpm typecheck && pnpm build && pnpm build:npm && pnpm pack:npm && pnpm smoke:np
 
 ### 一次性准备
 
-1. 仓库 **Settings → Secrets and variables → Actions** 加一个 `NPM_TOKEN`，
-   值是对 `@startist` 有发布权限的 npm **automation token**
-   （`npm token create --type=automation`，classic token 里选 Automation）。
-2. 确认 npm 上 `@startist` 这个 scope 归你，且组织设置允许发布 public 包。
+发布走 npm 的**可信发布（Trusted Publishing）**：GitHub Actions 用 OIDC 向 npm
+证明「我是这个仓库的这个工作流」，发布凭证现场签发、用完即弃，
+不需要创建、轮换长期 `NPM_TOKEN`。
+
+但 Trusted Publisher 的配置入口在 npm 上**包自己的设置页**里——
+`@startist/aispace-kanban` 还没发布过、这个页面还不存在。
+所以一次性准备分两步：先手动把首版发出去（把包「生」出来），
+再回头把包连到本仓库的工作流上。
+
+#### 第一步：手动发首版（只做一次）
+
+用当初发 `@startist/pentou` 的那个 npm 账号，在装了 Python 3 的本机上：
+
+```bash
+# 1. 登录：npm ≥ 9 的登录在浏览器里完成，终端发起后等它自己回来
+npm login
+npm whoami    # 确认登的是对 @startist 有发布权的账号
+
+# 2. 把 package.json 的 "version" 改成首版号（如 0.2.0），提交
+
+# 3. 本地闸门完整走一遍（冒烟别跳，首版就翻车最难看）
+pnpm typecheck && pnpm build && pnpm build:npm && pnpm pack:npm && pnpm smoke:npm
+
+# 4. 发布：scope 包默认私有（restricted），必须显式 --access public 才是公开包
+cd npm-package
+npm publish --access public
+```
+
+- 账号开了双因素认证（2FA）的话，`publish` 会停下来要一次性验证码，
+  照提示输入即可（也可以 `--otp=123456` 直接带上）。
+- 发完用 `npm view @startist/aispace-kanban` 验一下，能列出版本信息就成了；
+  此时浏览器里打开 npmjs.com 也能看到包页面了。
+- **首版的版本号不要再推 tag**：CI 会试图再发同一个号，而 npm 不允许重发，
+  `publish` 步骤一定挂。从下一个版本（如 0.2.1）开始走 tag 流程；
+  首版想要 GitHub Release 记录的话，在 Releases 页面手动建一条就行。
+
+#### 第二步：配置可信发布（只做一次）
+
+1. 打开 npmjs.com 上 `@startist/aispace-kanban` 的包页面 →
+   **Settings（设置）** → 找到 **Trusted Publisher** 一节，连到本仓库。
+   字段对照着填：
+   - **Repository owner**：本仓库的 GitHub owner（用户名或组织名）
+   - **Repository name**：仓库名，即 `aispace-kanban`
+   - **Workflow filename**：`release.yml`（只要文件名，不含 `.github/workflows/` 前缀）
+   - **Environment**：可选。填了的话 `release.yml` 的 `publish` job 里要声明
+     同名的 `environment:`，相当于发布前多一道环境确认；不填就都不用动
+2. 配完发一个下一个小版本实测整条链路：改版本号 → 推 tag →
+   CI 三平台冒烟 → OIDC 自动发布。这次成功，可信发布就算接通了；
+   仓库里如果以前配过 `NPM_TOKEN` secret，到这一步可以删掉。
 
 ### 每次发版
 
@@ -107,13 +152,16 @@ git push && git push --tags
 2. 核对 tag 版本号 == `package.json` 里的版本号，不一致就停
 3. 用 tag 的版本号组包（`build-npm-package.mjs --version 0.2.0`）
 4. **再冒烟一次**：这次装的是真正要推上 npm 的那个 tgz
-5. `npm publish --access public`
+5. `npm publish --access public`（可信发布，工作流里没有长期令牌）
 6. 建一条 GitHub Release，附上 tgz 和 `npx` 命令
 
 > **tag 推上去就是要发。** 版本号以 tag 为准，别拿 tag 当草稿。
 > 发错了不要删 tag 重发同一个号 —— npm 不允许重发同版本号，直接发下一个补丁版。
 
-### 手动发（CI 挂了 / 内网应急）
+### 手动发（CI 挂了 / 内网应急 / 发首版）
+
+先 `npm login` 登录对 `@startist` 有发布权的账号（详见上文「一次性准备」第一步），
+然后：
 
 ```bash
 pnpm build:npm --version 0.2.0     # 或改 package.json 后直接 pnpm build:npm
@@ -189,7 +237,7 @@ reveal 接口曾经在非 macOS 上直接返 501，就是因为这段散在 `htt
 | 冒烟第 4 / 7 步失败且提示 Python | 那台机器没 Python 3（新建工作空间和触发转换都要它）；CI 里是 `actions/setup-python` 装的 |
 | 冒烟第 5 步说骨架缺文件 | 多半又踩了 npm 的打包规则（见第 4 节的表） |
 | 冒烟第 8-11 步失败（路径穿越 / 越界） | **停下来**。这是只读红线破了，比发版重要 |
-| `publish` 步骤 401 / 403 | `NPM_TOKEN` 过期、权限不够，或 scope 不归你 |
+| `publish` 步骤 401 / 403 | 可信发布没对上：npm 侧配的 owner / 仓库名 / 工作流文件名和实际不一致；`release.yml` 丢了 `id-token: write` 权限；npm 版本低于 11.5（工作流里应有升级步骤）；或 scope 不归你 |
 | `publish` 说版本已存在 | npm 不允许重发同版本号，发下一个补丁版 |
 | 装完打开是旧界面 | `dist/` 是上一次构建的；组包脚本只检查存在，不检查新旧 |
 

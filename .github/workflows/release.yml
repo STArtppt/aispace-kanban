@@ -2,7 +2,9 @@ name: release
 
 # 推一个 v* tag 就发布到 npm。版本号**以 tag 为准**（注入给组包脚本），
 # 所以 tag 一旦推上去就是要发的那个版本，别拿 tag 当草稿。
-# 前置：仓库 Settings → Secrets 里配好 NPM_TOKEN（对 @startist 有发布权限的 automation token）。
+# 发布走 npm 可信发布（Trusted Publishing / OIDC）：发布凭证由 GitHub 现场签发，
+# npm 侧核对「仓库 + 工作流文件」，不依赖长期 NPM_TOKEN。
+# 前置：npmjs.com 包设置里把 Trusted Publisher 指到本仓库的这个工作流（见 docs/发布与CI.md）。
 
 on:
   push:
@@ -19,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # 建 Release 用
+      id-token: write # 可信发布用：npm 拿它换 OIDC 发布凭证
     steps:
       - uses: actions/checkout@v4
 
@@ -61,11 +64,15 @@ jobs:
       - name: 发布前冒烟
         run: node scripts/smoke-package.mjs
 
+      # 可信发布要 npm ≥ 11.5（Node 20 自带的是 10.x）。放在冒烟之后：
+      # 冒烟仍跑在 Node 20 自带的 npm 上，和用户实际装包的环境一致。
+      - name: 升级 npm（可信发布需要 ≥ 11.5）
+        run: npm install -g npm@latest
+
+      # 无 NODE_AUTH_TOKEN：npm ≥ 11.5 在 GitHub Actions 里会自动改用 OIDC 凭证
       - name: npm publish
         working-directory: npm-package
         run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: 建 GitHub Release
         uses: softprops/action-gh-release@v2
