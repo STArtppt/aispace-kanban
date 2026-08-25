@@ -52,7 +52,8 @@ output/           阶段三：产出
   analysis/         现状基线、需求拆解、澄清问题清单
   docs/             PRD、需求规格、评审材料
   decisions/        决策记录，一事一档
-prototypes/       阶段四：Axhub Make 客户端目录（保持空，别手动放文件）
+prototypes/       阶段四：可预览原型库（Axhub Make 客户端 / zip 包 / 自己写的单页 HTML）
+  <名字>/index.html  一个东西一个子目录，入口必须叫 index.html，否则看板扫不到
 scripts/
   ingest.py         文档转换调度
   layout.py         converted/ 的落点规则（三个转换脚本共用一份）
@@ -111,8 +112,11 @@ MinerU 是唯一会把资料外发的环节，涉密资料用 `--pdf-engine mark
 [Axhub Make](https://github.com/lintendo/Axhub-Make)。
 
 Axhub Make 服务端是后台常驻服务，**不在本项目里启动**。在它的页面上新建项目并指向本仓库的
-`prototypes/`，它会自动在该目录下构建客户端（自带 README 和目录结构）。
-所以 `prototypes/` 保持空目录，**不要手动往里放文件**，包括 README。
+`prototypes/`，它会自动在该目录下构建客户端（自带 README 和目录结构）——那个目录别去动。
+
+`prototypes/` 同时也是**可预览原型库**：AI 生成的方案页、可视化、演示页也放这里，
+规则是**一个东西一个子目录、入口叫 `index.html`**（散装 `.html` 放根上看板扫不到）。
+自带 `.md` 源文的交付文档仍然走 `output/docs/`，两者的分界见 AGENTS.md。
 
 ## 越用越顺手
 

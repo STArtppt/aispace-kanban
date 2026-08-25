@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF 转换引擎阶梯</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { margin: 0; }
+  h1, h2, h3, p, dl, dd, ul, figure { margin: 0; }
+  ul { padding: 0; }
+  img { max-width: 100%; }
+</style>
+<style>
+  /* 令牌取自 aispace-kanban 的 globals.css：黑白灰为主，orange 只给「需要注意」。 */
+  :root {
+    --bg:            oklch(1 0 0);
+    --fg:            oklch(0.145 0 0);
+    --muted:         oklch(0.556 0 0);
+    --faint:         oklch(0.97 0 0);
+    --line:          oklch(0.922 0 0);
+    --line-strong:   oklch(0.82 0 0);
+    --warn:          oklch(0.646 0.222 41.116);
+    --warn-soft:     oklch(0.646 0.222 41.116 / 0.09);
+    --ok:            oklch(0.145 0 0);
+
+    --sans: 'Inter', system-ui, 'Source Han Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, Consolas, 'PingFang SC', monospace;
+    --display: 'Playfair Display', 'Source Han Serif SC', 'Songti SC', Georgia, serif;
+
+    --measure: 68ch;
+    --pad: clamp(1.25rem, 5vw, 4rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:          oklch(0.145 0 0);
+      --fg:          oklch(0.985 0 0);
+      --muted:       oklch(0.708 0 0);
+      --faint:       oklch(0.225 0 0);
+      --line:        oklch(1 0 0 / 0.12);
+      --line-strong: oklch(1 0 0 / 0.26);
+      --warn:        oklch(0.705 0.213 47.604);
+      --warn-soft:   oklch(0.705 0.213 47.604 / 0.14);
+      --ok:          oklch(0.985 0 0);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg:          oklch(0.145 0 0);
+    --fg:          oklch(0.985 0 0);
+    --muted:       oklch(0.708 0 0);
+    --faint:       oklch(0.225 0 0);
+    --line:        oklch(1 0 0 / 0.12);
+    --line-strong: oklch(1 0 0 / 0.26);
+    --warn:        oklch(0.705 0.213 47.604);
+    --warn-soft:   oklch(0.705 0.213 47.604 / 0.14);
+    --ok:          oklch(0.985 0 0);
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 62rem;
+    margin: 0 auto;
+    padding: var(--pad) var(--pad) 6rem;
+    display: flex;
+    flex-direction: column;
+    gap: 4.5rem;
+  }
+
+  /* ── 头 ───────────────────────────────────────────────── */
+  header { display: flex; flex-direction: column; gap: 1.5rem; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  h1 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: clamp(2rem, 5.5vw, 3.1rem);
+    line-height: 1.16;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    margin: 0;
+  }
+
+  .lede {
+    max-width: var(--measure);
+    font-size: 1.06rem;
+    color: var(--fg);
+  }
+
+  .verdicts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding-top: 0.5rem;
+  }
+  .verdict {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    border: 1px solid var(--line-strong);
+    padding: 0.35rem 0.7rem;
+    font-size: 0.85rem;
+  }
+  .verdict b { font-weight: 600; }
+  .verdict span { color: var(--muted); font-family: var(--mono); font-size: 0.74rem; }
+
+  /* ── 章节 ─────────────────────────────────────────────── */
+  section { display: flex; flex-direction: column; gap: 1.35rem; }
+
+  h2 {
+    font-family: var(--sans);
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0;
+    padding-bottom: 0.85rem;
+    border-bottom: 1px solid var(--line-strong);
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-size: 1.02rem;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  p { margin: 0; max-width: var(--measure); }
+  .muted { color: var(--muted); }
+  .small { font-size: 0.9rem; }
+
+  code, .m { font-family: var(--mono); font-size: 0.86em; }
+  code {
+    background: var(--faint);
+    padding: 0.1em 0.35em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+
+  strong { font-weight: 600; }
+  em.warn { font-style: normal; color: var(--warn); font-weight: 500; }
+
+  /* ── 两个问题 ─────────────────────────────────────────── */
+  .problems { display: grid; gap: 1.75rem; grid-template-columns: 1fr; }
+  @media (min-width: 46rem) { .problems { grid-template-columns: 1fr 1fr; gap: 2.5rem; } }
+  .problem { display: flex; flex-direction: column; gap: 0.7rem; }
+  .problem p { max-width: none; }
+
+  .glyphs {
+    display: flex;
+    gap: 0.75rem;
+    margin-top: 0.35rem;
+    flex-wrap: wrap;
+  }
+  .glyph {
+    border: 1px solid var(--line);
+    padding: 0.6rem 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 8.5rem;
+  }
+  .glyph .ch { font-size: 1.9rem; line-height: 1.1; font-family: var(--display); }
+  .glyph .cp { font-family: var(--mono); font-size: 0.7rem; color: var(--muted); letter-spacing: 0.04em; }
+  .glyph .tag { font-size: 0.74rem; color: var(--muted); }
+  .glyph.bad { border-color: var(--warn); background: var(--warn-soft); }
+  .glyph.bad .tag { color: var(--warn); }
+
+  /* ── 表 ───────────────────────────────────────────────── */
+  .scroll { overflow-x: auto; border: 1px solid var(--line); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+  th, td {
+    text-align: left;
+    padding: 0.7rem 0.9rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  thead th {
+    font-size: 0.72rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    white-space: nowrap;
+    background: var(--faint);
+  }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .yes { color: var(--fg); }
+  .no  { color: var(--warn); }
+  .mark { font-family: var(--mono); font-weight: 700; margin-right: 0.35rem; }
+
+  /* ── 阶梯 ─────────────────────────────────────────────── */
+  .ladder { display: flex; flex-direction: column; border: 1px solid var(--line-strong); }
+  .rung {
+    display: grid;
+    grid-template-columns: 3.25rem 1fr;
+    border-bottom: 1px solid var(--line);
+  }
+  .rung:last-child { border-bottom: 0; }
+  .rung .tier {
+    font-family: var(--mono);
+    font-size: 1.05rem;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 1.05rem 0 0;
+    color: var(--muted);
+    border-right: 1px solid var(--line);
+    background: var(--faint);
+  }
+  .rung .body { padding: 1rem 1.1rem; display: flex; flex-direction: column; gap: 0.3rem; }
+  .rung .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.6rem; }
+  .rung .engine { font-family: var(--mono); font-weight: 700; font-size: 0.95rem; }
+  .rung .cond { color: var(--muted); font-size: 0.85rem; }
+  .rung .note { font-size: 0.9rem; max-width: var(--measure); }
+  .rung.fallback .tier { color: var(--warn); }
+
+  .lane-note {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr;
+    gap: 0.75rem;
+    font-size: 0.9rem;
+    padding-top: 0.15rem;
+  }
+  .lane-note dt { font-family: var(--mono); color: var(--muted); font-size: 0.8rem; padding-top: 0.15rem; }
+  .lane-note dd { margin: 0; }
+
+  /* ── 三条硬限制 ───────────────────────────────────────── */
+  .limits { display: grid; gap: 0; border-top: 1px solid var(--line-strong); }
+  .limit {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.35rem;
+    padding: 1.1rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  @media (min-width: 46rem) {
+    .limit { grid-template-columns: 14rem 1fr; gap: 1.5rem; align-items: start; }
+  }
+  .limit .what { font-weight: 600; }
+  .limit .why { color: var(--muted); font-size: 0.92rem; }
+  .limit .why code { background: transparent; padding: 0; }
+
+  /* ── 坑 ───────────────────────────────────────────────── */
+  .traps { display: flex; flex-direction: column; border-top: 1px solid var(--warn); }
+  .trap {
+    display: grid;
+    grid-template-columns: 2rem 1fr;
+    gap: 0.9rem;
+    padding: 1.05rem 0;
+    border-bottom: 1px solid var(--line);
+    align-items: start;
+  }
+  .trap .n {
+    font-family: var(--mono);
+    font-weight: 700;
+    color: var(--warn);
+    font-size: 0.95rem;
+    padding-top: 0.08rem;
+  }
+  .trap .t { display: flex; flex-direction: column; gap: 0.3rem; }
+  .trap .t b { font-weight: 600; }
+  .trap .t p { font-size: 0.92rem; color: var(--muted); max-width: var(--measure); }
+  .trap .t p code { background: transparent; padding: 0; color: var(--fg); }
+
+  /* ── 验收 ─────────────────────────────────────────────── */
+  .checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+  .checks li {
+    display: grid;
+    grid-template-columns: 1.6rem 1fr;
+    gap: 0.6rem;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.94rem;
+    align-items: start;
+  }
+  .checks li:last-child { border-bottom: 0; }
+  .checks .box {
+    width: 0.95rem; height: 0.95rem;
+    border: 1px solid var(--line-strong);
+    margin-top: 0.42rem;
+  }
+  .checks li p { max-width: none; }
+  .checks .tag {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-right: 0.5rem;
+  }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding-top: 1.5rem;
+    font-size: 0.85rem;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  footer p { max-width: none; }
+
+  a { color: inherit; text-decoration: underline; text-underline-offset: 0.2em; text-decoration-color: var(--line-strong); }
+  a:hover { text-decoration-color: currentColor; }
+  a:focus-visible { outline: 2px solid var(--warn); outline-offset: 3px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <header>
+    <div class="eyebrow">aispace-kanban · 路线图第 4 条</div>
+    <h1>PDF 转换引擎阶梯</h1>
+    <p class="lede">
+      把 PDF / PPTX 的默认转换从 MinerU 在线 API 换成本地的 anydoc，MinerU 退成扫描件与抽图的兜底。
+      目的不是提速，是<strong>让日常入库不再依赖网络</strong>，顺带修掉现有兜底静默损坏中文的问题。
+    </p>
+    <div class="verdicts">
+      <div class="verdict"><b>引入</b><span>@firecrawl/anydoc 0.2.3</span></div>
+      <div class="verdict"><b>保留</b><span>MinerU · 扫描件 / 抽图</span></div>
+      <div class="verdict"><b>淘汰</b><span>markitdown · 仅留 .msg</span></div>
+      <div class="verdict"><b>不引</b><span>pdf-inspector · 已内嵌</span></div>
+    </div>
+  </header>
+
+  <section>
+    <h2>为什么要改</h2>
+    <div class="problems">
+
+      <div class="problem">
+        <h3>网络是单点</h3>
+        <p class="small">
+          MinerU 是整条入库链路里唯一外发资料的环节，也是唯一会因为网络失败的环节。
+          轮询 5 秒一次、上限 900 秒，赶上服务抖动就是等一刻钟拿一个失败。
+        </p>
+        <p class="small muted">
+          它还有 200 页 / 200 MB / 每天 1000 页的硬限制 ——
+          稍厚一点的规程、标准、教材根本进不来。
+        </p>
+      </div>
+
+      <div class="problem">
+        <h3>没配 key 时的兜底会静默损坏中文</h3>
+        <p class="small">
+          实测 markitdown 转中文 PDF，会把常用汉字写成<strong>康熙部首</strong>区的同形字。
+          产物肉眼看着没问题，但 <code>grep 水库</code> 一条都搜不到。
+        </p>
+        <div class="glyphs">
+          <div class="glyph">
+            <div class="ch">水</div>
+            <div class="cp">U+6C34</div>
+            <div class="tag">源文档</div>
+          </div>
+          <div class="glyph bad">
+            <div class="ch">⽔</div>
+            <div class="cp">U+2F54</div>
+            <div class="tag">markitdown 产物</div>
+          </div>
+        </div>
+        <p class="small muted">
+          「门」同理：<code>U+95E8</code> → <code>U+2ED4</code>。
+          看板搜索和后面所有 AI 分析都建立在这份产物上 ——
+          这比转失败更糟，转失败至少台账上是红的。
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>实测对照 · macOS arm64 / Node 22 / anydoc 0.2.3</h2>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">场景</th>
+            <th scope="col">markitdown（现兜底）</th>
+            <th scope="col">anydoc</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">中文 PDF 码位</th>
+            <td class="no"><span class="mark">✗</span>康熙部首，搜不到「水库」</td>
+            <td class="yes"><span class="mark">✓</span>全对</td>
+          </tr>
+          <tr>
+            <th scope="row">标题层级</th>
+            <td class="no"><span class="mark">✗</span>全丢</td>
+            <td class="yes"><span class="mark">✓</span><code>#</code> / <code>##</code> 还原</td>
+          </tr>
+          <tr>
+            <th scope="row">369 页中文 PDF（8.4 MB）</th>
+            <td class="muted">—</td>
+            <td class="yes num"><span class="mark">✓</span>1.3 秒 · 24.6 万字 · 560 行表格<br><span class="muted small">MinerU 超 200 页会被直接拒</span></td>
+          </tr>
+          <tr>
+            <th scope="row">真实中文 PPTX</th>
+            <td class="muted">—</td>
+            <td class="yes num"><span class="mark">✓</span>0.7 秒 · 91 个标题 · 137 行表格</td>
+          </tr>
+          <tr>
+            <th scope="row">扫描件</th>
+            <td class="no"><span class="mark">✗</span>静默产出空文件</td>
+            <td class="yes"><span class="mark">✓</span>明确报错，带类型和页数</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted">
+      anydoc 是 MIT 的 Rust 单二进制，无运行时依赖：npm 包装 10 KB + 平台二进制 6.7 MB，按平台只装一个。
+      <strong>不要单独再引 pdf-inspector</strong> —— anydoc 的 PDF 后端就是它，而且它的 npm 包没有
+      darwin-x64 预编译，Intel Mac 上装不上。
+    </p>
+  </section>
+
+  <section>
+    <h2>anydoc 做不到的三件事 —— 这就是 MinerU 必须留着的理由</h2>
+    <div class="limits">
+      <div class="limit">
+        <div class="what">PDF 里的图一张都拿不到</div>
+        <div class="why">
+          不是 CLI 的问题：Python 绑定调 <code>to_document()</code> 对 PDF 直接抛
+          <code>UnsupportedError: PDF converts directly to Markdown</code>。
+          现在 <code>write_mineru_result()</code> 是会把图落进 <code>input/assets/</code> 的，这条能力只有 MinerU 有。
+        </div>
+      </div>
+      <div class="limit">
+        <div class="what">不做 OCR</div>
+        <div class="why">
+          npm CLI 连 <code>--ocr</code> 选项都没有 —— OCR 是 Rust 的 build-time feature，
+          还要外挂 PDFium 与 ONNX Runtime。
+        </div>
+      </div>
+      <div class="limit">
+        <div class="what">版式启发式基于字号</div>
+        <div class="why">
+          封面、目录、多栏这类页会翻车：369 页那份出了 897 个标题，版权页被当成表格。
+          MinerU 的版面模型在这类页上明显更好。
+        </div>
+      </div>
+    </div>
+    <p class="small muted">
+      PPTX 的图：CLI 出的 markdown 不带图，但 Python 绑定的 <code>to_document()</code> 能拿到原始图片字节（实测那份 pptx 有 76 张）。
+      <strong>本条不走 Python 绑定</strong> —— <code>ingest.py</code> 的「零 Python 依赖」是硬约束，为抽图破例不值当。
+    </p>
+  </section>
+
+  <section>
+    <h2>改成一条阶梯</h2>
+    <div class="ladder">
+      <div class="rung">
+        <div class="tier">①</div>
+        <div class="body">
+          <div class="head"><span class="engine">anydoc</span><span class="cond">默认 · 本地 · 不联网</span></div>
+          <p class="note">绝大多数 PDF 走到这里就结束了。</p>
+        </div>
+      </div>
+      <div class="rung fallback">
+        <div class="tier">②</div>
+        <div class="body">
+          <div class="head"><span class="engine">MinerU --ocr</span><span class="cond">anydoc 报 Scanned / ImageBased 时自动升级</span></div>
+          <p class="note">
+            不需要额外的探测工具：anydoc 的报错串里自带类型和页数，正则抓一下就能路由。
+            没配 key 就记一条 <em class="warn">⚠ 扫描件需 OCR</em>，不算失败。
+          </p>
+        </div>
+      </div>
+      <div class="rung">
+        <div class="tier">③</div>
+        <div class="body">
+          <div class="head"><span class="engine">--pdf-engine mineru</span><span class="cond">用户显式指定</span></div>
+          <p class="note">要抽图、要公式、版式复杂时手动走这条。</p>
+        </div>
+      </div>
+    </div>
+    <dl class="lane-note">
+      <dt>PPTX</dt>
+      <dd>默认引擎维持 MinerU（要抽图）；没配 key 时的兜底从 markitdown 改成 anydoc。</dd>
+      <dt>.msg</dt>
+      <dd>继续 markitdown —— 这是留着它的唯一理由。</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>改动清单</h2>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">文件</th>
+            <th scope="col">改什么</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row"><code>scripts/anydoc.py</code><br><span class="muted small">新增 · 模板平面</span></th>
+            <td>
+              接口对齐同目录的 <code>mineru.py</code>，只依赖标准库。
+              <code>find_bin()</code> 先读环境变量 <code>ANYDOC_BIN</code>、再 <code>shutil.which</code>，
+              <strong>不要自动 fallback 到 npx</strong>（首次会联网下载，等于把问题请回来）。
+              <code>NeedsOcrError</code> 从 stderr 解析出 <code>pdf_type</code> 与 <code>pages</code>。
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><code>scripts/ingest.py</code><br><span class="muted small">模板平面 · 8 处</span></th>
+            <td>
+              <code>import anydoc</code>(L68) ·
+              新增 <code>ANYDOC</code> 集合(L92) ·
+              <code>resolve_pdf_engine()</code> 改四档(L952) ·
+              <code>plan()</code> 分支排在 mineru 前(L984) ·
+              新增 <code>convert_anydoc()</code>(L813 旁) ·
+              <code>main()</code> dispatch 接 <code>NeedsOcrError</code>(L1170) ·
+              <code>--pdf-engine</code> choices(L1105) ·
+              没配 key 的提示文案(L1127)
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><code>src/server/http.mjs</code><br><span class="muted small">服务端 · 2 处</span></th>
+            <td>
+              <code>startIngest()</code>(L355) 往 spawn 的 env 注入 <code>ANYDOC_BIN</code>，
+              解析失败就不注入 ·
+              <code>summarizeIngestLog()</code>(L224) 新增两条分支
+            </td>
+          </tr>
+          <tr>
+            <th scope="row"><code>package.json</code> ·<br><code>build-npm-package.mjs</code></th>
+            <td>加 <code>@firecrawl/anydoc</code> 依赖，并给组包脚本补一个「运行时用到但不是静态 import」的显式集合（见坑 1）。</td>
+          </tr>
+          <tr>
+            <th scope="row">文档</th>
+            <td>
+              <code>pm-doc-ingest/SKILL.md</code> 的分派表与整节「MinerU 相关」·
+              <code>.env.example</code> 的 <code>MINERU_API_KEY</code> 注释 ·
+              <code>AGENTS.md</code> / <code>README.md</code> / <code>input/README.md</code> 里写「PDF → MinerU」的地方
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="small muted">
+      <code>migrate_converted.py</code> 不用动（它不认引擎名）。<code>npm-package/</code> 是生成的，不要手改。
+    </p>
+  </section>
+
+  <section>
+    <h2>四个坑 · 都是「本地绿了、发出去坏了」那一类</h2>
+    <div class="traps">
+
+      <div class="trap">
+        <div class="n">01</div>
+        <div class="t">
+          <b>组包脚本会漏掉这个依赖</b>
+          <p>
+            <code>build-npm-package.mjs</code>(L100–133) 靠正则扫裸 import 字面量决定发布包的 dependencies。
+            <code>createRequire(...).resolve('@firecrawl/anydoc/cli.js')</code> 匹配不上 ——
+            <code>createRequire(</code> 里是大写 R，参数也不是字符串字面量。
+            结果是本地跑得好好的、发出去的包里没这个依赖，装包的人一转 PDF 就悄悄退回兜底。
+          </p>
+        </div>
+      </div>
+
+      <div class="trap">
+        <div class="n">02</div>
+        <div class="t">
+          <b>新的日志分支必须排在 mineru 那条<em class="warn">前面</em></b>
+          <p>
+            <code>summarizeIngestLog()</code> 里那条判断吃的是<strong>整段日志</strong>而不是某一行：
+            只要日志里任何地方出现过 mineru 和「缺 / 失败」，它就先命中，
+            用户看到的就变成「检查 token 是否正确」这种驴唇不对马嘴的话。
+          </p>
+        </div>
+      </div>
+
+      <div class="trap">
+        <div class="n">03</div>
+        <div class="t">
+          <b><code>subprocess.run</code> 必须显式给 <code>encoding="utf-8"</code></b>
+          <p>
+            只写 <code>text=True</code> 的话，Windows 上默认跟系统 locale 走，中文正文当场炸。
+            和 <code>ingest.py</code> 顶上那段 <code>reconfigure</code> 是同一个坑。
+          </p>
+        </div>
+      </div>
+
+      <div class="trap">
+        <div class="n">04</div>
+        <div class="t">
+          <b>扫描件不算 <code>failures</code></b>
+          <p>
+            它不是失败，是缺配置。算进去会让整批退出码变 1，看板整条飘红。
+            另外升级进 <code>deferred</code> 的文件必须让 <code>mineru.parse_batch(is_ocr=True)</code> ——
+            不能沿用命令行 <code>--ocr</code> 的默认 <code>False</code>，它们本来就是扫描件。
+          </p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section>
+    <h2>验收 · typecheck 绿不算做完</h2>
+    <ul class="checks">
+      <li><span class="box" aria-hidden="true"></span><p><span class="tag">build</span><code>pnpm typecheck</code> + <code>pnpm build</code> 绿。</p></li>
+      <li><span class="box" aria-hidden="true"></span><p><span class="tag">cli</span>一份中文 PDF → 产物里能 <code>grep</code> 到正文中的中文词，frontmatter 的 <code>converted_by</code> 是 <code>anydoc</code>。</p></li>
+      <li><span class="box" aria-hidden="true"></span><p><span class="tag">cli</span>一份扫描版 PDF，<strong>没配</strong> <code>MINERU_API_KEY</code> → 台账是 <em class="warn">⚠ 扫描件需 OCR</em>，脚本退出码仍是 0。</p></li>
+      <li><span class="box" aria-hidden="true"></span><p><span class="tag">cli</span>同一份扫描件，<strong>配了</strong> key → 自动走 MinerU OCR 出正文。</p></li>
+      <li><span class="box" aria-hidden="true"></span><p><span class="tag">回归</span><code>--pdf-engine mineru --force</code> 重转一份带图的 PDF → 图仍落进 <code>input/assets/</code>，链接点得开。<strong>别把抽图能力弄丢了。</strong></p></li>
+      <li><span class="box" aria-hidden="true"></span><p><span class="tag">浏览器</span>重启 <code>pnpm serve</code>，点一次「转换」；再把 <code>ANYDOC_BIN</code> 指到一个不存在的路径点一次 —— 提示要是人话，不是一段 traceback。</p></li>
+      <li><span class="box" aria-hidden="true"></span><p><span class="tag">装包</span><code>pnpm build:npm &amp;&amp; node scripts/smoke-package.mjs</code>：干净目录装包后能转 PDF。这一步专门验坑 1，跳过等于没验。</p></li>
+    </ul>
+  </section>
+
+  <footer>
+    <p>实测数据来自 2026-08-25 在 macOS arm64 / Node 22 上对 anydoc 0.2.3、pdf-inspector 1.17.0 与 markitdown 的对比运行。</p>
+    <p>完整规格见仓库 <code>docs/路线图.md</code> 第 4 条 —— 做完就从那里删掉。</p>
+  </footer>
+
+</div>
+</body>
+</html>

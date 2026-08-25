@@ -26,7 +26,7 @@ input/  →  （分析）  →  output/  →  prototypes/
 | `output/analysis/` | 分析中间产物（现状基线、需求拆解、澄清问题清单） | 自由写 |
 | `output/docs/` | 对外交付文档（PRD、需求规格、评审材料）；**演示/汇报用的 HTML 也放这里** | 自由写，见下文 |
 | `output/decisions/` | 决策记录：一个决策一个文件 | 只追加，不要改历史决策 |
-| `prototypes/` | Axhub Make 客户端目录 | **不要手动创建文件**，见下文 |
+| `prototypes/` | 可预览原型库：Axhub Make 客户端、zip 导出包、自己写的单页 HTML | **一个东西一个子目录，入口必须叫 `index.html`**，见下文 |
 
 ## 产物落点：`input/converted/` 镜像 `input/raw/`
 
@@ -314,18 +314,34 @@ output/docs/2026-08-18-需求评审材料.html    ← 渲染产物，一起改
 - **看板已经支持**：`output/docs/*.html` 在「产出文档」视图里带「可演示」标记，
   点开是 iframe 预览，下面有「全屏演示」和「用浏览器打开」——汇报现场直接用。
 
-**不要放进 `prototypes/`。** 那是 Axhub Make 的地盘（见下节），而且看板扫 `prototypes/`
-只认 `<目录>/index.html` 或 zip 包，散装 HTML 文件放进去根本扫不到。
+**和 `prototypes/` 怎么分**：看有没有 `.md` 源文。
+
+- 有 md 源、html 只是它的渲染产物（PRD、评审材料）→ `output/docs/`，两份并排同名。
+- **没有 md 源、页面本身就是产物**（原型、可视化、方案页、演示页）→ `prototypes/<名字>/index.html`，见下节。
 
 ## 阶段四：原型
 
-`prototypes/` 是给 [Axhub Make](https://github.com/lintendo/Axhub-Make) 用的**客户端目录**。
+`prototypes/` 是**可预览原型库**。看板扫这个目录，把每一项渲染成能点开的页面。
+里面可以同时住三种东西：
 
-- Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也不要尝试在这里跑 `npx @axhub/make`。
-- 用户在 Axhub Make 页面上新建项目并指向本仓库的 `prototypes/`，
-  它会自动在该目录下构建客户端，**并自带自己的 README 和目录结构**。
-- 所以：**不要在 `prototypes/` 下手动创建任何文件**（包括 README），会和它生成的内容冲突。
-  这个目录看起来是空的属于正常状态。
+| 来源 | 形态 |
+| --- | --- |
+| [Axhub Make](https://github.com/lintendo/Axhub-Make) 构建的客户端 | 它自己建的目录，自带 README 和结构 |
+| 别人给的 zip 导出包 | `<名字>.zip`，包内根上有 `index.html` |
+| **你自己写的、或 AI 生成的单页 HTML** | `<名字>/index.html` |
+
+**三条硬规则**：
+
+- **一个东西一个子目录，入口必须叫 `index.html`。** 看板只认
+  `<子目录>/index.html`、`prototypes/index.html` 和 zip 包 ——
+  散装的 `方案.html` 直接扔进 `prototypes/` 根上，**根本扫不到**，界面上什么都不会出现。
+- **`<title>` 就是看板里显示的名字**，别留空、别叫「Document」。
+- **自包含**：内联 CSS、不引外部字体和脚本（看板自己也只声明字体栈不加载 web 字体），
+  双击能在浏览器打开，拷给别人也能看。
+
+Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也不要尝试在这里跑 `npx @axhub/make`。
+用户在它的页面上新建项目并指向本仓库的 `prototypes/`，它会自动在该目录下构建客户端。
+**不要动它生成的目录**；你自己的东西各占一个子目录，两边互不干扰。
 
 你在阶段四的职责是**准备好输入**：用 `pm-prototype-brief` 把 `output/` 里的文档收敛成
 `output/analysis/原型输入说明.md`（页面清单、信息架构、主流程点击路径、字段与状态、交互规则），
@@ -346,7 +362,8 @@ output/docs/2026-08-18-需求评审材料.html    ← 渲染产物，一起改
 - 不要手改 `input/converted/` 的产物，改脚本或在 `output/analysis/` 里记录修正。
 - 不要往 `input/converted/` 里手动建目录。落点规则在 `scripts/layout.py`，
   `SplittingObject/` 和 `MergedObject/` 由脚本创建，手建的目录看板认不出来。
-- 不要在 `prototypes/` 下建文件。演示/汇报用的 HTML 放 `output/docs/`，见上文。
+- 不要把散装 `.html` 直接扔在 `prototypes/` 根上（扫不到），也不要动 Axhub Make 生成的目录。
+  自己的单页 HTML 一个子目录一个 `index.html`，见上文。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。
 - 不要用推断填平资料空白，标注出来交给用户去确认。
 

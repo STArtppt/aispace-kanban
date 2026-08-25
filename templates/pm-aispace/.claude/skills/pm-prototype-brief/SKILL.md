@@ -1,6 +1,6 @@
 ---
 name: pm-prototype-brief
-description: 把 PRD 和需求拆解收敛成一份原型输入说明（页面清单、信息架构、主流程点击路径、每页字段与状态、交互规则），供 Axhub Make 生成可点击原型。当用户说「做原型」「出原型」「画个原型」「起 Axhub」「axhub make」「准备原型输入」「把需求变成可点击的页面」，或者 PRD 已完成要进入原型阶段时，使用这个技能。原型输入说明是这一步的交付物——没有它直接喂 Axhub Make 只会得到通用模板。注意 Axhub Make 服务端在本项目之外常驻运行，prototypes/ 由它自动构建，不要手动往里放文件。若用户只是交来单文件 HTML 原型要入库/预览，走 pm-doc-ingest，不要塞进 prototypes/。
+description: 把 PRD 和需求拆解收敛成一份原型输入说明（页面清单、信息架构、主流程点击路径、每页字段与状态、交互规则），供 Axhub Make 生成可点击原型。当用户说「做原型」「出原型」「画个原型」「起 Axhub」「axhub make」「准备原型输入」「把需求变成可点击的页面」，或者 PRD 已完成要进入原型阶段时，使用这个技能。原型输入说明是这一步的交付物——没有它直接喂 Axhub Make 只会得到通用模板。注意 Axhub Make 服务端在本项目之外常驻运行，它在 prototypes/ 下自建的客户端目录不要动。若用户只是交来别人做的单文件 HTML 原型要入库/预览，那是输入资料，走 pm-doc-ingest 放 input/raw/，不要塞进 prototypes/。
 ---
 
 # 原型输入与 Axhub Make
@@ -18,7 +18,8 @@ PM 之间有时会互传 **单个 `.html` 可点击稿**（评审前草稿、场
 - 放进 `input/raw/`，由 `pm-doc-ingest` / `scripts/ingest.py` 入库：保留 HTML 供预览，
   并生成 `input/converted/<raw 相对目录>/_manifest_<名>.md`（校验 + 摘要），
   HTML 原件在同级 `SplittingObject/<名>/` 下。
-- **不要**放进 `prototypes/`（那是 Axhub Make 客户端目录，手动放文件会冲突）。
+- **不要**放进 `prototypes/`。别人给的 HTML 是**输入资料**，要留溯源；
+  `prototypes/` 装的是本工作空间自己产出的成品页。
 - **不要**在本技能里把 HTML「转写」成全套 PRD；可以在写原型输入说明时**引用**它
   （来源指到 converted 目录与 manifest），作为既有交互参考。
 
@@ -100,11 +101,11 @@ Axhub Make 支持导入 Axure HTML、Figma 等既有资源作为参考）。
 ## 第二步：交给 Axhub Make
 
 **Axhub Make 服务端是后台常驻服务，不在本项目里启动。**
-不要在 `prototypes/` 下跑 `npx @axhub/make`，也不要手动往这个目录放任何文件（包括 README）——
-用户会在 Axhub Make 页面上新建项目并指向本仓库的 `prototypes/`，
-它会自己在那里构建客户端目录，并自带 README 和结构。你手动建的文件只会冲突。
+不要在 `prototypes/` 下跑 `npx @axhub/make`——用户会在 Axhub Make 页面上新建项目并指向本仓库的
+`prototypes/`，它会自己在那里构建客户端目录，并自带 README 和结构。**那个目录不要动。**
 
-所以 `prototypes/` 看起来是空的属于正常状态。你在这一步的交付物是那份原型输入说明，
+`prototypes/` 下还可以有别的子目录（AI 生成的方案页、演示页，一个子目录一个 `index.html`，
+见 AGENTS.md 阶段四），互不干扰。你在这一步的交付物是那份原型输入说明，
 以及告诉用户：把 `output/analysis/原型输入说明.md` 作为需求输入喂给 Axhub Make。
 有既有界面截图（`input/assets/`）或 Axure 文件的话，一并作为参考资源导入。
 

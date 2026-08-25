@@ -71,7 +71,7 @@ aispace-kanban/
 │   │   ├── scan.mjs        #   工作空间扫描 → 结构化 JSON(只读)
 │   │   ├── meta.mjs        #   project.yaml 解析 + 完整度统计
 │   │   ├── frontmatter.mjs #   frontmatter / 标题 / 字数
-│   │   ├── prototypes.mjs  #   读 prototypes/.axhub/ → 原型清单
+│   │   ├── prototypes.mjs  #   扫 prototypes/ → 原型清单(子目录 index.html / zip 包)
 │   │   └── platform.mjs    #   ★ 三平台差异只写在这:开浏览器 / 定位文件 / 找 python
 │   └── app/                # 平面 3 · 前端 SPA(TS,`@/` 指向这里)
 │       ├── App.tsx         #   外壳:侧栏 + 四视图路由 + 主题
@@ -101,6 +101,13 @@ aispace-kanban/
 (注册表 `templateRoot` > `PMWORK_TEMPLATE_ROOT` > 仓库内 `templates/`);
 用户自建模板扫 `~/.pmwork/templates/`,目录里有 `template.yaml` 即上架。
 本文件第 2 / 5 节的技术栈与编码规范**不适用于 `templates/` 内部**,那边自己有一份 `AGENTS.md`。
+
+**单页 HTML 产物落 `templates/pm-aispace/prototypes/<名字>/index.html`。**
+在本仓库里生成的方案页、设计页、分析页,和工作空间里 AI 产出的成品页,走的是同一条约定:
+一个东西一个子目录,入口必须叫 `index.html`(看板只认这个,散装 `.html` 扫不到),
+`<title>` 就是看板里显示的名字,内联 CSS、不引外部字体和脚本。
+注意这个目录**会随模板发给每个新建的工作空间** —— 放进去就是发出去,别放临时草稿。
+完整规则见 `templates/pm-aispace/AGENTS.md` 的「阶段四:原型」。
 
 **平面职责互斥,判据一句话:**
 
