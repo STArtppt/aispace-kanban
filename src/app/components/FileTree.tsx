@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type ReactNode } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -240,7 +240,9 @@ export function FileTree<T>({
       if (open) rows.push(...renderLevel(child, depth + 1));
     }
     for (const file of dir.files) {
-      rows.push(<div key={keyOf(file)}>{renderFile(file, depth)}</div>);
+      // Fragment 只用来挂 key，不产生额外 DOM：多包一层 div 会让每行都变成
+      // 「div 里的最后一个子元素」，Row 的 last:border-b-0 把分割线全删掉
+      rows.push(<Fragment key={keyOf(file)}>{renderFile(file, depth)}</Fragment>);
     }
     return rows;
   };

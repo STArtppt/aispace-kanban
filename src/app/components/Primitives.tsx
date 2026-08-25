@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, Copy, Loader2, MoreHorizontal, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -109,13 +109,22 @@ export function Row({
   children: ReactNode;
   className?: string;
 }) {
+  // 树形行（有 indent）的底边线不横贯整行，左端退到与本行内容左对齐：
+  // 目录里挨着的几个文件看分割线就知道是同层级的并列项，线跟着层级缩进。
+  // border-b 做不到「左边留空」，改用 after 伪元素画这条线。
+  const pad = indent === undefined ? undefined : `calc(0.75rem + ${indent} * 1.125rem)`;
   return (
     <button
       type="button"
       onClick={onClick}
-      style={indent ? { paddingLeft: `calc(0.75rem + ${indent} * 1.125rem)` } : undefined}
+      style={
+        pad ? ({ paddingLeft: pad, '--row-sep-left': pad } as CSSProperties) : undefined
+      }
       className={cn(
-        'flex w-full items-center gap-3 border-b border-border px-3 py-2.5 text-left transition-colors last:border-b-0 hover:bg-accent',
+        'relative flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent',
+        pad
+          ? 'after:absolute after:right-0 after:bottom-0 after:left-[var(--row-sep-left)] after:h-px after:bg-border after:[content:""] last:after:content-none'
+          : 'border-b border-border last:border-b-0',
         active && 'bg-muted',
         className,
       )}
