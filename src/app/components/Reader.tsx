@@ -100,7 +100,10 @@ function SourceBar({
   /** 缺省 = 服务端没给（旧进程）或产物没记 source：不显示任何溯源状态 */
   sourceState?: ConvertedItem['sourceState'];
   projectId: string;
-  /** 产物自身的相对路径，校验接口按它反查 frontmatter 里的来源 */
+  /**
+   * 摘要文件路径（frontmatter 所在处）。新布局下不等于正文目录 item.path；
+   * 缺省时退回 item.path，交给服务端按三种产物形态解析。
+   */
   path: string;
   /** 工作空间没有 scripts/ingest.py 时不给「重新转换」，只留校验 */
   canIngest?: boolean;
@@ -634,6 +637,9 @@ export function Reader({
   const manifestPath = isConverted(item)
     ? item.manifestPath || (isDir ? `${item.path.replace(/\/$/, '')}/_manifest.md` : '')
     : '';
+  // 校验读 frontmatter：新布局下它在镜像目录的 _manifest_<名>.md，不在正文目录里。
+  // 旧服务进程不给 manifestPath，退回 item.path（服务端会按三种形态解析）。
+  const verifyPath = isConverted(item) ? item.manifestPath || item.path : item.path;
   const htmlPath =
     isConverted(item) && item.reader === 'html'
       ? item.htmlPath || (item.ext === '.html' || item.ext === '.htm' ? item.path : '')
@@ -789,7 +795,7 @@ export function Reader({
                   meta={meta}
                   sourceState={sourceState}
                   projectId={projectId}
-                  path={item.path}
+                  path={verifyPath}
                   canIngest={canIngest}
                   ingest={ingest}
                   onReconverted={onReconverted}
@@ -847,7 +853,7 @@ export function Reader({
                   meta={meta}
                   sourceState={sourceState}
                   projectId={projectId}
-                  path={item.path}
+                  path={verifyPath}
                   canIngest={canIngest}
                   ingest={ingest}
                   onReconverted={onReconverted}
@@ -927,7 +933,7 @@ export function Reader({
                   meta={meta}
                   sourceState={sourceState}
                   projectId={projectId}
-                  path={item.path}
+                  path={verifyPath}
                   canIngest={canIngest}
                   ingest={ingest}
                   onReconverted={onReconverted}

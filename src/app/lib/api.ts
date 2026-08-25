@@ -308,7 +308,10 @@ export const api = {
     });
     return request<TablePage>(`/api/projects/${id}/table?${q}`);
   },
-  /** 重算原件 sha256 跟产物记的比对；大文件要算几秒，只在用户点「校验原件」时调 */
+  /**
+   * 重算原件 sha256 跟产物记的比对；大文件要算几秒，只在用户点「校验原件」时调。
+   * path 可以是 scan 的产物路径（含新布局正文目录）或摘要文件 manifestPath。
+   */
   verifySource: (id: string, path: string) =>
     request<SourceVerification>(
       `/api/projects/${id}/verify-source?path=${encodeURIComponent(path)}`,

@@ -404,17 +404,44 @@ function sha256File(abs) {
 }
 
 /**
+ * 校验接口拿到的是 scan 的 `path`（产物包），溯源却写在摘要文件里。三种形态与
+ * describeConverted 对齐：单文件自身、旧布局 dir/_manifest.md、新布局正文目录
+ * ← 镜像目录里 payload 指向它的 `_manifest_<名>.md`。找不到就返回空串，由调用方 404。
+ */
+function convertedManifestAbs(root, relPath) {
+  const abs = path.join(root, relPath);
+  if (!fs.existsSync(abs)) return '';
+  if (!fs.statSync(abs).isDirectory()) return abs;
+  const nested = path.join(abs, '_manifest.md');
+  if (fs.existsSync(nested)) return nested;
+
+  const convertedDir = path.join(root, 'input', 'converted');
+  if (abs !== convertedDir && !abs.startsWith(convertedDir + path.sep)) return '';
+  // SplittingObject/<名>/ 的摘要在再上一层；MergedObject/ 的摘要就在父目录
+  const parent = path.dirname(abs);
+  const searchDir = PAYLOAD_DIRS.has(path.basename(parent)) ? path.dirname(parent) : parent;
+  if (!fs.existsSync(searchDir)) return '';
+  for (const entry of fs.readdirSync(searchDir, { withFileTypes: true })) {
+    if (!entry.isFile() || !MANIFEST_RE.test(entry.name)) continue;
+    const candidate = path.join(searchDir, entry.name);
+    const { meta } = parseFrontmatter(readTextSafe(candidate));
+    if (!meta.payload) continue;
+    const target = path.resolve(searchDir, String(meta.payload));
+    const inside = target === convertedDir || target.startsWith(convertedDir + path.sep);
+    if (inside && target === abs) return candidate;
+  }
+  return '';
+}
+
+/**
  * 精确校验一份产物的原件动没动过：拿 frontmatter 里的 source_sha256 跟现在的原件重算一遍比。
  * 这是 attachSourceState 那套 mtime 廉价判据的「坐实」手段 —— 只在用户点「校验原件」时跑一次，
  * 绝不进扫描热路径。比不了的情况（没记来源、没记 sha256、来源是目录）一律返回 unknown +
  * 一句中文原因，不要猜，也不要拿 mtime 的结论冒充哈希的结论。
  */
 export async function verifySource(root, relPath) {
-  const abs = path.join(root, relPath);
-  // 目录型产物的溯源信息写在 _manifest.md 里
-  const isDir = fs.existsSync(abs) && fs.statSync(abs).isDirectory();
-  const manifest = isDir ? path.join(abs, '_manifest.md') : abs;
-  if (!fs.existsSync(manifest)) {
+  const manifest = convertedManifestAbs(root, relPath);
+  if (!manifest) {
     const err = new Error('产物不存在');
     err.statusCode = 404;
     throw err;
