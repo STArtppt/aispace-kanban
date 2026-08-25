@@ -17,3 +17,6 @@ templates/*/input/assets/*
 
 # 打给 Releases 的产物 + 示例资料原件（含真实截图，不入库）
 release/
+
+# 私有资料（不入库，如 docs/private 的发布与CI笔记）
+private/
