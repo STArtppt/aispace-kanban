@@ -38,6 +38,7 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 装成 npm 包后才出的毛病(白屏 / 新建工作空间失败) | 包里缺东西:`dist/` 没构建、依赖没进 `dependencies`、模板文件被 npm 打包规则吃掉 | `pnpm smoke:npm` —— 它在干净目录装上真跑一遍,比在源码仓怎么试都准 |
 | 点开预览后白屏，控制台 `Rendered more/fewer hooks` 或 `change in the order of Hooks` | 同一组件实例里有 `if (...) return` **之后**又调了 `useMemo` / `useState` / `useEffect`（典型：`TableReader` 单 sheet 提前返回、切到多 sheet 才补 hook） | 看堆栈里的组件名，把所有 hooks 挪到任何 early return 之前；切换条目时组件常被复用、不会自动卸载 |
 | 表格 / html 包点「校验原件」报「产物不存在」 | 新布局 `item.path` 是正文目录（`SplittingObject/<名>/` 或 `MergedObject/`），溯源写在同级 `_manifest_<名>.md`；旧 `verifySource` 只在目录里找 `_manifest.md` | `curl` scan 看该条的 `path` vs `manifestPath`；校验应能吃正文目录或摘要文件。前端传 `manifestPath` 兼容旧进程 |
+| 关掉「转换失败」后又因刷新弹回来 | 失败任务还在服务端内存里；`useIngestJob` 挂载时 `GET /ingest` 把 `status: error` 又写成了提示。关掉只清了前端 state | `curl` `/ingest` 仍是 error 但界面不应再显示 Alert；只有这轮点「开始转换」失败才弹。hydrate 路径必须跳过 `setError` |
 
 排不掉,继续:
 

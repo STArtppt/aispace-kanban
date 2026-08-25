@@ -10,7 +10,7 @@ export interface IngestControl {
   running: boolean;
   error: string;
   start: (filePath?: string) => Promise<void>;
-  /** 只藏这条提示；下次转换再失败会重新出现 */
+  /** 关掉后不再因刷新 / 切项目弹回来；下次点「开始转换」失败才会再出现 */
   dismissError: () => void;
 }
 
@@ -28,28 +28,29 @@ export function useIngestJob(projectId: string, canIngest?: boolean): IngestCont
   /** 为 true 时 effect 持续轮询，直到状态离开 running */
   const [polling, setPolling] = useState(false);
 
-  const applyJob = useCallback((next: IngestJob) => {
+  const applyJob = useCallback((next: IngestJob, opts?: { hydrate?: boolean }) => {
     setJob(next);
     if (next.status === 'running') setPolling(true);
     else setPolling(false);
-    if (next.status === 'error') setError(next.message || '转换失败');
-    else if (next.status === 'done') setError('');
+    // 失败提示是这次点击的反馈，不是服务端还记着的上一轮 error。
+    // 刷新 / 切项目只接回进行中的任务；已经结束的失败不自动再弹。
+    if (next.status === 'error') {
+      if (!opts?.hydrate) setError(next.message || '转换失败');
+    } else if (next.status === 'done') setError('');
   }, []);
 
   // 切项目：清状态，并查一次是否已有进行中的任务（刷新页面后还能接上）
   useEffect(() => {
-    if (!canIngest || !projectId) {
-      setJob(null);
-      setError('');
-      setBusy(false);
-      setPolling(false);
-      return undefined;
-    }
+    setJob(null);
+    setError('');
+    setBusy(false);
+    setPolling(false);
+    if (!canIngest || !projectId) return undefined;
     let cancelled = false;
     void api
       .ingestStatus(projectId)
       .then((status) => {
-        if (!cancelled) applyJob(status);
+        if (!cancelled) applyJob(status, { hydrate: true });
       })
       .catch(() => {
         // 旧服务没有这个接口：静默；点「开始转换」时再报错
