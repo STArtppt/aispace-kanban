@@ -21,6 +21,7 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 | docx / odt / rtf | `.md` + 抽图 | pandoc |
 | **PDF** | `.md` | **本地 anydoc**（默认，不外发）。扫描件自动升级 MinerU OCR；要抽图 / 公式 / 复杂版式才 `--pdf-engine mineru` |
 | **pptx** | `.md` + 抽图 | **MinerU 在线 API**；没配 key 时兜底本地 anydoc（不抽图） |
+| **`.doc` / `.ppt`** | `.md` | **本地 anydoc**（老版二进制 Office，不抽图）。anydoc 不可用时才退回「请另存为」 |
 | `.msg` | `.md` | markitdown（留着它的唯一理由） |
 | xlsx / xlsm | 目录 + 各 sheet CSV + `_manifest.md` | 标准库 OOXML |
 | **html / htm** | **目录 + 可预览 `.html` + `_manifest.md`** | **不转 md 正文**；校验后写配套说明 |
@@ -48,8 +49,10 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 
 看脚本输出，这些情况必须处理，不要转完就当资料齐了：
 
-- `⚠ 老格式不受支持` — `.doc` / `.xls` / `.ppt` / WPS 格式。**告诉用户具体哪几个文件需要另存为新格式**，
-  不要跳过不说。
+- `⚠ 需另存为 .xxx` — 只剩 `.wps` / `.et` / `.dps`（金山私有格式）会必然走到这里。
+  **告诉用户具体哪几个文件需要另存为新格式**，不要跳过不说。
+  日志写「本地 anydoc 不可用」时是另一回事：`.doc` / `.ppt` 本来能转，是 anydoc 没装上，
+  该修的是环境（见下面「找不到 anydoc」那条），不该让用户去手工另存为。
 - `✗ 转换失败` / `✗ MinerU 失败` — 文件可能损坏、加密、超限，或 token 有问题。同样要报给用户。
 - 产物 frontmatter 里有 `warning` — 文档类几乎是扫描件没抽出文字；**HTML 类则是校验失败或有告警**
   （打不开、外链脚本、缺 title 等）。要打开对应 `_manifest.md` 的校验表告诉用户，

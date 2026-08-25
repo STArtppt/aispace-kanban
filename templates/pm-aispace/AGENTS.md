@@ -191,15 +191,18 @@ xlsx/xlsm/xls 按 sheet 拆成 CSV；**html/htm 作为 PM 互传的单文件可�
 Markdown 正文，而是拷到镜像目录的 `SplittingObject/<名>/` 保留可预览 HTML，并生成配套
 `_manifest_<名>.md`（结构摘要 + 可访问性/安全等校验，形态对齐 xlsx）；
 纯文本原样拷贝，图片进 `assets/未分类/`。.msg 仍走 markitdown。
+`.doc` / `.ppt`（老版二进制 Office）也走本地 anydoc。
 
 **默认不外发文件。** 只有 `--pdf-engine mineru` 或扫描件自动升级才会把资料传到 MinerU。
 MinerU 需要 `MINERU_API_KEY`（`.env` 里配，脚本会自己读）。没配 key 时 PDF 照样走本地 anydoc；
 扫描件会在台账记 `⚠ 扫描件需 OCR`，不算失败。Token 在 <https://mineru.net/apiManage> 创建，
 免费额度 1000 页/天，单文件上限 200MB / 200 页（anydoc 没有这个页数上限）。
 
-`.doc` / `.ppt` / `.wps` 等老格式脚本不支持，需要请用户先另存为新格式
-（`.xls` 是例外：自带 BIFF8 解析器 `scripts/xls_reader.py`，普通 .xls 按 sheet 拆 CSV，
-点表形态的 .xls 让给 `pointtable.py` 汇总，见下节）。
+`.doc` / `.ppt` 由 anydoc 本地转换；只有 anydoc 不可用时才退回「请用户另存为新格式」，
+台账会写明是哪一种原因。`.wps` / `.et` / `.dps`（金山私有格式）始终不支持，必须另存为。
+`.xls` 走自带的 BIFF8 解析器 `scripts/xls_reader.py`：普通 .xls 按 sheet 拆 CSV，
+点表形态的 .xls 让给 `pointtable.py` 汇总（见下节）——不要改判给 anydoc，
+它把整个工作簿压成一份 Markdown，拆不出 CSV。
 产物 frontmatter 里带 `warning` 的说明内容几乎是空的（扫描件且 OCR 也没识别出来），
 要提醒用户这份资料实际不可用，不要当它已经进来了。
 

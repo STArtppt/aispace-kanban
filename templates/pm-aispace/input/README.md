@@ -33,14 +33,16 @@ python3 scripts/ingest.py                             # 转换
 | `.docx` `.odt` `.rtf` `.epub` | 一个 `.md`，图片抽到 `assets/<名字>/` | pandoc |
 | `.pdf` | 一个 `.md` | **本地 anydoc**（默认）；扫描件自动升级 MinerU OCR |
 | `.pptx` | 一个 `.md`，图片抽到 `assets/<名字>/` | **MinerU 在线 API**；没 key 时兜底 anydoc（不抽图） |
+| `.doc` `.ppt` | 一个 `.md`（不抽图） | **本地 anydoc** |
 | `.msg` | 一个 `.md` | markitdown |
 | `.xlsx` `.xlsm` `.xls` | 每个 sheet 一个 `.csv`（进 `SplittingObject/`）+ `_manifest_<名>.md` 导航 | 脚本自带解析 |
 | `.html` `.htm` | 单文件可点击原型：HTML 原件（进 `SplittingObject/`）+ `_manifest_<名>.md` 校验摘要 | 脚本自带解析 |
 | `.md` `.csv` `.json` `.txt` `.yaml` `.xml` | 原样拷贝 | — |
 | `.png` `.jpg` `.gif` `.webp` | 拷到 `assets/未分类/` | — |
 
-**老格式不支持**：`.doc` `.ppt` `.wps` `.et` `.dps` 会被跳过并在台账里标记，
-请先用 Office / WPS 另存为新格式（`.xls` 是例外，脚本自带 BIFF8 解析器）。
+**老格式**：`.doc` `.ppt` 由 anydoc 本地转换，不用另存为；`.xls` 走脚本自带的 BIFF8 解析器。
+只有 `.wps` `.et` `.dps`（金山私有格式）会被跳过并在台账里标记，请先用 Office / WPS
+另存为新格式。（anydoc 不可用时 `.doc` `.ppt` 也会退回这条提示。）
 
 ## PDF / PPTX 引擎
 

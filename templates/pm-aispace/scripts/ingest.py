@@ -7,6 +7,7 @@ docx/odt/rtf → pandoc（顺带抽图）
 PDF → 本地 anydoc（默认，不联网）；扫描件自动升级 MinerU OCR；--pdf-engine mineru 才走在线
 PPTX → 维持 MinerU（抽图）；没 key 时兜底 anydoc
 .msg → markitdown（留着它的唯一理由）
+doc/ppt（老版二进制 Office）→ 本地 anydoc；没装 anydoc 才退回「请另存为新格式」
 xlsx/xlsm/xls → 每 sheet 一个 csv（自带 OOXML / BIFF8 解析）
 html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（不转 md 正文）
 纯文本 → 原样拷贝　　图片 → assets/未分类/（附 _manifest.md 记溯源）
@@ -104,8 +105,15 @@ SPREADSHEET = {".xlsx", ".xlsm"}
 LEGACY_SPREADSHEET = {".xls"}
 # 单文件 HTML 原型：保留可预览 HTML + 配套 _manifest.md（校验与摘要）
 HTML_PROTOTYPE = {".html", ".htm"}
-# 明确不支持的老格式（.xls 不在此列，见 LEGACY_SPREADSHEET）
-LEGACY = {".doc": "docx", ".ppt": "pptx", ".wps": "docx", ".et": "xlsx", ".dps": "pptx"}
+# 老版二进制 Office：anydoc 直接读 OLE 流，装了就本地转，没装退回「请另存为」。
+# 故意**不**并进上面的 ANYDOC —— 那个集合是 PDF / PPTX 的引擎阶梯，
+# --pdf-engine mineru / markitdown 对这两个格式都不成立（MinerU 不收 .doc），
+# 跟着阶梯走只会转出一堆失败。
+LEGACY_ANYDOC = {".doc": "docx", ".ppt": "pptx"}
+# 明确不支持的老格式（.xls 见 LEGACY_SPREADSHEET，.doc / .ppt 见 LEGACY_ANYDOC）
+LEGACY = {".wps": "docx", ".et": "xlsx", ".dps": "pptx"}
+# 转不了的老格式该请用户另存为什么 —— 日志与台账共用这一张表
+LEGACY_SAVE_AS = {**LEGACY, **LEGACY_ANYDOC}
 
 XLNS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 # 注意这是两个不同的命名空间：.rels 文件里的 <Relationship> 用 package/…，
@@ -1019,6 +1027,13 @@ def plan(files: list[Path], pdf_engine: str, requested: str = "auto") -> list[tu
             out.append((src, "copy", single_target(src, ".md" if ext in {".md", ".markdown", ".txt"} else ext)))
         elif ext in IMAGES:
             out.append((src, "image", UNSORTED / f"{safe_component(src.stem)}{ext}"))
+        elif ext in LEGACY_ANYDOC:
+            # 装了 anydoc 就本地转；没装退回改动前的行为（请用户另存为新格式），
+            # 不要落到 markitdown —— 它对 .doc 的中文正文会转出康熙部首码位
+            if anydoc.available():
+                out.append((src, "anydoc", single_target(src, ".md")))
+            else:
+                out.append((src, "legacy", Path()))
         elif ext in LEGACY:
             out.append((src, "legacy", Path()))
         else:
@@ -1184,9 +1199,13 @@ def main() -> int:
             realdata_files.append(src)
             continue
         if how == "legacy":
-            log(f"⚠ 跳过 {rel}：老格式不受支持，请先另存为 .{LEGACY[src.suffix.lower()]}")
+            ext = src.suffix.lower()
+            # .doc / .ppt 落到这里只有一个原因：anydoc 不可用。说清楚，别让用户
+            # 以为这个格式永远转不了 —— 装回 anydoc 比手工另存为省事得多
+            why = "本地 anydoc 不可用" if ext in LEGACY_ANYDOC else "老格式不受支持"
+            log(f"⚠ 跳过 {rel}：{why}，请先另存为 .{LEGACY_SAVE_AS[ext]}")
             records.append({"source": str(rel), "kind": src.suffix.lstrip("."), "target": "",
-                            "status": f"⚠ 需另存为 .{LEGACY[src.suffix.lower()]}"})
+                            "status": f"⚠ 需另存为 .{LEGACY_SAVE_AS[ext]}"})
             continue
         if how == "skip":
             log(f"· 跳过 {rel}：未识别的格式 {src.suffix}")

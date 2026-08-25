@@ -73,7 +73,7 @@ CLAUDE.md         Claude Code 入口，引入 AGENTS.md
 | 用途 | 依赖 | 安装 |
 | --- | --- | --- |
 | docx / odt / rtf → md | `pandoc` | `brew install pandoc` |
-| **PDF → md（默认）** | **本地 anydoc** | 看板依赖 `@firecrawl/anydoc`；自己跑脚本把 `anydoc` 放到 PATH 或设 `ANYDOC_BIN` |
+| **PDF / `.doc` / `.ppt` → md** | **本地 anydoc** | 看板依赖 `@firecrawl/anydoc`；自己跑脚本把 `anydoc` 放到 PATH 或设 `ANYDOC_BIN` |
 | PPTX → md（抽图） / 扫描件 OCR | MinerU 在线 API | `.env` 里配 `MINERU_API_KEY` |
 | `.msg` → md | `markitdown` | `pip install 'markitdown[all]'` |
 | xlsx / xlsm → csv | 无（脚本自带 OOXML 解析） | — |

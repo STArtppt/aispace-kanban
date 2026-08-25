@@ -496,6 +496,10 @@
     <dl class="lane-note">
       <dt>PPTX</dt>
       <dd>默认引擎维持 MinerU（要抽图）；没配 key 时的兜底从 markitdown 改成 anydoc。</dd>
+      <dt>.doc / .ppt</dt>
+      <dd>老版二进制 Office，anydoc 直接读 OLE 流。从「拒收 + 请另存为」改成本地转换；
+        只有 anydoc 不可用时才退回原来那句提示。不跟 <code>--pdf-engine</code> 走 ——
+        MinerU 不收 .doc，markitdown 又是中文码位那个坑。</dd>
       <dt>.msg</dt>
       <dd>继续 markitdown —— 这是留着它的唯一理由。</dd>
     </dl>
