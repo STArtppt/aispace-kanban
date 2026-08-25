@@ -15,17 +15,20 @@
 看板只认 `input/` + `output/` 的目录约定(判据见 `config.mjs` 的 `inspectWorkspace`),
 **不绑定任何具体行业或岗位** —— 调研、方案、数据分析、内容创作、项目接手都落在同一套结构上。
 
-工作空间**模板**([`template/`](./template))也在本仓一起维护 —— 看板"新建工作空间"调的
-就是它的 `scripts/init_workspace.py`。模板是**另一套语境**(PM 业务流程、pm-* 技能),
-本文件的编码规范只管看板三平面,**不适用于 `template/` 内部**;改模板见 [`template/AGENTS.md`](./template/AGENTS.md)。
+工作空间**模板**([`templates/`](./templates))也在本仓一起维护 —— 看板"新建工作空间"调的
+是共享的 `templates/init_workspace.py --from <模板目录>`。内置第一份是
+[`templates/pm-aispace`](./templates/pm-aispace)(产品经理AI空间模板);
+用户自建的落在 `~/.pmwork/templates/`。模板是**另一套语境**(角色自己的技能与约定),
+本文件的编码规范只管看板三平面,**不适用于 `templates/` 内部**;改 PM 模板见
+[`templates/pm-aispace/AGENTS.md`](./templates/pm-aispace/AGENTS.md)。
 
 **不变量(违反即为 bug,不接受任何"顺手写一下"):**
 
 1. **对工作空间只读。** 服务端只 `read`,不 `write` / `rename` / `unlink` 工作空间里的任何文件。
    真正改工作空间内容的,只能是**用户明确发起、由工作空间自己的工具执行**的子进程:
    - 注册表 `~/.pmwork/dashboard/projects.json`(`src/server/config.mjs` 的 `writeProjects`)—— 不碰工作空间
-   - 新建工作空间时调模板仓的 `scripts/init_workspace.py`(`src/server/http.mjs` 的 `runInit`)——
-     铺骨架由模板仓负责,看板不自己造目录
+   - 新建工作空间时调 `templates/init_workspace.py --from <模板目录>`(`src/server/http.mjs` 的 `runInit`)——
+     铺骨架由模板负责,看板不自己造目录
    - 资料转换时调工作空间的 `scripts/ingest.py`(`src/server/http.mjs` 的 `startIngest`)——
      看板只 `spawn`,写 `input/converted/` 的是脚本本身
    - 忽略待转换资料时追加 `input/.ingestignore`(`src/server/http.mjs` 的 `addIgnore`)——
@@ -81,18 +84,23 @@ aispace-kanban/
 │   ├── build-npm-package.mjs  #   组 npm 包(pnpm build:npm),产出 npm-package/
 │   └── smoke-package.mjs      #   ★ 装包冒烟(pnpm smoke:npm),CI 三平台跑的就是它
 ├── .github/workflows/      # 平面外 · CI:ci.yml(日常闸门) + release.yml(推 v* tag 发版)
-├── template/               # 平面外 · 工作空间模板,看板代码不 import 它
-│   ├── scripts/init_workspace.py  #   ★ 唯一被看板调用的入口(runInit)
-│   ├── .claude/skills/     #   pm-* 业务技能(会随新建工作空间一起铺过去)
-│   └── input/ output/ prototypes/ project.yaml   # 骨架 + 说明文档
+├── templates/              # 平面外 · 工作空间模板,看板代码不 import 它们
+│   ├── init_workspace.py   #   ★ 共享铺骨架入口(runInit --from)
+│   ├── create-prompt.md    #   复制给 AI 的「创建模板」提示词
+│   └── pm-aispace/         #   内置「产品经理AI空间模板」
+│       ├── template.yaml   #     发现用的元信息(id / name / description)
+│       ├── .claude/skills/ #     pm-* 业务技能 + skill-creator
+│       └── input/ output/ prototypes/ project.yaml
 └── dist/                   # 构建产物(gitignore),serve 非 dev 模式伺服它
 ```
 
-`template/` 是**另一个语境**:它是给 PM 用的工作空间骨架,不是看板的源码。
+`templates/` 是**另一个语境**:每份模板是一套角色骨架,不是看板的源码。
 看板与它之间**只有一个接口** —— `src/server/http.mjs` 的 `runInit` 起子进程跑
-`template/scripts/init_workspace.py`(路径由 `config.mjs` 的 `resolveTemplateRoot` 解析,
-顺序:注册表 `templateRoot` > `PMWORK_TEMPLATE_ROOT` > 仓库内 `template/`)。
-本文件第 2 / 5 节的技术栈与编码规范**不适用于 `template/` 内部**,那边自己有一份 `AGENTS.md`。
+`templates/init_workspace.py --from <选中的模板>`。
+内置模板根由 `config.mjs` 的 `resolveTemplateRoot` 解析
+(注册表 `templateRoot` > `PMWORK_TEMPLATE_ROOT` > 仓库内 `templates/`);
+用户自建模板扫 `~/.pmwork/templates/`,目录里有 `template.yaml` 即上架。
+本文件第 2 / 5 节的技术栈与编码规范**不适用于 `templates/` 内部**,那边自己有一份 `AGENTS.md`。
 
 **平面职责互斥,判据一句话:**
 
@@ -199,8 +207,8 @@ aispace-kanban/
   经 `hooks/useFileManager.ts`;**不能用浏览器的 `navigator`** —— 定位动作发生在**服务所在的机器**上。
 - **npm 打包会吃掉两类东西**,模板里有就得绕:
   - 任何叫 `.gitignore` 的文件(`files` 字段也救不回来)→ 组包时改名存成 `gitignore`,
-    由 `template/scripts/init_workspace.py` 认回来;
-  - 软链接 → `template/skills` 不进包,新建工作空间时由 `init_workspace.py` 现建**相对**链接
+    由 `templates/init_workspace.py` 认回来;
+  - 软链接 → `templates/<id>/skills` 不进包,新建工作空间时由 `init_workspace.py` 现建**相对**链接
     (Windows 建不了就复制一份实体目录)。
 - 包里**没有前端源码和 devDependencies**,所以 `serve --dev` 在包里会明确报错;
   `dist/` 必须是刚 `pnpm build` 出来的,否则装的人看到的是旧界面。
@@ -208,7 +216,7 @@ aispace-kanban/
   (`scripts/smoke-package.mjs`)会在干净目录装 tgz 起服务,把新建工作空间、扫描、
   路径穿越拦截等 12 件事验一遍;CI 在 ubuntu / windows / macOS 上跑的就是它。
   它给子进程换了假 `HOME`,不会污染你自己的注册表。
-- **发版与 CI 的完整流程见 [`docs/发布与CI.md`](docs/发布与CI.md)**(推 `v*` tag 自动发 npm)。
+- **发版与 CI 的完整流程见 `docs/private/发布与CI.md`**(推 `v*` tag 自动发 npm;私有文档不入库)。
 
 ---
 
