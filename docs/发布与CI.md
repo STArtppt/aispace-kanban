@@ -43,22 +43,28 @@ npx -y @startist/aispace-kanban@latest
 三个平台装的是**同一个 artifact**，不是各自重新构建的 ——
 保证「测的包」和「发的包」是同一个文件。
 
-### 冒烟脚本查的 8 件事
+### 冒烟脚本查的 12 件事
 
 `scripts/smoke-package.mjs`（本地也能跑：`pnpm smoke:npm`）：
 
-1. 干净目录能装上，且 `dist/index.html` 在包里 —— 挡「组包前忘了 build」
+1. 干净目录能装上，且 `dist/index.html` 在包里 -- 挡「组包前忘了 build」
 2. 服务能起来，`/api/health` 通，回报的 `platform` 是当前系统
-3. 首页和 `assets/*.js` 都取得到 —— 挡「dist 不完整」
-4. **新建工作空间**能成 —— 这一条串起 Python 解释器 + 模板 + 注册表三样，
+3. 首页和 `assets/*.js` 都取得到 -- 挡「dist 不完整」
+4. **新建工作空间**能成 -- 这一条串起 Python 解释器 + 模板 + 注册表三样，
    打包后最容易断的就是它
-5. 铺出来的骨架完整：`project.yaml` / `.gitignore` / `input/raw/.gitkeep` /
-   `.claude/skills/**`，并且 `skills/` 真的能用
-6. 扫描接口正常，读得到 `project.yaml`
-7. **路径穿越被挡**（`../../../etc/passwd` 必须 403）—— 只读红线的回归测试
-8. 注册表写在隔离的假 HOME 里 —— 顺便证明冒烟本身没污染你的看板
+5. 铺出来的骨架完整：`project.yaml` / `AGENTS.md` / `.gitignore` /
+   `input/raw/.gitkeep` / `input/.ingestignore` / `.claude/skills/**`，并且 `skills/` 真的能用
+6. 扫描接口正常，读得到 `project.yaml`，工作空间标了 `canIngest`
+7. **界面触发的转换能跑完**（`POST /ingest`，空 `raw/` 时脚本秒退）--
+   串起「看板 spawn 工作空间自己的 ingest.py」这条链
+8. **路径穿越被挡**（`../../../etc/passwd` 必须 403）-- 只读红线的回归测试
+9. **单文件转换只认 `input/raw/`**：路径穿越 403、`raw/` 以外 400
+10. **忽略接口能写 `input/.ingestignore`**：写完待转换清单里不再出现，
+    `stats.ignored` 开始计数
+11. **忽略同样只认 `input/raw/`**，越界路径 403 / 400
+12. 注册表写在隔离的假 HOME 里 -- 顺便证明冒烟本身没污染你的看板
 
-> 第 8 条是给**本地跑**准备的：脚本给子进程换了个假 `HOME` / `USERPROFILE`，
+> 第 12 条是给**本地跑**准备的：脚本给子进程换了个假 `HOME` / `USERPROFILE`，
 > 冒烟建出来的工作空间不会跑进你自己的 `~/.pmwork/dashboard/projects.json`。
 
 ### 本地想跑完整一轮
@@ -67,7 +73,8 @@ npx -y @startist/aispace-kanban@latest
 pnpm typecheck && pnpm build && pnpm build:npm && pnpm pack:npm && pnpm smoke:npm
 ```
 
-冒烟要装依赖，得联网；「新建工作空间」那步要本机有 Python 3。
+冒烟要装依赖，得联网；「新建工作空间」和「触发转换」那两步要本机有 Python 3
+（模板的 `init_workspace.py` 和 `ingest.py` 都靠它）。
 
 ---
 
@@ -179,9 +186,9 @@ reveal 接口曾经在非 macOS 上直接返 501，就是因为这段散在 `htt
 | CI 的 `build` 挂在 `pnpm install --frozen-lockfile` | 改了依赖没提交 `pnpm-lock.yaml` |
 | CI 挂在 `pnpm/action-setup` | 根 `package.json` 的 `packageManager` 字段被删了或和实际版本对不上 |
 | 冒烟第 1 步失败 | 组包前没 `pnpm build`，或 `dist/` 是脏的 —— 本地 `rm -rf dist && pnpm build` 重来 |
-| 冒烟第 4 步失败且提示 Python | 那台机器没 Python 3；CI 里是 `actions/setup-python` 装的 |
+| 冒烟第 4 / 7 步失败且提示 Python | 那台机器没 Python 3（新建工作空间和触发转换都要它）；CI 里是 `actions/setup-python` 装的 |
 | 冒烟第 5 步说骨架缺文件 | 多半又踩了 npm 的打包规则（见第 4 节的表） |
-| 冒烟第 7 步失败 | **停下来**。这是只读红线破了，比发版重要 |
+| 冒烟第 8-11 步失败（路径穿越 / 越界） | **停下来**。这是只读红线破了，比发版重要 |
 | `publish` 步骤 401 / 403 | `NPM_TOKEN` 过期、权限不够，或 scope 不归你 |
 | `publish` 说版本已存在 | npm 不允许重发同版本号，发下一个补丁版 |
 | 装完打开是旧界面 | `dist/` 是上一次构建的；组包脚本只检查存在，不检查新旧 |

@@ -206,7 +206,7 @@ aispace-kanban/
   `dist/` 必须是刚 `pnpm build` 出来的,否则装的人看到的是旧界面。
 - 发布前的冒烟不能只在源码仓跑,但**不用手工点** —— `pnpm smoke:npm`
   (`scripts/smoke-package.mjs`)会在干净目录装 tgz 起服务,把新建工作空间、扫描、
-  路径穿越拦截等 8 件事验一遍;CI 在 ubuntu / windows / macOS 上跑的就是它。
+  路径穿越拦截等 12 件事验一遍;CI 在 ubuntu / windows / macOS 上跑的就是它。
   它给子进程换了假 `HOME`,不会污染你自己的注册表。
 - **发版与 CI 的完整流程见 [`docs/发布与CI.md`](docs/发布与CI.md)**(推 `v*` tag 自动发 npm)。
 
