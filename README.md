@@ -1,6 +1,18 @@
+<div align="center">
+
+<img src="./public/logo-ai.png" alt="aispace-kanban" width="112">
+
 # aispace-kanban
 
-**与AI协作的工作空间看板**
+**与 AI 反复对话完成知识工作的只读看板。**
+
+[![npm](https://img.shields.io/npm/v/@startist/aispace-kanban?label=npm)](https://www.npmjs.com/package/@startist/aispace-kanban)
+[![Node](https://img.shields.io/badge/node-%E2%89%A5%2020-green.svg)](./package.json)
+![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue.svg)
+
+</div>
+
+---
 
 **本地空间** 
 - 服务起在你自己的机器上,工作空间就是本地一个普通**文件夹目录**;
