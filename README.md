@@ -26,7 +26,7 @@ npx -y @startist/aispace-kanban@latest add ~/work/某个工作空间
 npx -y @startist/aispace-kanban@latest list
 ```
 
-serve 的选项:`--port <n>`(默认 5180,被占用时自动往上顺延至多 10 个)、
+serve 的选项:`--port <n>`(默认 7788,被占用时自动往上顺延至多 10 个)、
 `--host <addr>`(默认 127.0.0.1,只有本机能连)、`--no-open`(不自动开浏览器)。
 
 ## 什么算一个「工作空间」
@@ -196,11 +196,11 @@ pnpm install
 pnpm build                                  # 构建前端（首次必须）
 
 node bin/cli.mjs add ~/work/某个工作空间     # 登记一个工作空间
-node bin/cli.mjs serve                      # 起服务 → http://localhost:5180
+node bin/cli.mjs serve                      # 起服务 → http://localhost:7788
 ```
 
-开发时用 `pnpm dev`:同时起接口服务(5180)和 Vite(5181),改前端代码即时热更,
-浏览器开 <http://localhost:5181>(dev 模式不自动开浏览器,因为 Vite 还要几秒才起得来)。
+开发时用 `pnpm dev`:同时起接口服务(7788)和 Vite(5180),改前端代码即时热更,
+浏览器开 <http://localhost:5180>(dev 模式不自动开浏览器,因为 Vite 还要几秒才起得来)。
 
 打包发布:`pnpm build:npm && pnpm pack:npm && pnpm smoke:npm`(最后一步在干净目录
 装上真跑一遍)。推 `v*` tag 由 CI 自动发 npm —— 完整流程见 [`docs/发布与CI.md`](./docs/发布与CI.md)。

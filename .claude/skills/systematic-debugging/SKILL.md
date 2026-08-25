@@ -24,15 +24,15 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 症状 | 先查这个 | 怎么确认 |
 | --- | --- | --- |
 | `未知接口:/api/...`(404) | **服务进程比代码旧** —— 改了 `src/server/**` 没重启 | 重启 `pnpm dev` / `pnpm serve` 再试;`api.ts` 的 `request` 已就此加了提示 |
-| 界面上某块空白 / `undefined` | **服务端没真的产出这个字段** | `curl -s "localhost:5180/api/projects/<id>/scan"` 看原始返回,别信 type |
+| 界面上某块空白 / `undefined` | **服务端没真的产出这个字段** | `curl -s "localhost:7788/api/projects/<id>/scan"` 看原始返回,别信 type |
 | 整页白屏 / 报 `cannot read property of undefined` | 前端把**可选字段当必填**用了 | 看该字段在 `api.ts` 里是不是 `?`,前端有没有兜底 |
-| 界面改了没变化 | 非 dev 模式的 serve 伺服 `dist/` | `pnpm build`;或改用 `pnpm dev` 开 5181 |
-| 前端 5181 打得开但接口全挂 | 代理指向的 5180 没起来 | `curl -s localhost:5180/api/health` |
+| 界面改了没变化 | 非 dev 模式的 serve 伺服 `dist/` | `pnpm build`;或改用 `pnpm dev` 开 5180 |
+| 前端 5180 打得开但接口全挂 | 代理指向的 7788 没起来 | `curl -s localhost:7788/api/health` |
 | 文件变了但界面不自动刷新 | 数据源不在 SSE 监听范围 | `http.mjs` 的 `watchWorkspace` 只看 `input/`、`output/`、`prototypes/.axhub`、`project.yaml` |
 | 某工作空间整个没内容 | 登记目录被改名 / 移走 | 侧栏有橙色警告;`node bin/cli.mjs list` 看 `status`;用 `relink` 接回 |
 | 接口 403 路径超出范围 | `resolveInside` 拦住了(通常是相对路径拼错) | 打出传进去的 `relPath`,它必须是工作空间内的相对路径、`/` 分隔 |
 | 服务端改动"没生效"且不报错 | **`.mjs` 不参与类型检查**,写错的属性名会静默返回 `undefined` | 在服务端 `console.log` 出真实对象,别靠推断 |
-| 只有**某些**工作空间点进去全报"没有登记过的项目" | 那几个的 `id` 里有中文/空格 —— URL 路径段是百分号编码的,服务端忘了解码 | `curl "localhost:5180/api/projects/中文名/scan"` 对比 ASCII 名的;`handleApi` 的 `decodeSegment` 就是修这个的 |
+| 只有**某些**工作空间点进去全报"没有登记过的项目" | 那几个的 `id` 里有中文/空格 —— URL 路径段是百分号编码的,服务端忘了解码 | `curl "localhost:7788/api/projects/中文名/scan"` 对比 ASCII 名的;`handleApi` 的 `decodeSegment` 就是修这个的 |
 | 明明已经转过的资料还挂在「待转换」 | 覆盖判据只认**产物里记着的来源** —— 没有 `.md` 产物的类型(图片)得另有出处:`assets/<组>/_manifest.md` 的 `sources` | `curl` 看 `input.pending`;再看该 raw 文件有没有出现在某份 frontmatter 的 `source` / `sources` 里。旧版工作空间的 `scripts/ingest.py` 不写这份清单,重跑一次即可 |
 | markdown 正文图片空白 / 页面上露出裸 `<img>` | pandoc 从 docx 转出的是 HTML 图,不是 `![]()`;`react-markdown` 默认转义 HTML | 打开 converted `.md` 看是 `<img` 还是 `![](`;`Markdown.tsx` 必须接 `rehype-raw` |
 | 装成 npm 包后才出的毛病(白屏 / 新建工作空间失败) | 包里缺东西:`dist/` 没构建、依赖没进 `dependencies`、模板文件被 npm 打包规则吃掉 | `pnpm smoke:npm` —— 它在干净目录装上真跑一遍,比在源码仓怎么试都准 |

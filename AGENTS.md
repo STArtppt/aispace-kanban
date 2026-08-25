@@ -112,8 +112,8 @@ aispace-kanban/
 | 目的 | 命令 |
 | --- | --- |
 | 安装依赖 | `pnpm install` |
-| 开发(接口 5180 + Vite 5181,浏览器开 5181) | `pnpm dev` |
-| 只起常驻服务(5180,伺服 `dist/`) | `pnpm serve` |
+| 开发(接口 7788 + Vite 5180,浏览器开 5180) | `pnpm dev` |
+| 只起常驻服务(7788,伺服 `dist/`) | `pnpm serve` |
 | 构建前端 | `pnpm build` |
 | 类型检查 | `pnpm typecheck` |
 | 组 npm 包(发布用) | `pnpm build:npm` → `npm-package/` |
@@ -124,7 +124,7 @@ aispace-kanban/
 1. `pnpm typecheck` 绿 —— 注意它**只覆盖 `src/app`**(见 `tsconfig.json` 的 `include`)
 2. `pnpm build` 绿
 3. **手动冒烟**:`src/server/**` 和 `bin/cli.mjs` 没有任何静态检查也没有测试,
-   改动它们后必须重启 `pnpm serve` / `pnpm dev`,`curl -s localhost:5180/api/health`,
+   改动它们后必须重启 `pnpm serve` / `pnpm dev`,`curl -s localhost:7788/api/health`,
    再在浏览器里把受影响的视图点一遍。
 
 > **改服务端代码必须重启进程。** 常驻服务不热更;前端才有 Vite 热更。

@@ -88,11 +88,11 @@ SSE 由 `http.mjs` 的 `watchWorkspace` 提供,**只监听**:
 pnpm typecheck                      # 只覆盖 src/app —— 服务端全绿不代表没错
 pnpm build                          # 非 dev 模式的 serve 伺服 dist/,不构建看不到新界面
 pnpm dev                            # 重启!服务端不热更
-curl -s localhost:5180/api/health   # 服务活着
-curl -s "localhost:5180/api/projects/<id>/scan" | head -c 600   # 新字段真的在返回里
+curl -s localhost:7788/api/health   # 服务活着
+curl -s "localhost:7788/api/projects/<id>/scan" | head -c 600   # 新字段真的在返回里
 ```
 
-然后浏览器开 5181,把**受影响的视图**点一遍,包括:
+然后浏览器开 5180,把**受影响的视图**点一遍,包括:
 
 - 没有 `project.yaml` 的工作空间(很多字段为空的情况)
 - 目录被改名/移走的工作空间(`available === false` 的降级路径)

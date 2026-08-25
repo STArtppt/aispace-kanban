@@ -2,7 +2,7 @@
 /**
  * aispace-kanban —— PM 工作空间看板的常驻服务。
  *
- *   aispace-kanban serve [--port 5180] [--host 127.0.0.1] [--no-open] [--dev]
+ *   aispace-kanban serve [--port 7788] [--host 127.0.0.1] [--no-open] [--dev]
  *   aispace-kanban add <工作空间目录> [--name 名字]
  *   aispace-kanban list
  *   aispace-kanban remove <id>
@@ -37,8 +37,10 @@ const { createServer } = await import('../src/server/http.mjs');
 const { openInBrowser } = await import('../src/server/platform.mjs');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_PORT = 5180;
-const DEV_PORT = 5181;
+/** 看板常驻服务默认端口。npx / pnpm serve 都走这里；被占用时往上顺延。 */
+const DEFAULT_PORT = 7788;
+/** 源码仓 `serve --dev` 时 Vite 热更端口。跟 DEFAULT_PORT 错开，避免 Node 顺延时抢 Vite 的口。 */
+const DEV_PORT = 5180;
 /** 端口被占用时往上顺延几个再放弃 */
 const PORT_PROBE_RANGE = 10;
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);

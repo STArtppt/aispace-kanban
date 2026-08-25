@@ -27,14 +27,14 @@ description: 在 aispace-kanban 中准备说「做完了 / 修好了 / 能跑了
 pnpm typecheck     # 1. 前端类型
 pnpm build         # 2. 构建(非 dev 模式的 serve 伺服 dist/)
 pnpm dev           # 3. 重启进程 —— 服务端不热更
-curl -s localhost:5180/api/health
+curl -s localhost:7788/api/health
 ```
 
 第 3 步的冒烟内容,按改动挑:
 
-- 动过接口 / 扫描:`curl -s "localhost:5180/api/projects/<id>/scan" | head -c 600`,
+- 动过接口 / 扫描:`curl -s "localhost:7788/api/projects/<id>/scan" | head -c 600`,
   **肉眼确认新字段在返回里**(别靠 type 推断)。
-- 动过界面:浏览器开 <http://localhost:5181>,点一遍受影响视图。
+- 动过界面:浏览器开 <http://localhost:5180>,点一遍受影响视图。
 - 动过 CLI:`node bin/cli.mjs list` 之类真的跑一次。
 - 边界场景至少覆盖:**没有 `project.yaml` 的工作空间**、**登记目录已丢失的工作空间**
   (`available === false` 的降级路径)、**深色模式**。
