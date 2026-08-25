@@ -19,7 +19,6 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-  SelectValueLines,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -88,7 +87,6 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
     return () => window.clearTimeout(timer);
   }, [copied]);
 
-  const selected = templates?.find((item) => item.id === templateId);
   const showTemplatePicker = Boolean(templates && templates.length > 0);
 
   const submit = async () => {
@@ -173,24 +171,14 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
                               {(value: string | null) => {
                                 const item = value
                                   ? templates?.find((t) => t.id === value)
-                                  : selected;
-                                if (!item) return null;
-                                return (
-                                  <SelectValueLines
-                                    title={item.name}
-                                    description={item.description}
-                                  />
-                                );
+                                  : undefined;
+                                return item?.name ?? null;
                               }}
                             </SelectValue>
                           </SelectTrigger>
                           <SelectContent>
                             {templates?.map((item) => (
-                              <SelectItem
-                                key={item.id}
-                                value={item.id}
-                                description={item.description}
-                              >
+                              <SelectItem key={item.id} value={item.id}>
                                 {item.name}
                               </SelectItem>
                             ))}
@@ -240,7 +228,6 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
                       placeholder="目录绝对路径"
                       onChange={(e) => setRoot(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && void submit()}
-                      className="font-mono text-xs"
                     />
                   </label>
                 </TabsContent>
@@ -254,7 +241,6 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
                       placeholder="目录绝对路径"
                       onChange={(e) => setRoot(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && void submit()}
-                      className="font-mono text-xs"
                     />
                     <span className="text-[11px] text-muted-foreground">
                       登记一个已经存在的工作空间，目录里要有 input/ 和 output/。
