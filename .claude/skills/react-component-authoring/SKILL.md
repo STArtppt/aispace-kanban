@@ -28,7 +28,8 @@ description: 在 aispace-kanban 中新建或重构 React 组件 / 面板 / 视�
    `Tooltip`、`ScrollArea`、`CodeBlock`（文档围栏代码走 `MarkdownCodeBlock` 适配）、
    `Lightbox`（mermaid 全屏等媒体预览）、
    `GalleryStack`（一摞图的入口卡：`cover` / `count` / `size` / `selected`，
-   卡片自己限宽，别再在调用方排列数）。
+   卡片自己限宽，别再在调用方排列数）、
+   `Alert`（行内提示，`default|destructive`；可关闭用 `AlertAction` + 调用方 state，组件不管可见性）。
 3. **registry 上有但本仓还没拉的**(`drawer` / `confirm-dialog` / `field` / `switch` …)
    —— 用 `shadcn add` 拉,别手写第二遍。add 的来源、命令与注意事项见 [[design-system-loop]]。
    **`components/ui/**` 是 vendored 快照**:不做与上游分叉的语义修改

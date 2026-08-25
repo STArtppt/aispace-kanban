@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Search, Star, StarOff, Table } from 'lucide-react';
+import { AlertTriangle, AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Search, Star, StarOff, Table, X } from 'lucide-react';
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
@@ -697,11 +698,13 @@ function IngestControls({
   running,
   error,
   onStart,
+  onDismissError,
 }: {
   job: IngestJob | null;
   running: boolean;
   error: string;
   onStart: () => void;
+  onDismissError: () => void;
 }) {
   return (
     <div className="flex flex-col gap-2">
@@ -725,7 +728,26 @@ function IngestControls({
           <span className="text-xs text-muted-foreground">{job.message || '转换完成'}</span>
         ) : null}
       </div>
-      {error ? <p className="whitespace-pre-wrap text-xs text-destructive">{error}</p> : null}
+      {error ? (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>转换失败</AlertTitle>
+          <AlertDescription className="max-h-72 overflow-auto whitespace-pre-wrap">
+            {error}
+          </AlertDescription>
+          <AlertAction>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              aria-label="关闭"
+              onClick={onDismissError}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : null}
     </div>
   );
 }
@@ -916,6 +938,7 @@ export function InputPanel({
             running={ingest.running}
             error={ingest.error}
             onStart={() => void ingest.start()}
+            onDismissError={ingest.dismissError}
           />
         ) : null}
         {ignoreError ? (

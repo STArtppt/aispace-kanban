@@ -10,6 +10,8 @@ export interface IngestControl {
   running: boolean;
   error: string;
   start: (filePath?: string) => Promise<void>;
+  /** 只藏这条提示；下次转换再失败会重新出现 */
+  dismissError: () => void;
 }
 
 /**
@@ -96,10 +98,13 @@ export function useIngestJob(projectId: string, canIngest?: boolean): IngestCont
     [projectId, applyJob],
   );
 
+  const dismissError = useCallback(() => setError(''), []);
+
   return {
     job,
     running: job?.status === 'running' || busy,
     error,
     start,
+    dismissError,
   };
 }
