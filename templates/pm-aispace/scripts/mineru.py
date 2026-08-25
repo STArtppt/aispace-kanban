@@ -91,7 +91,7 @@ def get_api_key() -> str | None:
 
 
 def available() -> bool:
-    """有没有配 key。ingest.py 用它决定走 MinerU 还是退回 markitdown。"""
+    """有没有配 key。ingest.py 用它决定 PPTX / 扫描件能否走 MinerU。"""
     return get_api_key() is not None
 
 

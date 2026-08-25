@@ -151,7 +151,8 @@ python3 scripts/ingest.py --dry-run            # 先看转换计划
 python3 scripts/ingest.py --force              # 全部重转
 python3 scripts/ingest.py input/raw/某目录      # 只转指定目录或文件（台账会合并，不冲掉其他条目）
 python3 scripts/ingest.py --ocr                # 扫描版 PDF，让 MinerU 走 OCR
-python3 scripts/ingest.py --pdf-engine markitdown   # 不调在线接口，强制本地转
+python3 scripts/ingest.py --pdf-engine mineru  # 要抽图、要公式、版式复杂时走在线
+python3 scripts/ingest.py --pdf-engine anydoc  # 强制本地，不外发文件
 ```
 
 ### 忽略清单 `input/.ingestignore`
@@ -184,15 +185,17 @@ python3 scripts/ingest.py --no-ignore               # 本次不应用忽略清�
 python3 scripts/pointtable.py --no-ignore           # 点表脚本同理
 ```
 
-格式分派：docx/odt/rtf 走 pandoc（顺带抽图），**PDF/pptx 走 MinerU 在线 API**，
+格式分派：docx/odt/rtf 走 pandoc（顺带抽图），**PDF 默认走本地 anydoc（不联网）**，
+扫描件自动升级 MinerU OCR；PPTX 维持 MinerU（抽图），没配 key 时兜底 anydoc；
 xlsx/xlsm/xls 按 sheet 拆成 CSV；**html/htm 作为 PM 互传的单文件可点击原型**——不转成
 Markdown 正文，而是拷到镜像目录的 `SplittingObject/<名>/` 保留可预览 HTML，并生成配套
 `_manifest_<名>.md`（结构摘要 + 可访问性/安全等校验，形态对齐 xlsx）；
-纯文本原样拷贝，图片进 `assets/未分类/`。
+纯文本原样拷贝，图片进 `assets/未分类/`。.msg 仍走 markitdown。
 
-MinerU 需要 `MINERU_API_KEY`（`.env` 里配，脚本会自己读）。**没配 key 不会报错**，
-会自动退回本地 markitdown，只是版式和表格还原差一些——遇到这种情况提醒用户可以配 key 提升质量。
-Token 在 <https://mineru.net/apiManage> 创建，免费额度 1000 页/天，单文件上限 200MB / 200 页。
+**默认不外发文件。** 只有 `--pdf-engine mineru` 或扫描件自动升级才会把资料传到 MinerU。
+MinerU 需要 `MINERU_API_KEY`（`.env` 里配，脚本会自己读）。没配 key 时 PDF 照样走本地 anydoc；
+扫描件会在台账记 `⚠ 扫描件需 OCR`，不算失败。Token 在 <https://mineru.net/apiManage> 创建，
+免费额度 1000 页/天，单文件上限 200MB / 200 页（anydoc 没有这个页数上限）。
 
 `.doc` / `.ppt` / `.wps` 等老格式脚本不支持，需要请用户先另存为新格式
 （`.xls` 是例外：自带 BIFF8 解析器 `scripts/xls_reader.py`，普通 .xls 按 sheet 拆 CSV，

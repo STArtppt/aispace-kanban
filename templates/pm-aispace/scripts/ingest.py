@@ -3,7 +3,10 @@
 
 格式分派
 --------
-docx/odt/rtf → pandoc（顺带抽图）　　PDF/pptx → MinerU 在线 API（没配 key 时退回 markitdown）
+docx/odt/rtf → pandoc（顺带抽图）
+PDF → 本地 anydoc（默认，不联网）；扫描件自动升级 MinerU OCR；--pdf-engine mineru 才走在线
+PPTX → 维持 MinerU（抽图）；没 key 时兜底 anydoc
+.msg → markitdown（留着它的唯一理由）
 xlsx/xlsm/xls → 每 sheet 一个 csv（自带 OOXML / BIFF8 解析）
 html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（不转 md 正文）
 纯文本 → 原样拷贝　　图片 → assets/未分类/（附 _manifest.md 记溯源）
@@ -26,7 +29,7 @@ html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（�
 
 设计原则
 --------
-1. **零 Python 依赖**：只用标准库 + 外部 CLI（pandoc / markitdown）+ MinerU HTTP 接口。
+1. **零 Python 依赖**：只用标准库 + 外部 CLI（pandoc / anydoc / markitdown）+ MinerU HTTP 接口。
    xlsx 解析直接读 OOXML，.xls 走自带的 BIFF8 解析器（scripts/xls_reader.py），
    因此不需要 openpyxl / pandas / xlrd，换机器也能跑。
 2. **可溯源**：每个产物都带 frontmatter，记录来源路径、sha256、转换工具和时间。
@@ -40,7 +43,8 @@ html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（�
     python3 scripts/ingest.py --dry-run           # 只打印计划
     python3 scripts/ingest.py path/to/a.docx      # 只转指定文件
     python3 scripts/ingest.py --ocr               # 扫描版 PDF，让 MinerU 走 OCR
-    python3 scripts/ingest.py --pdf-engine markitdown   # 不想调用在线接口时强制本地转
+    python3 scripts/ingest.py --pdf-engine mineru # 要抽图、要公式、版式复杂时走在线
+    python3 scripts/ingest.py --pdf-engine anydoc # 强制本地，不外发文件
 """
 
 from __future__ import annotations
@@ -65,6 +69,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import anydoc  # noqa: E402  与本脚本同目录
 import mineru  # noqa: E402  与本脚本同目录
 from layout import (  # noqa: E402  input/ 的共用约定，三个转换脚本共用一份
     add_ignore_flags, ignore_patterns, is_ignored, md_link, merge_paths,
@@ -87,10 +92,12 @@ PASSTHROUGH = {".md", ".markdown", ".csv", ".tsv", ".txt", ".json", ".yaml", ".y
 IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 # 走 pandoc（能抽图，markdown 结构更好）。html/htm 不在这里——它们是可预览原型载体。
 PANDOC = {".docx": "docx", ".odt": "odt", ".rtf": "rtf", ".epub": "epub"}
-# 走 MinerU 在线 API：版式复杂、表格和公式多，本地工具啃不动
+# 走 MinerU 在线 API：抽图、公式、复杂版式；PPTX 默认仍走这里
 MINERU = {".pdf", ".pptx"}
-# 走 markitdown（也是 MinerU 没配 key 时的兜底）
-MARKITDOWN = {".pdf", ".pptx", ".msg"}  # .epub 走 pandoc，见上
+# 本地 anydoc：PDF 的默认引擎，也是 PPTX 没 key 时的兜底
+ANYDOC = {".pdf", ".pptx"}
+# 只为 .msg 保留（PDF / PPTX 的兜底已经交给 anydoc）
+MARKITDOWN = {".msg"}
 # 自研 OOXML 解析 → 每个 sheet 一个 csv
 SPREADSHEET = {".xlsx", ".xlsm"}
 # 老版 Excel：自研 BIFF8 解析（scripts/xls_reader.py）→ 同样每个 sheet 一个 csv
@@ -824,6 +831,18 @@ def convert_markitdown(src: Path, digest: str) -> Path:
     return target
 
 
+def convert_anydoc(src: Path, digest: str) -> Path:
+    """本地转换。扫描件由 anydoc.NeedsOcrError 抛给 main 去升级 MinerU，这里不兜底。"""
+    target = single_target(src, ".md")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    body = anydoc.to_markdown(src)
+    extra = {"kind": "document"}
+    ver = anydoc.version()
+    tool = f"anydoc {ver}" if ver else "anydoc"
+    target.write_text(frontmatter(src, digest, tool, extra) + body, encoding="utf-8")
+    return target
+
+
 def write_mineru_result(src: Path, digest: str, res: "mineru.Result", model_version: str) -> Path:
     """把 MinerU 返回的 markdown 和图片落盘，图片链接改写成相对 converted/ 的路径。"""
     target = single_target(src, ".md")
@@ -950,15 +969,17 @@ def write_assets_manifest(records: list[dict]) -> None:
 # --------------------------------------------------------------------------- #
 
 def resolve_pdf_engine(requested: str) -> str:
-    """决定 PDF / PPTX 用哪个引擎。auto：配了 key 就用 MinerU，否则退回 markitdown。"""
-    if requested == "mineru":
+    """决定 PDF / PPTX 用哪个引擎。显式指定就用指定的；auto 按 anydoc → mineru → markitdown。"""
+    if requested in ("anydoc", "mineru", "markitdown"):
+        return requested
+    if anydoc.available():
+        return "anydoc"
+    if mineru.available():
         return "mineru"
-    if requested == "markitdown":
-        return "markitdown"
-    return "mineru" if mineru.available() else "markitdown"
+    return "markitdown"
 
 
-def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
+def plan(files: list[Path], pdf_engine: str, requested: str = "auto") -> list[tuple[Path, str, Path]]:
     """→ [(源文件, 处理方式, 目标路径)]
 
     目标路径一律是**一个文件**：单产物就是产物本身，多产物是镜像目录里的摘要
@@ -981,8 +1002,16 @@ def plan(files: list[Path], pdf_engine: str) -> list[tuple[Path, str, Path]]:
             out.append((src, "html", split_paths(src)[0]))
         elif ext in PANDOC:
             out.append((src, "pandoc", single_target(src, ".md")))
-        elif ext in MINERU and pdf_engine == "mineru":
-            out.append((src, "mineru", single_target(src, ".md")))
+        elif ext in ANYDOC:
+            # PPTX 抽图只有 MinerU 能做；auto 落到 anydoc 时，有 key 的 PPTX 仍走 MinerU
+            if pdf_engine == "anydoc":
+                how = ("mineru" if ext == ".pptx" and requested == "auto" and mineru.available()
+                       else "anydoc")
+            elif pdf_engine == "mineru":
+                how = "mineru"
+            else:
+                how = "markitdown"
+            out.append((src, how, single_target(src, ".md")))
         elif ext in MARKITDOWN:
             out.append((src, "markitdown", single_target(src, ".md")))
         elif ext in PASSTHROUGH:
@@ -1102,8 +1131,9 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="忽略 sha256 缓存，全部重转")
     add_ignore_flags(ap)
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")
-    ap.add_argument("--pdf-engine", choices=["auto", "mineru", "markitdown"], default="auto",
-                    help="PDF / PPTX 用哪个引擎。auto=配了 MINERU_API_KEY 就用 MinerU，否则 markitdown")
+    ap.add_argument("--pdf-engine", choices=["auto", "anydoc", "mineru", "markitdown"], default="auto",
+                    help="PDF / PPTX 用哪个引擎。auto=本地 anydoc（扫描件自动升级 MinerU OCR）；"
+                         "mineru=在线解析（抽图/公式/复杂版式）；anydoc=强制本地；markitdown=老兜底")
     ap.add_argument("--ocr", action="store_true", help="MinerU 强制 OCR（扫描版 PDF 需要）")
     ap.add_argument("--language", default="ch", help="MinerU 识别语言，默认 ch（中英混排）")
     ap.add_argument("--model-version", default="pipeline", choices=["pipeline", "vlm", "MinerU-HTML"],
@@ -1124,11 +1154,14 @@ def main() -> int:
         return 0
 
     engine = resolve_pdf_engine(args.pdf_engine)
-    if args.pdf_engine == "auto" and engine == "markitdown" and any(f.suffix.lower() in MINERU for f in files):
-        log(f"提示：没配 {mineru.ENV_KEY}，PDF / PPTX 退回 markitdown（版式和表格还原会差一些）。")
-        log("      要用 MinerU：复制 .env.example 为 .env 并填 token（https://mineru.net/apiManage）。")
+    if args.pdf_engine == "auto" and any(f.suffix.lower() in ANYDOC for f in files):
+        if engine == "anydoc":
+            log("提示：PDF 走本地 anydoc；扫描件才需要 MinerU。")
+        elif engine == "markitdown":
+            log(f"提示：找不到 anydoc、也没配 {mineru.ENV_KEY}，PDF / PPTX 退回 markitdown。")
+            log("      看板依赖里带 @firecrawl/anydoc；MinerU token 见 .env.example（https://mineru.net/apiManage）。")
 
-    tasks = plan(files, engine)
+    tasks = plan(files, engine, requested=args.pdf_engine)
     if args.dry_run:
         for src, how, target in tasks:
             dest = target.relative_to(REPO) if target != Path() else "—"
@@ -1138,6 +1171,7 @@ def main() -> int:
     records: list[dict] = []
     failures = 0
     deferred: list[tuple[Path, str, Path]] = []   # MinerU 的任务攒起来一批提交
+    ocr_deferred: list[tuple[Path, str, Path]] = []  # anydoc 报扫描件、升级 MinerU OCR
     pointtable_dirs: dict[str, int] = {}          # 点表整目录汇总成一份产物，不逐个刷屏
     realdata_files: list[Path] = []               # 现场数据一个导出文件一个库，逐份记账
     for src, how, target in tasks:
@@ -1181,6 +1215,8 @@ def main() -> int:
                 if not has_cli("pandoc"):
                     raise RuntimeError("缺少 pandoc，请先 `brew install pandoc`")
                 out = convert_pandoc(src, digest, PANDOC[src.suffix.lower()])
+            elif how == "anydoc":
+                out = convert_anydoc(src, digest)
             elif how == "markitdown":
                 if not has_cli("markitdown"):
                     raise RuntimeError("缺少 markitdown，请先 `pip install 'markitdown[all]'`")
@@ -1189,6 +1225,19 @@ def main() -> int:
                 out = convert_image(src, digest)
             else:
                 out = convert_passthrough(src, digest)
+        except anydoc.NeedsOcrError as exc:
+            extra = ""
+            if exc.pdf_type or exc.pages:
+                bits = [p for p in (exc.pdf_type, f"{exc.pages} 页" if exc.pages else "") if p]
+                extra = f"（{'，'.join(bits)}）"
+            if mineru.available():
+                log(f"· {rel}：扫描件{extra}，转交 MinerU OCR")
+                ocr_deferred.append((src, digest, target))
+            else:
+                log(f"⚠ {rel}：扫描件需 OCR{extra}。配 {mineru.ENV_KEY} 后会自动走 MinerU。")
+                records.append({"source": str(rel), "kind": "anydoc", "target": "",
+                                "status": "⚠ 扫描件需 OCR"})
+            continue
         except (subprocess.CalledProcessError, RuntimeError, zipfile.BadZipFile, ET.ParseError,
                 XlsError, OSError) as exc:
             detail = exc.stderr.strip().splitlines()[-1] if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else exc
@@ -1201,24 +1250,32 @@ def main() -> int:
         records.append({"source": str(rel), "kind": how,
                         "target": out.relative_to(CONVERTED.parent).as_posix(), "status": "✓ 已转换"})
 
-    if deferred:
-        log(f"\nMinerU：{len(deferred)} 个文件走在线解析")
-        srcs = [src for src, _, _ in deferred]
+    if args.ocr:
+        deferred.extend(ocr_deferred)
+        ocr_deferred = []
+
+    def flush_mineru(items: list[tuple[Path, str, Path]], *, is_ocr: bool) -> None:
+        nonlocal failures
+        if not items:
+            return
+        label = "扫描件 OCR" if is_ocr else "在线解析"
+        log(f"\nMinerU：{len(items)} 个文件走{label}")
+        srcs = [src for src, _, _ in items]
         try:
             results = mineru.parse_batch(
-                srcs, is_ocr=args.ocr, language=args.language,
+                srcs, is_ocr=is_ocr, language=args.language,
                 model_version=args.model_version, timeout=args.mineru_timeout, log=log,
             )
         except mineru.MineruError as exc:
             # 整批失败（缺 key、鉴权、超配额）。逐条记进台账，不要静默丢掉这些文件
             log(f"✗ MinerU 整批失败：{exc}")
-            for src, _, _ in deferred:
+            for src, _, _ in items:
                 rel = src.relative_to(REPO) if src.is_relative_to(REPO) else src
                 records.append({"source": str(rel), "kind": "mineru", "target": "", "status": "✗ MinerU 失败"})
-            failures += len(deferred)
+            failures += len(items)
             results = {}
 
-        for src, digest, _ in deferred:
+        for src, digest, _ in items:
             rel = src.relative_to(REPO) if src.is_relative_to(REPO) else src
             res = results.get(src.name)
             if res is None:
@@ -1233,6 +1290,9 @@ def main() -> int:
             log(f"✓ {rel}  →  {out.relative_to(REPO)}{img}")
             records.append({"source": str(rel), "kind": "mineru",
                             "target": out.relative_to(CONVERTED.parent).as_posix(), "status": "✓ 已转换"})
+
+    flush_mineru(deferred, is_ocr=args.ocr)
+    flush_mineru(ocr_deferred, is_ocr=True)
 
     for name, count in sorted(pointtable_dirs.items()):
         manifest, payload = merge_paths(RAW / name)

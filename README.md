@@ -178,7 +178,8 @@ serve 的选项:`--port <n>`(默认 7788,被占用时自动往上顺延至多 10
 内置第一份是 [`templates/pm-aispace`](./templates/pm-aispace)(产品经理AI空间模板):
 
 - `scripts/ingest.py` —— 把 docx / PDF / pptx / xlsx / html 批量转成 Markdown 和 CSV,
-  自动写溯源 frontmatter,幂等(源文件没变就跳过)
+  自动写溯源 frontmatter,幂等(源文件没变就跳过)。PDF 默认走本地 anydoc,不外发;
+  扫描件 / 抽图 / 复杂版式才升级 MinerU
 - `.claude/skills/` 下预装的 AI 技能,以及一份多 Agent 通用的 `AGENTS.md` 工作约定
 
 看板本身不认这些技能 —— 它只认 `input/` `output/` 的目录约定。没有符合你角色的模板时,

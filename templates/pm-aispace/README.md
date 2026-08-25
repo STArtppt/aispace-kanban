@@ -20,8 +20,8 @@ python3 /path/to/aispace-kanban/templates/init_workspace.py \
   --name "项目名" --path ~/work/某个工作空间
 cd ~/work/某个工作空间
 
-# 2. 配 MinerU token（PDF/PPTX 解析用；不配也能跑，会退回本地工具）
-cp .env.example .env    # 把 token 填进 MINERU_API_KEY
+# 2. 可选：配 MinerU token（扫描件 / 抽图 / 复杂版式才需要；不配也能跑，PDF 走本地 anydoc）
+cp .env.example .env    # 要把 token 填进 MINERU_API_KEY
 
 # 3. 把收到的资料丢进 input/raw/（原样丢，不用整理）
 cp ~/Downloads/需求规格说明书.docx ~/Downloads/功能清单.xlsx input/raw/
@@ -60,6 +60,7 @@ scripts/
   pointtable.py     点表批量归一 → 测点主表 + sqlite
   realdata.py       现场实测数据归一 → 时序库
   migrate_converted.py  旧版平铺产物 → 镜像结构（一次性）
+  anydoc.py         本地 PDF / PPTX 转换客户端
   mineru.py         MinerU 在线解析客户端
 skills/           预装的 PM 技能 + skill-creator（→ .claude/skills 软链接）
 AGENTS.md         Agent 工作约定（所有 Agent 通用，唯一来源）
@@ -72,13 +73,14 @@ CLAUDE.md         Claude Code 入口，引入 AGENTS.md
 | 用途 | 依赖 | 安装 |
 | --- | --- | --- |
 | docx / odt / rtf → md | `pandoc` | `brew install pandoc` |
-| **PDF / pptx → md** | **MinerU 在线 API** | `.env` 里配 `MINERU_API_KEY` |
-| PDF / pptx 本地兜底 | `markitdown` | `pip install 'markitdown[all]'` |
+| **PDF → md（默认）** | **本地 anydoc** | 看板依赖 `@firecrawl/anydoc`；自己跑脚本把 `anydoc` 放到 PATH 或设 `ANYDOC_BIN` |
+| PPTX → md（抽图） / 扫描件 OCR | MinerU 在线 API | `.env` 里配 `MINERU_API_KEY` |
+| `.msg` → md | `markitdown` | `pip install 'markitdown[all]'` |
 | xlsx / xlsm → csv | 无（脚本自带 OOXML 解析） | — |
 | html / htm → 可预览原型目录 | 无（拷贝 HTML + 校验写 `_manifest.md`） | — |
 
 Python 侧只用标准库，不需要装任何包（连 MinerU 的 HTTP 调用也是标准库写的）。
-缺哪个依赖只影响对应格式，其余照常转换：没配 MinerU key 会自动退回 markitdown 并提示。
+缺哪个依赖只影响对应格式，其余照常转换：没配 MinerU key 时 PDF 走本地 anydoc。
 
 ## 多 Agent 通用
 
@@ -94,13 +96,13 @@ Python 侧只用标准库，不需要装任何包（连 MinerU 的 HTTP 调用�
 ## 四个阶段
 
 **阶段一 · 资料入库**　`scripts/ingest.py` 按格式分派：docx 走 pandoc（顺带抽图），
-PDF/pptx 走 MinerU 在线 API（多栏排版、跨页表格、公式的还原远好于本地工具，同样抽图），
+PDF 默认走本地 anydoc（不联网；扫描件自动升级 MinerU OCR），PPTX 维持 MinerU（抽图），
 xlsx 按 sheet 拆成 CSV 并生成导航清单；**html/htm 当作 PM 互传的单文件可点击原型**，
 保留 HTML 供直接预览，并生成 `_manifest.md`（校验 + 结构摘要），不把页面正文转成 md。
 每个产物都带 frontmatter 记录来源路径、sha256、转换工具和时间——**接手项目最需要的是能把结论追回原始文档**。
 脚本幂等：源文件没变就跳过。
 
-MinerU 是唯一会把资料外发的环节，涉密资料用 `--pdf-engine markitdown` 本地处理。
+**默认不外发文件。** 只有 `--pdf-engine mineru` 或扫描件自动升级才会把资料传到 MinerU。
 
 **阶段二 · 分析**　`pm-project-handover` 摸现状基线，`pm-requirement-analysis` 做需求拆解。
 两者都强制区分「资料里写了的」和「我推断的」，并把答不上来的问题沉淀成澄清清单。

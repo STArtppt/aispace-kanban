@@ -30,7 +30,8 @@
    - 新建工作空间时调 `templates/init_workspace.py --from <模板目录>`(`src/server/http.mjs` 的 `runInit`)——
      铺骨架由模板负责,看板不自己造目录
    - 资料转换时调工作空间的 `scripts/ingest.py`(`src/server/http.mjs` 的 `startIngest`)——
-     看板只 `spawn`,写 `input/converted/` 的是脚本本身
+     看板只 `spawn`,写 `input/converted/` 的是脚本本身;`ANYDOC_BIN` 由看板注入本地 anydoc 路径,
+     解析不到就不注入(用户可能自己装了,脚本走 PATH)
    - 忽略待转换资料时追加 `input/.ingestignore`(`src/server/http.mjs` 的 `addIgnore`)——
      用户在列表点「忽略此文件 / 忽略此目录」才写,只追加一行模式,不改原件。
      不经过 ingest.py:这不是转换,旧工作空间的脚本也没有写入入口;
@@ -178,7 +179,7 @@ aispace-kanban/
 
 - **原生 ESM `.mjs`**,不引入 TypeScript、不引入 Web 框架。类型靠 JSDoc 注释说清。
 - **依赖克制**:只用 `node:` 内置模块 + 已在 `dependencies` 里的轻量包
-  (当前服务端只用到 `yaml`)。加新依赖要在改动说明里讲清理由。
+  (当前服务端用到 `yaml` 和 `@firecrawl/anydoc`)。加新依赖要在改动说明里讲清理由。
 - **错误用 `throw new Error(中文说明)` + 可选 `err.statusCode`**,由 `createServer` 统一转 JSON。
   不要在处理函数里各写一套错误响应。
 - **读失败一律降级成空/默认值,不让进程崩**(参考 `config.mjs` 的 `readProjects`):

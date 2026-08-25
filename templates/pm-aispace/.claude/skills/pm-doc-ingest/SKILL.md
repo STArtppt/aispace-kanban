@@ -19,7 +19,9 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 | 格式 | 产物 | 说明 |
 | --- | --- | --- |
 | docx / odt / rtf | `.md` + 抽图 | pandoc |
-| **PDF / pptx** | `.md` + 抽图 | **MinerU 在线 API**（可退回 markitdown） |
+| **PDF** | `.md` | **本地 anydoc**（默认，不外发）。扫描件自动升级 MinerU OCR；要抽图 / 公式 / 复杂版式才 `--pdf-engine mineru` |
+| **pptx** | `.md` + 抽图 | **MinerU 在线 API**；没配 key 时兜底本地 anydoc（不抽图） |
+| `.msg` | `.md` | markitdown（留着它的唯一理由） |
 | xlsx / xlsm | 目录 + 各 sheet CSV + `_manifest.md` | 标准库 OOXML |
 | **html / htm** | **目录 + 可预览 `.html` + `_manifest.md`** | **不转 md 正文**；校验后写配套说明 |
 | md / txt 等纯文本 | 拷贝（txt→md） | — |
@@ -52,21 +54,33 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 - 产物 frontmatter 里有 `warning` — 文档类几乎是扫描件没抽出文字；**HTML 类则是校验失败或有告警**
   （打不开、外链脚本、缺 title 等）。要打开对应 `_manifest.md` 的校验表告诉用户，
   不能假装「已经能当可靠原型用了」。
-- 提示「没配 MINERU_API_KEY」 — PDF 退回了本地 markitdown。能用但版式和表格还原差，
-  告诉用户配 token 可以显著改善，token 在 <https://mineru.net/apiManage> 创建。
+- `⚠ 扫描件需 OCR` — 本地 anydoc 抽不出文字。没配 MinerU key 时台账记警告、退出码仍是 0；
+  配了 key 会自动走 MinerU OCR。告诉用户这一点，不要当成转换失败。
+- 提示「找不到 anydoc」 — 看板依赖里应带 `@firecrawl/anydoc`。不要建议用 npx（首次会联网下载）。
 
-## MinerU 相关
+## PDF 引擎阶梯
+
+**改完之后默认不外发文件了**，只有显式走 MinerU（或扫描件自动升级）才会上传。
+这是这条链路对用户最重要的一句话。
+
+```
+PDF   ① anydoc（默认，本地，不联网）
+      ② anydoc 报扫描件 → 配了 key 就自动升级 MinerU OCR；没配就记警告
+      ③ --pdf-engine mineru → 直接走 MinerU（要抽图、要公式、版式复杂时）
+PPTX  维持 MinerU；没 key 时兜底 anydoc
+.msg  继续 markitdown
+```
 
 几个需要你判断的情况：
 
-- **扫描版 PDF** → 加 `--ocr` 重跑，多数能救回来：`python3 scripts/ingest.py --ocr --force`
-- **版式特别复杂**（多栏、跨页大表、图文混排还原乱） → 换模型试试 `--model-version vlm`
-- **资料涉密** → 用 `--pdf-engine markitdown` 本地处理。**MinerU 会把文件上传到它的服务器**，
-  这是整个流程里唯一外发资料的环节。看到明显涉密标注（"机密""内部""涉密"）的 PDF，
-  主动提醒用户这一点，让 TA 决定，不要默默传上去。
+- **扫描版 PDF** → 默认就会自动升级；也可以加 `--ocr --force` 重跑：`python3 scripts/ingest.py --ocr --force`
+- **要抽图、要公式、版式特别复杂**（多栏、跨页大表、图文混排还原乱） → `--pdf-engine mineru`，复杂版式再加 `--model-version vlm`
+- **资料涉密** → 默认的 anydoc 就是本地处理，不用再加开关。**只有 `--pdf-engine mineru` 或扫描件升级才会把文件上传到 MinerU 服务器**。
+  看到明显涉密标注（"机密""内部""涉密"）的 PDF，主动提醒用户：默认不会外发；
+  如果 TA 要抽图或 OCR，让 TA 决定要不要走 MinerU，不要默默传上去。
 - **鉴权失败 / 超配额** → 免费额度 1000 页/天。报清楚原因，别反复重试撞频控。
 
-单文件上限 200MB / 200 页，超限脚本在上传前就会拦住并说明。
+MinerU 单文件上限 200MB / 200 页，超限脚本在上传前就会拦住并说明。anydoc 没有这个页数上限。
 
 ## 再体检
 

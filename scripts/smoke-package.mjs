@@ -35,6 +35,35 @@ function die(msg, detail) {
 }
 
 /**
+ * 最小可抽取文字的 PDF，不依赖外部工具。
+ * 冒烟只验「装包后 anydoc 真能转」，中文码位另在命令行用真实 PDF 验。
+ */
+function writeSmokePdf(file, text) {
+  const escaped = String(text).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+  const content = `BT /F1 12 Tf 50 700 Td (${escaped}) Tj ET`;
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ];
+  let out = '%PDF-1.4\n';
+  const offsets = [0];
+  for (let i = 0; i < objects.length; i += 1) {
+    offsets.push(Buffer.byteLength(out, 'latin1'));
+    out += `${i + 1} 0 obj\n${objects[i]}\nendobj\n`;
+  }
+  const xrefAt = Buffer.byteLength(out, 'latin1');
+  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (let i = 1; i < offsets.length; i += 1) {
+    out += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  out += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`;
+  fs.writeFileSync(file, out, 'latin1');
+}
+
+/**
  * 跑一条命令，失败就带上输出退出。
  * Windows 上 npm 是 npm.cmd，不走 shell 找不到；而一旦走了 shell，Node 就不再替你加引号，
  * 带空格的路径（`C:\Users\某某\My Documents\...`）会被拆成两个参数，所以这里自己包一层。
@@ -210,6 +239,43 @@ try {
     die(`转换没有成功结束：${ingestDone.message || ingestDone.status}`, ingestDone.log);
   }
   ok('POST /ingest 能跑完（空 raw 秒退）');
+
+  // ── 6c 装包后能转 PDF（专门验 anydoc 被写进发布包依赖，而不是只在本地 node_modules 里）──
+  if (!installedPkg.dependencies?.['@firecrawl/anydoc']) {
+    die(
+      '发布包 dependencies 里没有 @firecrawl/anydoc —— 组包脚本没扫到 createRequire().resolve',
+      JSON.stringify(installedPkg.dependencies ?? null),
+    );
+  }
+  const smokePdf = path.join(wsPath, 'input', 'raw', 'smoke-anydoc.pdf');
+  writeSmokePdf(smokePdf, 'HelloAnydoc');
+  const pdfStarted = await fetch(`${base}/api/projects/${created.id}/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path: 'input/raw/smoke-anydoc.pdf' }),
+  }).then((r) => r.json());
+  if (pdfStarted.status !== 'running' && pdfStarted.status !== 'done') {
+    die(`PDF 转换没启动：${pdfStarted.error || JSON.stringify(pdfStarted)}`);
+  }
+  const pdfDone = await waitFor(async () => {
+    const st = await fetch(`${base}/api/projects/${created.id}/ingest`).then((r) => r.json());
+    return st.status === 'done' || st.status === 'error' ? st : null;
+  }, { timeout: 30000 });
+  if (pdfDone.status !== 'done') {
+    die(`PDF 转换失败：${pdfDone.message || pdfDone.status}`, pdfDone.log);
+  }
+  const convertedPdf = path.join(wsPath, 'input', 'converted', 'smoke-anydoc.md');
+  if (!fs.existsSync(convertedPdf)) {
+    die('PDF 转完没有产物 input/converted/smoke-anydoc.md', pdfDone.log);
+  }
+  const convertedBody = fs.readFileSync(convertedPdf, 'utf8');
+  if (!/converted_by:\s*anydoc/i.test(convertedBody)) {
+    die('PDF 产物的 converted_by 不是 anydoc —— 装包后可能退回了兜底', convertedBody.slice(0, 400));
+  }
+  if (!convertedBody.includes('HelloAnydoc')) {
+    die('PDF 产物里找不到写入的正文 HelloAnydoc', convertedBody.slice(0, 400));
+  }
+  ok('装包后能转 PDF，converted_by=anydoc');
 
   // ── 7 只读红线：路径穿越必须被挡 ──────────────────────────────────────────
   const traversal = await fetch(`${base}/api/projects/${created.id}/file?path=${encodeURIComponent('../../../etc/passwd')}`);

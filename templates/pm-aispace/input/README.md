@@ -31,7 +31,8 @@ python3 scripts/ingest.py                             # 转换
 | 输入 | 产物 | 工具 |
 | --- | --- | --- |
 | `.docx` `.odt` `.rtf` `.epub` | 一个 `.md`，图片抽到 `assets/<名字>/` | pandoc |
-| `.pdf` `.pptx` | 一个 `.md`，图片抽到 `assets/<名字>/` | **MinerU 在线 API** |
+| `.pdf` | 一个 `.md` | **本地 anydoc**（默认）；扫描件自动升级 MinerU OCR |
+| `.pptx` | 一个 `.md`，图片抽到 `assets/<名字>/` | **MinerU 在线 API**；没 key 时兜底 anydoc（不抽图） |
 | `.msg` | 一个 `.md` | markitdown |
 | `.xlsx` `.xlsm` `.xls` | 每个 sheet 一个 `.csv`（进 `SplittingObject/`）+ `_manifest_<名>.md` 导航 | 脚本自带解析 |
 | `.html` `.htm` | 单文件可点击原型：HTML 原件（进 `SplittingObject/`）+ `_manifest_<名>.md` 校验摘要 | 脚本自带解析 |
@@ -41,12 +42,19 @@ python3 scripts/ingest.py                             # 转换
 **老格式不支持**：`.doc` `.ppt` `.wps` `.et` `.dps` 会被跳过并在台账里标记，
 请先用 Office / WPS 另存为新格式（`.xls` 是例外，脚本自带 BIFF8 解析器）。
 
-## PDF / PPTX 走 MinerU
+## PDF / PPTX 引擎
 
-PDF 是接手资料里最难啃的格式——多栏排版、跨页表格、图表、公式，本地工具基本还原不出来。
-所以 PDF 和 PPTX 走 [MinerU](https://mineru.net) 的在线解析 API（v4 精度版）。
+**PDF 默认走本地 anydoc**，不联网、不外发。anydoc 还原中文码位和标题层级，
+也撑得住几百页的规程——MinerU 的 200 页上限在这条路径上不再挡路。
 
-配置一次：
+它做不到的三件事，就是 MinerU 必须留着的理由：PDF 里的图一张都拿不到、不做 OCR、
+封面 / 目录 / 多栏这类页的版式启发式会翻车。所以：
+
+- 扫描件：anydoc 报错后，配了 `MINERU_API_KEY` 就自动升级 MinerU OCR；没配就记 `⚠ 扫描件需 OCR`
+- 要抽图、要公式、版式复杂：`--pdf-engine mineru`
+- PPTX：默认仍走 MinerU（抽图）；没 key 时兜底 anydoc
+
+配置 MinerU（可选）：
 
 ```bash
 cp .env.example .env       # 然后把 token 填进 MINERU_API_KEY
@@ -54,21 +62,20 @@ cp .env.example .env       # 然后把 token 填进 MINERU_API_KEY
 
 Token 在 <https://mineru.net/apiManage> 创建。`.env` 已在 `.gitignore` 里，不会入库。
 
-**没配 key 也能用**：脚本自动退回本地 markitdown 并给出提示，只是版式和表格还原差一些。
-想明确控制用哪个引擎：
+**没配 key 也能用**：PDF 走本地 anydoc。想明确控制用哪个引擎：
 
 ```bash
+python3 scripts/ingest.py --pdf-engine anydoc       # 强制本地，不外发文件（也是默认）
 python3 scripts/ingest.py --pdf-engine mineru       # 强制在线（没 key 会明确报错）
-python3 scripts/ingest.py --pdf-engine markitdown   # 强制本地，不外发文件
 python3 scripts/ingest.py --ocr                     # 扫描版 PDF，让 MinerU 走 OCR
 python3 scripts/ingest.py --model-version vlm       # 版式特别复杂时换模型试试
 ```
 
-几个实际限制：单文件 200MB / 200 页，免费额度 1000 页/天，一批最多 200 个文件。
+MinerU 的实际限制：单文件 200MB / 200 页，免费额度 1000 页/天，一批最多 200 个文件。
 超限脚本会在上传前就拦住并说清原因。整批解析是异步的，脚本会打印轮询进度。
 
-**注意资料会上传到 MinerU 服务器。** 涉密资料用 `--pdf-engine markitdown` 本地处理，
-或者先脱敏。这是这个模版里唯一会把资料外发的环节，其余格式全部本地转换。
+**默认不外发文件。** 只有 `--pdf-engine mineru` 或扫描件自动升级才会把资料传到 MinerU 服务器。
+涉密资料保持默认即可，或者先脱敏。这是这个模版里唯一会把资料外发的环节。
 
 ## 产物里的 frontmatter
 
@@ -91,7 +98,8 @@ CSV 不加 frontmatter（会破坏解析），元数据在同目录的 `_manifes
 
 ## 常见情况
 
-**扫描版 PDF**：先加 `--ocr` 让 MinerU 走 OCR，多数情况能救回来。
+**扫描版 PDF**：默认就会自动升级 MinerU OCR（配了 key 的话）；没配 key 时台账记
+`⚠ 扫描件需 OCR`，不算失败。也可以加 `--ocr` 重跑。
 如果连 OCR 都识别不出内容，产物 frontmatter 会带 `warning`——这类资料 AI 实际读不到，
 要找对方要电子版，不要假装它已经进来了。
 

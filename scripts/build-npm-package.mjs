@@ -7,7 +7,7 @@
  * 为什么不直接把仓库根发出去：
  *   - 根 package.json 的 dependencies 里大半是**前端**依赖（react / papaparse …），
  *     它们已经被 vite 打进 dist/，装包的人不该再下一遍。这里按 src/server 的 import 图
- *     重新算依赖，实际只剩 yaml。
+ *     重新算依赖（yaml + 运行时动态 resolve 的 @firecrawl/anydoc）。
  *   - 根仓库还有 templates/ 之外的一堆源码与配置，装包的人一个都用不上。
  *
  * 目录层级必须原样保留 —— 服务端是按相对路径找东西的
@@ -119,6 +119,11 @@ for (const file of [...walk(path.join(OUT, 'src', 'server')), path.join(OUT, 'bi
     used.add(spec.startsWith('@') ? spec.split('/').slice(0, 2).join('/') : spec.split('/')[0]);
   }
 }
+
+// 运行时用到但不是静态 import：createRequire(...).resolve('@firecrawl/anydoc/cli.js')
+// 匹配不上上面的正则（createRequire 里是大写 R，参数也不是字符串字面量）。
+// 不显式补上，发出去的包就没有这个依赖，装包的人转 PDF 会悄悄退回兜底。
+for (const name of ['@firecrawl/anydoc']) used.add(name);
 
 const dependencies = {};
 const unknown = [];

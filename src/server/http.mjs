@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -236,6 +237,24 @@ function summarizeIngestLog(log, exitCode) {
       log: tail,
     };
   }
+  // 必须排在 mineru 那条前面：那条吃的是整段日志，只要任何地方出现过 mineru 和「缺 / 失败」
+  // 就会先命中，把「扫描件需 OCR」「找不到 anydoc」说成「检查 token」。
+  if (/扫描件需 OCR/.test(text)) {
+    return {
+      message: '这份 PDF 是扫描件，本地引擎抽不出文字。在工作空间根目录的 .env 里配 MINERU_API_KEY 后会自动走 OCR'
+        + '（token 在 https://mineru.net/apiManage 申请）。'
+        + (tail ? `\n\n${tail}` : ''),
+      log: tail,
+    };
+  }
+  if (/找不到 anydoc/i.test(text)) {
+    return {
+      message: '找不到 anydoc。看板依赖里应带 @firecrawl/anydoc；自己跑脚本请设置 ANYDOC_BIN 或把 anydoc 放到 PATH。'
+        + '不要用 npx（首次会联网下载）。'
+        + (tail ? `\n\n${tail}` : ''),
+      log: tail,
+    };
+  }
   if (/mineru|MINERU_API_KEY/i.test(text) && /失败|error|无效|invalid|未配置|缺|401|403|未授权/i.test(text)) {
     return {
       message: 'MinerU 转换失败。检查工作空间根目录的 .env 是否配置了 MINERU_API_KEY'
@@ -347,6 +366,18 @@ function addIgnore(project, relPath) {
 }
 
 /**
+ * 解析看板自带的 anydoc CLI。找不到就不注入 —— 用户可能自己 npm i -g 了，ingest.py 会走 PATH。
+ * 不用 npx：首次会联网下载，把「本地、不外发」这条改动要解决的问题请回来。
+ */
+function resolveAnydocBin() {
+  try {
+    return createRequire(import.meta.url).resolve('@firecrawl/anydoc/cli.js');
+  } catch {
+    return '';
+  }
+}
+
+/**
  * 在工作空间里异步跑 scripts/ingest.py。
  * 看板只 spawn，真正写 input/converted/ 的是工作空间自己的脚本 —— 与 runInit 同构。
  * 接口立刻返回，进度靠 GET /ingest 轮询；写盘会被 watchWorkspace 捕获，页面自己刷新。
@@ -398,9 +429,12 @@ async function startIngest(project, relPath) {
   ingestJobs.set(project.id, job);
 
   const args = target ? [...prefix, script, target.rel] : [...prefix, script];
+  const env = { ...process.env };
+  const anydocBin = resolveAnydocBin();
+  if (anydocBin) env.ANYDOC_BIN = anydocBin;
   const child = spawn(bin, args, {
     cwd: project.root,
-    env: process.env,
+    env,
   });
 
   child.stdout.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
