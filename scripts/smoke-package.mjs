@@ -104,6 +104,19 @@ try {
   }
   ok('干净目录装包成功，dist/ 在包里');
 
+  // 可信发布签 provenance 时，空 / 错的 repository.url 会让 npm 直接 422
+  const installedPkg = JSON.parse(fs.readFileSync(path.join(installed, 'package.json'), 'utf8'));
+  const repoUrl = typeof installedPkg.repository === 'string'
+    ? installedPkg.repository
+    : installedPkg.repository?.url;
+  if (repoUrl !== 'https://github.com/STArtppt/aispace-kanban') {
+    die(
+      '包里的 repository.url 不是 GitHub 仓库地址 —— 可信发布会 422',
+      JSON.stringify(installedPkg.repository ?? null),
+    );
+  }
+  ok('package.json 带 GitHub repository，provenance 能对上');
+
   // ── 2 起服务 ──────────────────────────────────────────────────────────────
   const port = await freePort();
   server = spawn(process.execPath, [path.join(installed, 'bin', 'cli.mjs'), 'serve', '--no-open', '--port', String(port)], {

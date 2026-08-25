@@ -23,6 +23,10 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'npm-package');
 const PKG_NAME = '@startist/aispace-kanban';
+// 可信发布会签 provenance，npm 要求发出去的 repository.url 与签发仓库一字不差
+// （https://github.com/STArtppt/aispace-kanban，不含 .git）。不能从 git remote 推断：
+// origin 是内网 Gitea，对不上就会 422，字段缺了则被当成空字符串，同样挂。
+const REPO_URL = 'https://github.com/STArtppt/aispace-kanban';
 
 function getArg(name) {
   const i = process.argv.indexOf(name);
@@ -141,6 +145,7 @@ const pkg = {
   files: ['bin', 'src', 'dist', 'templates', 'README.md'],
   dependencies,
   keywords: ['kanban', 'dashboard', 'workspace', 'markdown', 'local-first', 'pm'],
+  repository: { type: 'git', url: REPO_URL },
   publishConfig: { access: 'public' },
   license: rootPkg.license || 'MIT',
 };
