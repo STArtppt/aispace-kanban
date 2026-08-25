@@ -20,10 +20,14 @@ npx -y @startist/aispace-kanban@latest
   ↓  pnpm build:npm    组出 npm-package/（bin + src/server + dist + template）
   ↓  pnpm pack:npm     打成 startist-aispace-kanban-<版本>.tgz
   ↓  pnpm smoke:npm    ★ 干净目录装上真跑一遍
-  ↓  git tag v0.2.0 && git push --tags
+  ↓  git tag v0.0.2 && git push --tags
   ↓  CI 三平台冒烟 → npm publish → GitHub Release
 别人 npx 得到的就是这个包
 ```
+
+仓库里的 `package.json` **保持占位 `0.0.1`，发版不手改**。正式号以 `v*` tag 为准，
+组包时 `--version` 注入进发出去的包。界面侧栏和 `aispace-kanban --version`
+走同一套解析（环境变量 → 非占位 package.json → git tag → `0.0.0-dev`）。
 
 **中间那颗 ★ 是重点。** 本仓 `src/server/**` 和 `bin/cli.mjs`
 **没有类型检查、没有单测**，前两道闸全绿照样可能发出一个装上就白屏的包。
@@ -102,10 +106,9 @@ pnpm typecheck && pnpm build && pnpm build:npm && pnpm pack:npm && pnpm smoke:np
 npm login
 npm whoami    # 确认登的是对 @startist 有发布权的账号
 
-# 2. 把 package.json 的 "version" 改成首版号（如 0.2.0），提交
-
+# 2. 组包时注入首版号（仓库 package.json 保持 0.0.1 占位，不必手改）
 # 3. 本地闸门完整走一遍（冒烟别跳，首版就翻车最难看）
-pnpm typecheck && pnpm build && pnpm build:npm && pnpm pack:npm && pnpm smoke:npm
+pnpm typecheck && pnpm build && pnpm build:npm -- --version 0.0.1 && pnpm pack:npm && pnpm smoke:npm
 
 # 4. 发布：scope 包默认私有（restricted），必须显式 --access public 才是公开包
 cd npm-package
@@ -117,7 +120,7 @@ npm publish --access public
 - 发完用 `npm view @startist/aispace-kanban` 验一下，能列出版本信息就成了；
   此时浏览器里打开 npmjs.com 也能看到包页面了。
 - **首版的版本号不要再推 tag**：CI 会试图再发同一个号，而 npm 不允许重发，
-  `publish` 步骤一定挂。从下一个版本（如 0.2.1）开始走 tag 流程；
+  `publish` 步骤一定挂。从下一个版本（如 0.0.2）开始走 tag 流程；
   首版想要 GitHub Release 记录的话，在 Releases 页面手动建一条就行。
 
 #### 第二步：配置可信发布（只做一次）
@@ -130,30 +133,25 @@ npm publish --access public
    - **Workflow filename**：`release.yml`（只要文件名，不含 `.github/workflows/` 前缀）
    - **Environment**：可选。填了的话 `release.yml` 的 `publish` job 里要声明
      同名的 `environment:`，相当于发布前多一道环境确认；不填就都不用动
-2. 配完发一个下一个小版本实测整条链路：改版本号 → 推 tag →
+2. 配完发一个下一个小版本实测整条链路：推 `v0.0.2` tag →
    CI 三平台冒烟 → OIDC 自动发布。这次成功，可信发布就算接通了；
    仓库里如果以前配过 `NPM_TOKEN` secret，到这一步可以删掉。
 
 ### 每次发版
 
 ```bash
-# 1. 改版本号，提交（CI 会核对 tag 和它一致，不一致直接失败）
-#    package.json 的 "version" 改成 0.2.0
-git commit -am "发 0.2.0：说清这版为什么值得发"
-
-# 2. 打 tag 推上去
-git tag v0.2.0
+# 仓库 package.json 保持 0.0.1 占位，不手改。正式号以 tag 为准。
+git tag v0.0.2
 git push && git push --tags
 ```
 
 推上去之后 CI 自己做：
 
 1. **复用整套日常闸门**（三平台冒烟全过才继续）
-2. 核对 tag 版本号 == `package.json` 里的版本号，不一致就停
-3. 用 tag 的版本号组包（`build-npm-package.mjs --version 0.2.0`）
-4. **再冒烟一次**：这次装的是真正要推上 npm 的那个 tgz
-5. `npm publish --access public`（可信发布，工作流里没有长期令牌）
-6. 建一条 GitHub Release，附上 tgz 和 `npx` 命令
+2. 用 tag 的版本号组包（`build-npm-package.mjs --version 0.0.2`）
+3. **再冒烟一次**：这次装的是真正要推上 npm 的那个 tgz
+4. `npm publish --access public`（可信发布，工作流里没有长期令牌）
+5. 建一条 GitHub Release，附上 tgz 和 `npx` 命令
 
 > **tag 推上去就是要发。** 版本号以 tag 为准，别拿 tag 当草稿。
 > 发错了不要删 tag 重发同一个号 —— npm 不允许重发同版本号，直接发下一个补丁版。
@@ -164,7 +162,7 @@ git push && git push --tags
 然后：
 
 ```bash
-pnpm build:npm --version 0.2.0     # 或改 package.json 后直接 pnpm build:npm
+pnpm build:npm -- --version 0.0.2     # 正式号注入发出去的包，不必改仓库 package.json
 pnpm pack:npm && pnpm smoke:npm    # 别跳
 cd npm-package && npm publish --access public
 ```

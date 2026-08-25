@@ -39,16 +39,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: 取版本号（去掉 tag 的 v 前缀），并核对仓库里的版本号
+      # 仓库 package.json 保持占位 0.0.1，正式号以 tag 为准，组包时注入。
+      - name: 取版本号（去掉 tag 的 v 前缀）
         id: ver
         run: |
           version="${GITHUB_REF_NAME#v}"
-          in_repo=$(node -p "require('./package.json').version")
-          if [ "$version" != "$in_repo" ]; then
-            echo "::error::tag 是 v$version，但 package.json 里写的是 $in_repo。"
-            echo "::error::先把 package.json 的 version 改成 $version 提交，再重新打 tag。"
-            exit 1
-          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: 构建 + 组包（版本号来自 tag）

@@ -277,9 +277,10 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 export const api = {
   /**
    * platform 是服务**所在机器**的 process.platform，用来定「在访达中显示」这类文案。
-   * 可选：老服务进程不返回它，缺了就按 macOS 的说法走（改动前的行为）。
+   * version 是看板自己的版本（env / 发版注入的 package.json / git v* tag）。
+   * 两者都可选：老服务进程没有，缺了 platform 按 macOS 的说法走、version 不显示。
    */
-  health: () => request<{ ok: boolean; platform?: string }>('/api/health'),
+  health: () => request<{ ok: boolean; platform?: string; version?: string }>('/api/health'),
   projects: () => request<{ projects: Project[]; activeProjectId: string }>('/api/projects'),
   addProject: (root: string, name?: string) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ root, name }) }),

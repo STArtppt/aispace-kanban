@@ -1,4 +1,4 @@
-# 工作空间看板 aispace-kanban
+# aispace-kanban
 
 **本地空间,AI 协作,网页浏览,人机易读。**
 

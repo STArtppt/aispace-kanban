@@ -35,6 +35,7 @@ const {
 } = await import('../src/server/config.mjs');
 const { createServer } = await import('../src/server/http.mjs');
 const { openInBrowser } = await import('../src/server/platform.mjs');
+const { resolveAppVersion } = await import('../src/server/version.mjs');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 /** 看板常驻服务默认端口。npx / pnpm serve 都走这里；被占用时往上顺延。 */
@@ -179,15 +180,6 @@ async function cmdServe(args) {
   process.on('SIGTERM', shutdown);
 }
 
-/** 包版本号，用于 --version。读不到不是问题，别为这个报错。 */
-function readVersion() {
-  try {
-    return JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version || '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-}
-
 const args = parseArgs(process.argv.slice(2));
 const [command, target] = args._;
 
@@ -196,7 +188,8 @@ if (args.help || args.h) {
   process.exit(0);
 }
 if (args.version || args.v) {
-  console.log(readVersion());
+  // 与 /api/health、侧栏同源：env → 非占位 package.json → git v* tag → 0.0.0-dev
+  console.log(resolveAppVersion(ROOT));
   process.exit(0);
 }
 

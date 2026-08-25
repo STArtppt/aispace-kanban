@@ -88,6 +88,30 @@ const NAV: { key: View; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'prototypes', label: '原型', icon: MonitorPlay },
 ];
 
+/** 看板版本：老服务进程没有这个字段时不显示，退回改动前的侧栏。 */
+let versionPromise: Promise<string> | null = null;
+function queryVersion() {
+  versionPromise ??= api
+    .health()
+    .then((data) => (typeof data.version === 'string' ? data.version.trim() : ''))
+    .catch(() => '');
+  return versionPromise;
+}
+
+function useAppVersion() {
+  const [version, setVersion] = useState('');
+  useEffect(() => {
+    let alive = true;
+    void queryVersion().then((value) => {
+      if (alive && value) setVersion(value);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+  return version;
+}
+
 function useTheme() {
   const [dark, setDark] = useState(
     () =>
@@ -204,6 +228,7 @@ function SidebarBody({
   loading,
   reload,
   refreshedAt,
+  version,
   dark,
   toggleTheme,
   setSettingsFor,
@@ -218,6 +243,7 @@ function SidebarBody({
   loading: boolean;
   reload: () => void | Promise<void>;
   refreshedAt: string;
+  version: string;
   dark: boolean;
   toggleTheme: () => void;
   setSettingsFor: (p: Project) => void;
@@ -325,6 +351,11 @@ function SidebarBody({
         <span className="px-2 text-[11px] text-muted-foreground">
           {refreshedAt ? `更新于 ${formatRelative(refreshedAt)}` : '—'}
         </span>
+        {version ? (
+          <span className="px-2 font-mono text-[10px] text-muted-foreground/60" title={`看板 ${version}`}>
+            {version}
+          </span>
+        ) : null}
       </div>
     </>
   );
@@ -338,6 +369,7 @@ export default function App() {
   const [settingsFor, setSettingsFor] = useState<Project | null>(null);
   const [navOpen, setNavOpen] = useState(false);
   const { dark, toggle } = useTheme();
+  const version = useAppVersion();
   const { mountedFile, visible: previewVisible } = usePreviewPresence(openFile);
   // 转换任务提到这一层：待转换列表和预览页的「重新转换」共用同一轮任务
   // （服务端每个项目只允许一个，各持一份状态会让第二处显示成「没反应」）
@@ -381,6 +413,7 @@ export default function App() {
     loading,
     reload,
     refreshedAt,
+    version,
     dark,
     toggleTheme: toggle,
     setSettingsFor,

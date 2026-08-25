@@ -18,9 +18,12 @@ import {
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
 import { scanWorkspace, verifySource } from './scan.mjs';
+import { resolveAppVersion } from './version.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const DIST = path.resolve(HERE, '../../dist');
+const ROOT = path.resolve(HERE, '../..');
+const APP_VERSION = resolveAppVersion(ROOT);
 
 /** 大 CSV 行数缓存：key = abs + mtime，避免翻页时反复全量扫 */
 const tableRowCountCache = new Map();
@@ -514,7 +517,10 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
 
   // platform 给前端定文案用（"在访达中显示" 还是 "在文件资源管理器中显示"）——
   // 定位动作发生在**服务所在的机器**上，所以不能拿浏览器的 navigator 判断。
-  if (head === 'health') return json(res, 200, { ok: true, platform: process.platform });
+  // version 可选：老服务进程没有，侧栏缺了就不显示，退回改动前的行为。
+  if (head === 'health') {
+    return json(res, 200, { ok: true, platform: process.platform, version: APP_VERSION });
+  }
 
   if (head === 'projects' && !id) {
     if (req.method === 'GET') {

@@ -13,7 +13,7 @@
  * 目录层级必须原样保留 —— 服务端是按相对路径找东西的
  * （http.mjs 的 DIST = ../../dist，config.mjs 的模板兜底 = ../../template）。
  *
- * 用法：node scripts/build-npm-package.mjs [--version 0.1.0]
+ * 用法：node scripts/build-npm-package.mjs [--version 0.0.1]
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,6 +31,9 @@ function getArg(name) {
 
 const rootPkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
 const version = getArg('--version') || rootPkg.version;
+if (!version || version === '0.0.1') {
+  console.warn(`[组包] 警告：使用版本 ${version}；发版请通过 --version <tag> 注入`);
+}
 
 // ── 前置检查：dist/ 必须是刚构建的 ────────────────────────────────────────────
 // 包里没有前端源码，dist/ 缺了或者过期，装的人打开就是一片空白/旧界面。
@@ -125,10 +128,13 @@ fs.writeFileSync(path.join(OUT, 'package.json'), `${JSON.stringify(pkg, null, 2)
 // ── npm 包首页的 README（跟仓库 README 不是一份：这里只讲装完怎么用）───────────
 fs.writeFileSync(
   path.join(OUT, 'README.md'),
-  `# 工作空间看板 aispace-kanban
+  `# aispace-kanban
 
-PM 工作空间的**只读看板**。一条命令在本机起服务，浏览器里看项目概览、输入资料、
-产出文档和原型入口。**不会往工作空间里写任何文件。**
+与 AI 反复对话做知识工作的**本地只读看板**。一条命令在本机起服务，浏览器里看每个工作空间的
+概览、输入资料、产出文档和原型入口。资料不上传、不进云端，**不会往工作空间里写任何文件**。
+
+调研、方案、数据分析、内容创作、项目接手 -- 只要「资料进来 -> 和 AI 反复对话 -> 文档出去」，
+都落在同一套结构上。
 
 ## 起服务
 
@@ -136,7 +142,7 @@ PM 工作空间的**只读看板**。一条命令在本机起服务，浏览器�
 npx -y ${PKG_NAME}@latest
 \`\`\`
 
-浏览器会自动打开 <http://localhost:5180>。第一次用点界面上的「添加工作空间」指一个目录，
+浏览器会自动打开 <http://localhost:7788>。第一次用点界面上的「添加工作空间」指一个目录，
 或者用命令登记：
 
 \`\`\`bash
@@ -147,19 +153,25 @@ npx -y ${PKG_NAME}@latest list
 登记信息存在 \`~/.pmwork/dashboard/projects.json\`（Windows 在 \`%USERPROFILE%\\.pmwork\\\`）。
 「移出看板」只删登记信息，本地目录和文件一个都不动。
 
+## 什么算一个「工作空间」
+
+有 \`input/\` 和 \`output/\` 两个目录的普通文件夹：\`input/\` 放丢进来的原始资料和转换产物，
+\`output/\` 放分析、成稿、决策记录。\`mkdir -p 我的调研/{input,output}\` 就能加进看板，
+不需要装模板、不需要跑脚本。要一套开箱即用的骨架（含批量转换脚本和 AI 技能），
+用界面上的「新建工作空间」。
+
 ## 选项
 
 | 选项 | 说明 |
 | --- | --- |
-| \`--port <n>\` | 端口，默认 5180（被占用时自动往上顺延至多 10 个） |
+| \`--port <n>\` | 端口，默认 7788（被占用时自动往上顺延至多 10 个） |
 | \`--host <addr>\` | 监听地址，默认 127.0.0.1（只有本机能连） |
 | \`--no-open\` | 不自动打开浏览器 |
 
 ## 要求
 
 - Node.js ≥ 20（macOS / Windows / Linux 都能跑）
-- 只有「新建工作空间」这一个功能要 Python 3（它调模板的 init_workspace.py）；
-  不用这个功能可以不装。
+- 只有「新建工作空间」这一个功能要 Python 3；不用这个功能可以不装。
 
 更多说明见项目主页。
 `,

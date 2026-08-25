@@ -125,7 +125,7 @@ try {
     return res.ok ? res.json() : null;
   }).catch(() => die('服务起不来', log));
   if (!health.ok) die('/api/health 返回不对', JSON.stringify(health));
-  ok(`服务起来了，platform=${health.platform}`);
+  ok(`服务起来了，platform=${health.platform}${health.version ? ` version=${health.version}` : ''}`);
 
   // ── 3 前端真的伺服出去了 ──────────────────────────────────────────────────
   const html = await (await fetch(`${base}/`)).text();
