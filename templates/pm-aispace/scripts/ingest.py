@@ -58,6 +58,12 @@ import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
+# Windows 上 stdout / stderr 默认跟着系统 locale 走（如 cp1252），而本脚本的日志、
+# 被转文件名几乎必有中文，不改会直接 UnicodeEncodeError。看板也按 UTF-8 读子进程输出。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mineru  # noqa: E402  与本脚本同目录
 from layout import (  # noqa: E402  input/ 的共用约定，三个转换脚本共用一份
