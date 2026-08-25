@@ -1,4 +1,4 @@
-import { useEffect, useState, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, Copy, Loader2, MoreHorizontal, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -60,6 +60,38 @@ export function EmptyState({ title, hint }: { title: string; hint?: string }) {
       <p className="text-sm text-muted-foreground">{title}</p>
       {hint ? <p className="mt-1 text-xs text-muted-foreground/80">{hint}</p> : null}
     </div>
+  );
+}
+
+/**
+ * 看板变窄或预览展开时单行截断；只有真的溢出时才出 tooltip，完整说明才有必要看。
+ * 可见行需要带标记（如 code）时另传 children，tooltip 仍用纯文本。
+ */
+export function TruncatedHint({ text, children }: { text: string; children?: ReactNode }) {
+  const ref = useRef<HTMLParagraphElement>(null);
+  const [overflowed, setOverflowed] = useState(false);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setOverflowed(el.scrollWidth - el.clientWidth > 1);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+
+  return (
+    <TooltipProvider delay={300}>
+      <Tooltip disabled={!overflowed}>
+        <TooltipTrigger
+          render={<p ref={ref} className="min-w-0 truncate text-xs text-muted-foreground" />}
+        >
+          {children ?? text}
+        </TooltipTrigger>
+        <TooltipContent className="max-w-sm">{text}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

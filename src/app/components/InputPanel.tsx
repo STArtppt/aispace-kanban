@@ -12,6 +12,7 @@ import {
   RowActions,
   SectionTitle,
   Stat,
+  TruncatedHint,
   writeClipboard,
   type RowAction,
 } from '@/components/Primitives';
@@ -31,6 +32,23 @@ function KindIcon({ item }: { item: { reader: string; isDir?: boolean } }) {
   if (item.isDir || item.reader === 'table') return <Table className="size-4 text-muted-foreground" />;
   if (item.reader === 'image') return <Image className="size-4 text-muted-foreground" />;
   return <FileText className="size-4 text-muted-foreground" />;
+}
+
+/** 待转换区说明的纯文本，给 tooltip 用；可见行是同一套句子，路径还带 code 标记 */
+function pendingIntroText(pending: number, ignored: number, canIngest: boolean): string {
+  let text = pending
+    ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
+    : '原始资料放进 input/raw/ 后会出现在这里。';
+  if (ignored) {
+    text += `另有 ${ignored} 份按 input/.ingestignore 忽略，不算待转换。`;
+  }
+  if (pending) {
+    text += '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在。';
+  }
+  text += canIngest
+    ? '点「开始转换」会一次处理全部；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
+    : '在工作空间里跑一次 python3 scripts/ingest.py 即可。';
+  return text;
 }
 
 /** 展示相对 raw/ 的路径，同名文件在不同子目录时能区分 */
@@ -813,7 +831,7 @@ export function InputPanel({
   const viewToggle = <ViewModeToggle mode={viewMode} onChange={setViewMode} label="资料清单" />;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-6">
       {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
       <div className="grid grid-cols-3 gap-2">
         <Stat
@@ -855,7 +873,7 @@ export function InputPanel({
         />
       </div>
 
-      <section className="flex flex-col gap-2">
+      <section className="flex min-w-0 flex-col gap-2">
         {/* 视图开关只挂在本视图的第一个清单上，切一次两个清单一起变 */}
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="min-w-0 shrink">
@@ -863,7 +881,8 @@ export function InputPanel({
           </div>
           {input.pending.length ? viewToggle : null}
         </div>
-        <p className="text-xs text-muted-foreground">
+        {/* 看板变窄或预览展开时这行会顶破布局，所以单行截断，完整说明进 tooltip */}
+        <TruncatedHint text={pendingIntroText(input.pending.length, input.stats.ignored || 0, canIngest)}>
           {input.pending.length
             ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
             : '原始资料放进 input/raw/ 后会出现在这里。'}
@@ -890,7 +909,7 @@ export function InputPanel({
               即可。
             </>
           )}
-        </p>
+        </TruncatedHint>
         {canIngest ? (
           <IngestControls
             job={ingest.job}

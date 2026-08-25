@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { EmptyState, Row, RowActions, Stat, writeClipboard } from '@/components/Primitives';
+import { EmptyState, Row, RowActions, Stat, TruncatedHint, writeClipboard } from '@/components/Primitives';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { usePins } from '@/hooks/usePins';
 import { api, type FileItem, type Scan } from '@/lib/api';
@@ -26,10 +26,19 @@ const GROUPS = [
   {
     key: 'analysis' as const,
     title: '分析中间产物',
-    hint: '现状基线、需求拆解、澄清问题清单',
+    // 三栏是流水线位置，不是岗位：调研笔记、口径、大纲和需求拆解都算「想清楚」
+    hint: '给自己和 AI 看的中间产物，还不对外发。摸底、拆解、待确认问题、口径、大纲都放这里。',
   },
-  { key: 'docs' as const, title: '对外交付文档', hint: 'PRD、需求规格、评审材料' },
-  { key: 'decisions' as const, title: '决策记录', hint: '一个决策一个文件，只追加不改历史' },
+  {
+    key: 'docs' as const,
+    title: '对外交付文档',
+    hint: '交出去的成稿。报告、方案、PRD、稿件、演示材料都放这里。',
+  },
+  {
+    key: 'decisions' as const,
+    title: '决策记录',
+    hint: '一事一档，只追加不改历史。选型、口径、范围取舍都记在这里，以后能追问为什么。',
+  },
 ];
 
 type GroupKey = (typeof GROUPS)[number]['key'];
@@ -202,10 +211,10 @@ function OutputGroup({
   onOpen: (item: FileItem) => void;
 }) {
   return (
-    <div className="flex flex-col gap-2">
-      <p className="text-xs text-muted-foreground">
-        {searching ? (files.length ? `匹配 ${files.length} 项` : `没有匹配的${title}`) : hint}
-      </p>
+    <div className="flex min-w-0 flex-col gap-2">
+      <TruncatedHint
+        text={searching ? (files.length ? `匹配 ${files.length} 项` : `没有匹配的${title}`) : hint}
+      />
       {files.length ? (
         <div className="overflow-hidden rounded-lg border border-border">
           {files.map((item) => (
@@ -288,7 +297,7 @@ export function OutputPanel({
   const searchExpanded = searchOpen || searching;
 
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex min-w-0 flex-col gap-6">
       {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
       <div className="grid grid-cols-3 gap-2">
         <Stat

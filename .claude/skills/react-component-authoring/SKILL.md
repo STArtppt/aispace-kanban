@@ -16,6 +16,7 @@ description: 在 aispace-kanban 中新建或重构 React 组件 / 面板 / 视�
 
 1. **`components/Primitives.tsx`** —— `Stat`(统计块)、`SectionTitle`(带计数的小标题)、
    `EmptyState`(空态)、`Row`(可点击列表行)、`ListPager`(列表底部分页)、
+   `TruncatedHint`(说明文字单行截断 + tooltip)、
    `CopyButton`(复制路径的小图标,能压在列表行/缩略图里)、`writeClipboard`(自己拼按钮时用)。
    看板里 80% 的排版需求都在这里。
    图片相关的组合件另有三个:`ImageLightbox`(多图灯箱,支持缩放/翻页/复制路径)、
