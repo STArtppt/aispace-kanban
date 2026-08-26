@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  CircleHelp,
   FolderInput,
   FolderOutput,
   LayoutDashboard,
@@ -15,6 +16,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { CreateWorkspaceDialog } from '@/components/CreateWorkspaceDialog';
+import { HelpPanel } from '@/components/HelpPanel';
 import { InputPanel } from '@/components/InputPanel';
 import { OutputPanel } from '@/components/OutputPanel';
 import { OverviewPanel } from '@/components/OverviewPanel';
@@ -36,16 +38,25 @@ const WIDE_MQ = '(min-width: 900px)';
 const BOARD_COMPACT = '28rem';
 
 /**
+ * 预览位里放的东西：一份工作空间文件，或看板帮助文档。
+ * 两者互斥（同一个位置、同一套进出场动画），所以合成一个联合类型而不是两套状态。
+ */
+type Preview = { kind: 'file'; file: FileItem } | { kind: 'help' };
+
+/**
  * 控制预览进出场：关闭时先播离场再卸载，切换文档时只换内容不重播。
  * visible 只驱动看板 width；预览用 flex-1 吃剩余空间，由浏览器逐帧填满，避免 JS 设双宽度打架。
+ *
+ * 依赖的是 preview 对象本身（调用方用 useMemo 稳住身份）：扫描刷新后 FileItem 会换一个新
+ * 对象，那时也该把新的那份换进来，用字符串 key 做依赖会漏掉这次更新。
  */
-function usePreviewPresence(openFile: FileItem | null) {
-  const [mountedFile, setMountedFile] = useState<FileItem | null>(openFile);
-  const [visible, setVisible] = useState(Boolean(openFile));
+function usePreviewPresence(preview: Preview | null) {
+  const [mounted, setMounted] = useState<Preview | null>(preview);
+  const [visible, setVisible] = useState(Boolean(preview));
 
   useEffect(() => {
-    if (openFile) {
-      setMountedFile(openFile);
+    if (preview) {
+      setMounted(preview);
       // 双 rAF：先以「看板 100% + 预览 0」挂载，再切到打开态，width transition 才能触发
       let inner = 0;
       const outer = requestAnimationFrame(() => {
@@ -57,11 +68,11 @@ function usePreviewPresence(openFile: FileItem | null) {
       };
     }
     setVisible(false);
-    const t = window.setTimeout(() => setMountedFile(null), PREVIEW_MOTION_MS);
+    const t = window.setTimeout(() => setMounted(null), PREVIEW_MOTION_MS);
     return () => window.clearTimeout(t);
-  }, [openFile]);
+  }, [preview]);
 
-  return { mountedFile, visible };
+  return { mounted, visible };
 }
 
 /** 宽屏断点（与 Tailwind min-[900px] 对齐） */
@@ -137,6 +148,7 @@ function SidebarBody({
   dark,
   toggleTheme,
   setSettingsFor,
+  openHelp,
   onProjectAdded,
   onNavigate,
 }: {
@@ -152,6 +164,7 @@ function SidebarBody({
   dark: boolean;
   toggleTheme: () => void;
   setSettingsFor: (p: Project) => void;
+  openHelp: () => void;
   onProjectAdded: (id: string) => void | Promise<void>;
   onNavigate?: () => void;
 }) {
@@ -249,10 +262,20 @@ function SidebarBody({
       </div>
 
       <div className="mt-auto flex flex-col gap-2 px-1">
-        <Button variant="ghost" size="sm" className="justify-start" onClick={() => void reload()}>
-          <RefreshCw className={cn('size-3.5', loading && 'animate-spin')} />
-          重新扫描
-        </Button>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            title="重新扫描"
+            aria-label="重新扫描"
+            onClick={() => void reload()}
+          >
+            <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
+          </Button>
+          <Button variant="ghost" size="icon" title="查看帮助" aria-label="查看帮助" onClick={openHelp}>
+            <CircleHelp className="size-4" />
+          </Button>
+        </div>
         <span className="px-2 text-[11px] text-muted-foreground">
           {refreshedAt ? `更新于 ${formatRelative(refreshedAt)}` : '—'}
         </span>
@@ -275,23 +298,37 @@ export default function App() {
   const [navOpen, setNavOpen] = useState(false);
   const { dark, toggle } = useTheme();
   const version = useAppVersion();
-  const { mountedFile, visible: previewVisible } = usePreviewPresence(openFile);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // 帮助和文件共用预览位，所以互斥：开帮助时先把文件预览关掉，关帮助就回到看板。
+  // useMemo 稳住对象身份，否则每次渲染都是新对象，进出场动画会被反复重放。
+  const preview = useMemo<Preview | null>(
+    () => (helpOpen ? { kind: 'help' } : openFile ? { kind: 'file', file: openFile } : null),
+    [helpOpen, openFile],
+  );
+  const { mounted: mountedPreview, visible: previewVisible } = usePreviewPresence(preview);
+  const mountedFile = mountedPreview?.kind === 'file' ? mountedPreview.file : null;
+  const openHelp = () => {
+    selectFile(null);
+    setHelpOpen(true);
+    setNavOpen(false);
+  };
   // 转换任务提到这一层：待转换列表和预览页的「重新转换」共用同一轮任务
   // （服务端每个项目只允许一个，各持一份状态会让第二处显示成「没反应」）
   const canIngest = Boolean(scan?.input?.canIngest);
   const ingest = useIngestJob(activeId, canIngest);
   const isWide = useIsWide();
   // 布局侧：真正打开中（含离场动画期）
-  const previewActive = Boolean(mountedFile);
+  const previewActive = Boolean(mountedPreview);
 
   useEffect(() => {
     setPreviewExpanded(false);
+    setHelpOpen(false);
   }, [activeId]);
 
   // 预览卸载后再清展开态，避免离场途中侧栏/看板突然弹回
   useEffect(() => {
-    if (!mountedFile) setPreviewExpanded(false);
-  }, [mountedFile]);
+    if (!mountedPreview) setPreviewExpanded(false);
+  }, [mountedPreview]);
 
   // 窄屏浮层打开时锁住背景滚动（含离场动画期）
   useEffect(() => {
@@ -309,6 +346,11 @@ export default function App() {
     await reload();
   };
 
+  const selectFileAndCloseHelp = (file: FileItem | null) => {
+    setHelpOpen(false);
+    selectFile(file);
+  };
+
   const sidebarProps = {
     projects,
     activeId,
@@ -322,6 +364,7 @@ export default function App() {
     dark,
     toggleTheme: toggle,
     setSettingsFor,
+    openHelp,
     onProjectAdded: async (id: string) => {
       await reloadProjects();
       select(id);
@@ -369,14 +412,14 @@ export default function App() {
       {scan && scan.available !== false ? (
         <>
           {view === 'overview' ? (
-            <OverviewPanel scan={scan} onOpen={selectFile} onGoto={setView} />
+            <OverviewPanel scan={scan} onOpen={selectFileAndCloseHelp} onGoto={setView} />
           ) : null}
           {view === 'input' ? (
             <InputPanel
               scan={scan}
               projectId={activeId}
               openPath={openFile?.path || mountedFile?.path || ''}
-              onOpen={selectFile}
+              onOpen={selectFileAndCloseHelp}
               ingest={ingest}
             />
           ) : null}
@@ -384,7 +427,7 @@ export default function App() {
             <OutputPanel
               scan={scan}
               openPath={openFile?.path || mountedFile?.path || ''}
-              onOpen={selectFile}
+              onOpen={selectFileAndCloseHelp}
             />
           ) : null}
           {view === 'prototypes' ? <PrototypePanel prototypes={scan.prototypes} /> : null}
@@ -513,7 +556,7 @@ export default function App() {
             </ScrollArea>
           </section>
 
-          {mountedFile ? (
+          {mountedPreview ? (
             <section
               className={cn(
                 'flex min-h-0 min-w-0 flex-col overflow-hidden bg-background',
@@ -534,15 +577,23 @@ export default function App() {
                 ],
               )}
             >
-              <Reader
-                projectId={activeId}
-                item={mountedFile}
-                ingest={ingest}
-                canIngest={canIngest}
-                onClose={() => selectFile(null)}
-                expanded={previewExpanded}
-                onToggleExpand={() => setPreviewExpanded((v) => !v)}
-              />
+              {mountedPreview.kind === 'help' ? (
+                <HelpPanel
+                  onClose={() => setHelpOpen(false)}
+                  expanded={previewExpanded}
+                  onToggleExpand={() => setPreviewExpanded((v) => !v)}
+                />
+              ) : (
+                <Reader
+                  projectId={activeId}
+                  item={mountedPreview.file}
+                  ingest={ingest}
+                  canIngest={canIngest}
+                  onClose={() => selectFile(null)}
+                  expanded={previewExpanded}
+                  onToggleExpand={() => setPreviewExpanded((v) => !v)}
+                />
+              )}
             </section>
           ) : null}
         </div>

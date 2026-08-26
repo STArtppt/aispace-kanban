@@ -232,6 +232,12 @@ export interface WorkspaceTemplate {
   builtin?: boolean;
 }
 
+/** GET /api/help 的返回。老服务没有这个接口（404），调用方要兜住。 */
+export interface HelpDoc {
+  ok?: boolean;
+  text?: string;
+}
+
 export interface TemplateList {
   templates?: WorkspaceTemplate[];
   userRoot?: string;
@@ -312,6 +318,11 @@ export const api = {
    * 老服务没有这个接口（404），调用方要自己兜住，退回不选模板直接建。
    */
   templates: () => request<TemplateList>('/api/templates'),
+  /**
+   * 看板帮助文档（templates/help.md 的正文）。
+   * 老服务没有这个接口（404），面板自己显示「这个版本还没有帮助文档」。
+   */
+  help: () => request<HelpDoc>('/api/help'),
   updateProject: (id: string, patch: { root?: string; name?: string }) =>
     request<Project>(`/api/projects/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   candidates: (id: string) =>

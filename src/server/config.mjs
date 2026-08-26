@@ -143,6 +143,22 @@ export function readCreatePrompt() {
     .replaceAll('{{initScript}}', initScript);
 }
 
+/**
+ * 看板帮助文档（templates/help.md）。和 create-prompt.md 同一个落点、同一套占位符——
+ * 它们都是「随包发出去、给人看的文字」，不属于任何一个模板。
+ */
+export function readHelpDoc() {
+  const bundled = resolveTemplateRoot();
+  if (!bundled) return '';
+  try {
+    return fs.readFileSync(path.join(bundled, 'help.md'), 'utf8')
+      .replaceAll('{{userRoot}}', userTemplatesRoot())
+      .replaceAll('{{configDir}}', CONFIG_DIR);
+  } catch {
+    return '';
+  }
+}
+
 export function readProjects() {
   try {
     const raw = fs.readFileSync(PROJECTS_FILE, 'utf8');

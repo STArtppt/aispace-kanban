@@ -13,6 +13,7 @@ import {
   listTemplates,
   projectStatus,
   readCreatePrompt,
+  readHelpDoc,
   readProjects,
   removeProject,
   resolveTemplate,
@@ -609,6 +610,11 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
 
   if (head === 'inspect') {
     return json(res, 200, inspectWorkspace(url.searchParams.get('root') || ''));
+  }
+
+  if (head === 'help') {
+    const text = readHelpDoc();
+    return json(res, 200, { ok: Boolean(text), text });
   }
 
   if (head === 'template') {
