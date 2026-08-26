@@ -1,0 +1,783 @@
+<title>anydoc Writer 实施方案</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:wght@500;600&display=swap">
+
+<style>
+  /* ---- 令牌：亮色为基准，暗色只覆盖变量 ---- */
+  :root {
+    --paper:      #FAF9F7;
+    --surface:    #F2F0EC;
+    --ink:        #1A1917;
+    --ink-2:      #57534D;
+    --ink-3:      #8C867D;
+    --rule:       #E3DFD8;
+    --rule-firm:  #CFC9C0;
+    --attn:       #B23C0A;
+    --attn-bg:    #FBF0E9;
+    --attn-rule:  #E8C4AB;
+
+    --serif: "IBM Plex Serif", "Songti SC", Georgia, serif;
+    --sans:  "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+    --mono:  "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+
+    --measure: 72ch;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #141312;
+      --surface:   #1D1B19;
+      --ink:       #EDEAE4;
+      --ink-2:     #ADA69C;
+      --ink-3:     #7C756B;
+      --rule:      #2C2926;
+      --rule-firm: #423D38;
+      --attn:      #E8814B;
+      --attn-bg:   #251A13;
+      --attn-rule: #4A3223;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:     #141312;
+    --surface:   #1D1B19;
+    --ink:       #EDEAE4;
+    --ink-2:     #ADA69C;
+    --ink-3:     #7C756B;
+    --rule:      #2C2926;
+    --rule-firm: #423D38;
+    --attn:      #E8814B;
+    --attn-bg:   #251A13;
+    --attn-rule: #4A3223;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 72px 28px 140px;
+  }
+
+  /* ---- 页眉 ---- */
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding-bottom: 34px;
+    border-bottom: 2px solid var(--ink);
+    margin-bottom: 56px;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(30px, 5vw, 44px);
+    line-height: 1.16;
+    letter-spacing: -0.015em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .standfirst {
+    max-width: var(--measure);
+    font-size: 17px;
+    color: var(--ink-2);
+    margin: 0;
+  }
+
+  /* ---- 关键数字条 ---- */
+  .figures {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin-top: 8px;
+  }
+  .fig {
+    background: var(--paper);
+    padding: 16px 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .fig dt {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .fig dd {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 21px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+  .fig .unit { font-size: 13px; color: var(--ink-2); font-weight: 400; }
+
+  /* ---- 章节：编号挂在左栏 ---- */
+  section { margin-bottom: 64px; }
+
+  .sec-head {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding-bottom: 12px;
+    margin-bottom: 26px;
+    border-bottom: 1px solid var(--rule-firm);
+  }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    color: var(--attn);
+  }
+  h2 {
+    font-family: var(--serif);
+    font-weight: 600;
+    font-size: clamp(21px, 2.6vw, 27px);
+    line-height: 1.28;
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 16px;
+    letter-spacing: 0.005em;
+    margin: 34px 0 10px;
+    color: var(--ink);
+  }
+  h3 .tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--ink-3);
+    letter-spacing: 0.06em;
+    margin-left: 8px;
+  }
+
+  p, ul, ol { max-width: var(--measure); }
+  p { margin: 0 0 16px; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 7px; }
+  li::marker { color: var(--ink-3); }
+
+  a { color: var(--ink); text-decoration-color: var(--rule-firm); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--attn); }
+  a:focus-visible { outline: 2px solid var(--attn); outline-offset: 2px; border-radius: 2px; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.885em;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: 0.08em 0.36em;
+  }
+  pre {
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 2px solid var(--rule-firm);
+    padding: 16px 18px;
+    overflow-x: auto;
+    margin: 0 0 20px;
+  }
+  pre code { background: none; border: none; padding: 0; font-size: inherit; }
+  .cmt { color: var(--ink-3); }
+
+  /* ---- 表 ---- */
+  .tw { overflow-x: auto; margin: 0 0 22px; border: 1px solid var(--rule); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td {
+    text-align: left;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+  }
+  thead th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    background: var(--surface);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td code { white-space: nowrap; }
+  .dim { color: var(--ink-2); }
+
+  /* ---- 管线示意 ---- */
+  .pipe {
+    display: flex;
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 10px;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    padding: 20px;
+    margin-bottom: 14px;
+  }
+  .stage {
+    flex: 1 1 190px;
+    background: var(--paper);
+    border: 1px solid var(--rule-firm);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .stage.own { border-color: var(--attn); border-width: 1.5px; }
+  .stage-k {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  .stage.own .stage-k { color: var(--attn); }
+  .stage-t { font-weight: 600; font-size: 15px; }
+  .stage-d { font-size: 13px; color: var(--ink-2); line-height: 1.55; }
+  .arrow {
+    align-self: center;
+    font-family: var(--mono);
+    color: var(--ink-3);
+    font-size: 15px;
+  }
+  .cap { font-size: 13px; color: var(--ink-3); max-width: var(--measure); margin: 0 0 22px; }
+
+  /* ---- 注意块（orange 只用在这里） ---- */
+  .attn {
+    border: 1px solid var(--attn-rule);
+    border-left: 3px solid var(--attn);
+    background: var(--attn-bg);
+    padding: 16px 20px;
+    margin: 0 0 20px;
+    max-width: var(--measure);
+  }
+  .attn-k {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
+    color: var(--attn);
+    display: block;
+    margin-bottom: 7px;
+  }
+  .attn p:last-child { margin-bottom: 0; }
+  .attn code { background: var(--paper); border-color: var(--attn-rule); }
+
+  /* ---- 决策卡 ---- */
+  .decisions { display: flex; flex-direction: column; gap: 0; border: 1px solid var(--rule); }
+  .dec { padding: 20px 22px; border-bottom: 1px solid var(--rule); }
+  .dec:last-child { border-bottom: none; }
+  .dec-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 9px; }
+  .dec-n {
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    color: var(--attn); letter-spacing: 0.1em;
+  }
+  .dec-t { font-weight: 600; font-size: 15.5px; }
+  .dec-m {
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .dec p { font-size: 14.5px; margin-bottom: 10px; }
+  .dec p:last-child { margin-bottom: 0; }
+  .verdict { font-size: 14.5px; }
+  .verdict b { font-weight: 600; }
+
+  /* ---- 阶段表 ---- */
+  .phase-t td:first-child { font-family: var(--mono); font-weight: 500; white-space: nowrap; }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-size: 13px;
+    color: var(--ink-3);
+    max-width: var(--measure);
+  }
+
+  @media (min-width: 1000px) {
+    .sec-head {
+      grid-template-columns: 96px 1fr;
+      gap: 0 24px;
+      align-items: baseline;
+    }
+    .sec-num { text-align: right; padding-top: 4px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">aispace-kanban · 转换链路 · 实施方案</div>
+    <h1>给 anydoc 的文档模型写一个 Markdown 序列化器</h1>
+    <p class="standfirst">
+      目标是把 <code>.docx</code> <code>.odt</code> <code>.rtf</code> <code>.epub</code> 四种格式彻底从 pandoc 上摘下来，
+      同时不丢图片。做法是复用 anydoc 已经解析好的文档模型，只重写它渲染 Markdown 的那一段——
+      解析器一行不碰。
+    </p>
+    <dl class="figures">
+      <div class="fig"><dt>新增 / 改动</dt><dd>~700 <span class="unit">行</span></dd></div>
+      <div class="fig"><dt>连续投入</dt><dd>2.5–4 <span class="unit">小时会话</span></dd></div>
+      <div class="fig"><dt>Token 预算</dt><dd>400K <span class="unit">建议口径</span></dd></div>
+      <div class="fig"><dt>止损线</dt><dd>600K <span class="unit">超了就退</span></dd></div>
+    </dl>
+  </header>
+
+  <!-- ============ 1 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">01</div>
+      <h2>要做的到底是哪一段</h2>
+    </div>
+
+    <div class="pipe">
+      <div class="stage">
+        <div class="stage-k">已有 · anydoc</div>
+        <div class="stage-t">Reader</div>
+        <div class="stage-d">吃下 OOXML / ODF / RTF 控制字 / EPUB 容器，处理样式继承、编号定义、WPS 方言。几万行的活。</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage">
+        <div class="stage-k">已有 · toDocument()</div>
+        <div class="stage-t">Document 模型</div>
+        <div class="stage-d">强类型、已规范化。表格是标准网格，样式已解析成布尔值，图片字节挂在 <code>assets</code> 上。</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="stage own">
+        <div class="stage-k">要写 · 本方案</div>
+        <div class="stage-t">Writer</div>
+        <div class="stage-d">递归下降 + 字符串拼接。没有 IO、没有格式方言、没有容错。图片落盘后写成 <code>![](相对路径)</code>。</div>
+      </div>
+    </div>
+    <p class="cap">
+      anydoc 自带的 Writer 在 Rust 里，不导出也不给 hook——包的导出面只有 <code>toDocument</code>（模型，无 writer）
+      和 <code>toMarkdown</code>（成品字符串，图已丢），中间没有接口。所以只能整段重写，但也仅此一段。
+    </p>
+
+    <h3>为什么值得做，而不只是省一个 brew install</h3>
+    <p>
+      anydoc 的 Reader 在你的语料上<strong>比 pandoc 准</strong>。那份 WPS 导出的 PRD 用纯数字 styleId
+      （<code>w:styleId="1"</code>），pandoc 认出 19 个标题，anydoc 认出 20 个而且保住了 Word 的自动编号
+      （<code>## 3.1 需求列表</code> vs pandoc 的 <code>## 需求列表</code>）。
+      走这条路，摘掉 pandoc 的同时标题结构反而更好。
+    </p>
+  </section>
+
+  <!-- ============ 2 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">02</div>
+      <h2>接缝设计：让两条路可以互换</h2>
+    </div>
+    <p>
+      先定 Python 侧的调用契约，<strong>再</strong>去实现 Writer。契约定得对，将来 Writer 做砸了可以原地换成
+      pandoc-wasm，<code>ingest.py</code> 一行不动。这是这个方案里最该先想清楚的一件事。
+    </p>
+
+<pre><code><span class="cmt"># scripts/anydoc.py 新增，与现有 to_markdown() 并列</span>
+def to_markdown_with_assets(
+    src: Path,          <span class="cmt"># 源文件</span>
+    assets_dir: Path,   <span class="cmt"># 图片落盘目录（绝对路径）</span>
+    link_prefix: str,   <span class="cmt"># 正文里图片链接的前缀，已过 md_link() 转义</span>
+) -> str:               <span class="cmt"># → Markdown 正文（不含 frontmatter）</span>
+</code></pre>
+
+    <p>
+      实现上复用 <code>anydoc.py</code> 里现成的 <code>find_bin()</code> 四级查找链（<code>ANYDOC_BIN</code> →
+      工作空间 <code>.env</code> → <code>runtime.json</code> → PATH）、<code>_argv()</code> 的 node 解析、
+      <code>_run()</code> 的 UTF-8 强制。只是 argv 换成跑我们自己的 helper：
+    </p>
+
+<pre><code>node scripts/anydoc_writer.mjs &lt;src&gt; \
+     --anydoc-module &lt;从 find_bin() 推出的 index.js 路径&gt; \
+     --assets-dir    &lt;绝对路径&gt; \
+     --link-prefix   &lt;转义过的相对前缀&gt;
+
+<span class="cmt"># stdout = Markdown 正文    stderr = 诊断</span>
+<span class="cmt"># exit 0 成功 / 1 转换失败（映射 anydoc 的 ConvertErrorCode）/ 2 用法错</span></code></pre>
+
+    <div class="attn">
+      <span class="attn-k">已验证</span>
+      <p>
+        helper 不需要自己装 <code>@firecrawl/anydoc</code>。<code>runtime.json</code> 里的 <code>anydocBin</code>
+        指向 <code>cli.js</code>，同目录的 <code>index.js</code> 就是 API 入口，
+        <code>import(pathToFileURL(...))</code> 侧载在任意 cwd 下都成功——我实测过了。
+        看板注入和终端直跑两条路径共用同一个二进制，跟现在的行为完全一致。
+      </p>
+    </div>
+
+    <h3>为什么图片落盘交给 Writer，而不是把 base64 吐回 Python</h3>
+    <p>
+      那份 PRD 只有 14 张图，转成 data URI 的 Markdown 就是 <strong>11.8 MB</strong>（我拿 officeparser 实测的）。
+      走管道回传等于把整份文档的图片在内存里复制两遍。Writer 直接写文件、正文里只留路径，
+      Python 侧沿用 <code>convert_pandoc()</code> 已有的做法数图片个数填进 frontmatter 的
+      <code>extracted_images</code>。
+    </p>
+  </section>
+
+  <!-- ============ 3 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">03</div>
+      <h2>文件清单</h2>
+    </div>
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>文件</th><th>动作</th><th class="num">行数</th><th>说明</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>scripts/anydoc_writer.mjs</code></td>
+            <td>新增</td><td class="num">~600</td>
+            <td>Writer 本体。下一节展开。</td>
+          </tr>
+          <tr>
+            <td><code>scripts/anydoc.py</code></td>
+            <td>新增函数</td><td class="num">~55</td>
+            <td><code>to_markdown_with_assets()</code> + helper 路径解析，复用现有查找链。</td>
+          </tr>
+          <tr>
+            <td><code>scripts/ingest.py</code></td>
+            <td>改</td><td class="num">~40</td>
+            <td><code>PANDOC</code> 常量改名；<code>convert_pandoc()</code> → <code>convert_richdoc()</code>；<code>plan()</code> 分派改 <code>"richdoc"</code>；去掉 <code>has_cli("pandoc")</code>；顶部 docstring。</td>
+          </tr>
+          <tr>
+            <td><code>src/server/http.mjs</code></td>
+            <td>删</td><td class="num">~5</td>
+            <td>第 268 行「缺少 pandoc」的错误映射整段删掉。</td>
+          </tr>
+          <tr>
+            <td class="dim">文档 6 处</td>
+            <td>改</td><td class="num">~30</td>
+            <td class="dim"><code>templates/help.md:40</code>、<code>README.md:75,98</code>、<code>AGENTS.md:188</code>、<code>input/README.md:33,90</code>、<code>pm-doc-ingest/SKILL.md:21</code>；<code>.claude/settings.json</code> 去掉 <code>Bash(pandoc:*)</code> 预授权。</td>
+          </tr>
+          <tr>
+            <td class="dim"><code>skills/systematic-debugging</code></td>
+            <td>改</td><td class="num">~3</td>
+            <td class="dim">第 37 行那条「pandoc 转出裸 img」的分诊条目改措辞——新 Writer 出的是 <code>![]()</code>。<code>rehype-raw</code> 保留（MinerU 仍可能出 HTML）。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ 4 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">04</div>
+      <h2>Writer 的表面积</h2>
+    </div>
+    <p>
+      <code>index.d.ts</code> 已经把要处理的东西全部摊开了，是一个封闭集合——这正是它比写解析器可控的原因。
+      我在你四份真实文档 + 四个合成件上统计了每个分支的实际出现次数：
+    </p>
+
+    <div class="tw">
+      <table>
+        <thead>
+          <tr><th>要渲染的</th><th>种类</th><th class="num">真实语料出现</th><th>处理</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>BlockKind</code></td><td class="num">8</td>
+              <td class="num">paragraph 4119 · heading 372 · list 644 · table 30 · blockQuote 11 · rule 1</td>
+              <td>主干，机械劳动</td></tr>
+          <tr><td class="dim">└ codeBlock / math</td><td class="num">2</td><td class="num dim">0 · 0</td>
+              <td class="dim">先落降级实现，不影响上线</td></tr>
+          <tr><td><code>InlineKind</code></td><td class="num">8</td>
+              <td class="num">text 8700 · anchor 389 · image 33 · link 30 · lineBreak 18 · noteRef 2</td>
+              <td>主干 + 转义</td></tr>
+          <tr><td class="dim">└ math / checkbox</td><td class="num">2</td><td class="num dim">0 · 0</td>
+              <td class="dim">同上</td></tr>
+          <tr><td><code>Style</code></td><td class="num">4 bool</td><td class="num">—</td>
+              <td>bold / italic / strike / code，<strong>已完全解析好</strong>，不用查样式表</td></tr>
+          <tr><td><code>Table</code> 跨行列</td><td class="num">—</td><td class="num">covered 格 2091</td>
+              <td>硬决策 ①</td></tr>
+          <tr><td><code>markerLabel</code></td><td class="num">—</td><td class="num">448</td>
+              <td>硬决策 ②</td></tr>
+          <tr><td>列表嵌套</td><td class="num">—</td><td class="num">最深 2 层</td><td>递归即可</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>代码结构 <span class="tag">~600 行的分布</span></h3>
+<pre><code>CLI / 参数 / 侧载 index.js / ConvertErrorCode 映射      ~70
+图片落盘（mediaType→扩展名、命名、去重）                ~45
+renderInlines + style 包裹 + 转义                     ~110
+renderBlock 主干（heading/para/quote/code/rule/math）  ~70
+renderList（嵌套 / start / markerLabel）               ~65
+renderTable（grid / covered / headerRows / 格内块）    ~100
+notes 渲染 + 收尾                                     ~40
+注释（本仓注释密度要求）                               ~100</code></pre>
+  </section>
+
+  <!-- ============ 5 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">05</div>
+      <h2>三个硬决策</h2>
+    </div>
+    <p>
+      主干是一下午的机械劳动，真正花时间的是这三处。它们决定产出能不能读，
+      所以我建议<strong>都做成开关</strong>，用真实文档两种都跑一遍再定死。
+    </p>
+
+    <div class="decisions">
+
+      <div class="dec">
+        <div class="dec-h">
+          <span class="dec-n">决策 ①</span>
+          <span class="dec-t">表格跨行列怎么降级</span>
+          <span class="dec-m">影响 2091 个格子</span>
+        </div>
+        <p>
+          GFM 表格没有 <code>rowspan</code> / <code>colspan</code>。anydoc 把跨格表达成
+          <code>covered</code> 槽回指 origin，我们必须选一种拍平方式：把 origin 内容复制进每个被覆盖格，
+          还是留空，还是整表退回 HTML <code>&lt;table&gt;</code>。
+        </p>
+        <p class="verdict">
+          <b>倾向留空</b>（与 pandoc 一致）。复制会让 AI 在做需求分析时把同一条内容统计两遍——
+          你那份采购技术规范里 2091 个 covered 格，翻倍的后果是实打实的。
+          留 <code>--span=fill</code> 开关备用。
+        </p>
+      </div>
+
+      <div class="dec">
+        <div class="dec-h">
+          <span class="dec-n">决策 ②</span>
+          <span class="dec-t">复合编号（markerLabel）怎么写</span>
+          <span class="dec-m">影响 448 处</span>
+        </div>
+        <p>
+          源文档里 <code>1-a)</code>、<code>（3）</code> 这类编号，GFM 有序列表的 <code>1.</code> 表达不出来。
+          pandoc 的做法是转义成普通文本（<code>1\. 第一</code>），代价是列表语义整个丢掉。
+        </p>
+        <p class="verdict">
+          <b>倾向：有 markerLabel 时整个 list 降级成带缩进的段落序列</b>，label 原样写在行首并转义，
+          防止被 Markdown 重新解析成列表。没有 label 的列表正常走 <code>-</code> / <code>1.</code>。
+        </p>
+      </div>
+
+      <div class="dec">
+        <div class="dec-h">
+          <span class="dec-n">决策 ③</span>
+          <span class="dec-t">转义边界划在哪</span>
+          <span class="dec-m">最容易出隐蔽 bug</span>
+        </div>
+        <p>
+          正文里裸露的 <code>* _ [ ] &lt; &gt; \</code>、行首的 <code>#</code> <code>-</code> <code>+</code>
+          和「数字+点」、表格单元格里的 <code>|</code> 和换行（必须转 <code>&lt;br&gt;</code>）。
+          <code>code</code> 样式内部则反过来——不能转义，要包反引号并处理内容自带反引号的情况。
+        </p>
+        <p class="verdict">
+          图片路径里的空格和括号<b>已经有现成解</b>：<code>layout.py</code> 的 <code>md_link()</code>
+          直接复用，不要重写。
+        </p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ============ 6 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">06</div>
+      <h2>分四阶段，每阶段都可停可验</h2>
+    </div>
+    <div class="tw">
+      <table class="phase-t">
+        <thead>
+          <tr><th>阶段</th><th>做什么</th><th>停下来能验证什么</th><th class="num">Token</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>P1</td>
+            <td>helper 骨架 + 侧载 + 图片落盘 + block/inline 主干</td>
+            <td>四个合成件（docx/odt/rtf/epub）转出正文与图，肉眼比对</td>
+            <td class="num">60–90K</td>
+          </tr>
+          <tr>
+            <td>P2</td>
+            <td>表格 + 列表 + 转义（三个硬决策落地成开关）</td>
+            <td>6 份真实 docx 跑通不报错，标题数追平或超过 pandoc</td>
+            <td class="num">90–140K</td>
+          </tr>
+          <tr>
+            <td>P3</td>
+            <td>三方回归对比，逐项修 diff，决策开关定死</td>
+            <td>下一节那张验证表全绿</td>
+            <td class="num">100–180K</td>
+          </tr>
+          <tr>
+            <td>P4</td>
+            <td>Python 侧接线 + 服务端 + 文档 6 处 + 验证闸</td>
+            <td><code>pnpm typecheck</code> / <code>build</code> 绿，浏览器点一遍</td>
+            <td class="num">50–80K</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      <strong>P1 结束就有可判断的实物。</strong>如果那时候产出的质量明显不如 pandoc，
+      止损成本只有 60–90K，接缝已经定好，换 pandoc-wasm 只改 <code>anydoc.py</code> 里那一个函数体。
+    </p>
+  </section>
+
+  <!-- ============ 7 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">07</div>
+      <h2>验证闸</h2>
+    </div>
+    <p>
+      本仓 <code>verification-before-completion</code> 要求「没有刚跑出来的证据不许下完成结论」，
+      而且 <code>src/server/**</code> 和转换脚本都没有静态检查。所以验证是脚本化的三方并排，不是看一眼：
+    </p>
+    <div class="tw">
+      <table>
+        <thead><tr><th>指标</th><th>基线</th><th>通过条件</th></tr></thead>
+        <tbody>
+          <tr><td>抽出图片数</td><td>pandoc <code>--extract-media</code></td><td class="num">必须相等（硬指标）</td></tr>
+          <tr><td>标题数</td><td>pandoc 19 / 372 / 502</td><td class="num">≥ 基线（anydoc Reader 应更准）</td></tr>
+          <tr><td>表格数</td><td>pandoc</td><td class="num">相等</td></tr>
+          <tr><td>中文完好</td><td>—</td><td class="num">无 <code>标?题?</code> 类残缺（officeparser 就死在这）</td></tr>
+          <tr><td>裸 HTML 残留</td><td>—</td><td class="num"><code>&lt;img</code> / <code>&lt;div</code> 计数为 0</td></tr>
+          <tr><td>看板渲染</td><td>—</td><td class="num">重启 <code>pnpm serve</code>，点开产物看图和目录层级</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      语料固定为 6 份真实 docx（含 WPS 数字 styleId 那份、372 标题那份、502 标题那份）+ 4 个合成件。
+      对比脚本只打统计不打全文——这也是控制 token 的关键，我在前面的调研里就是这么跑的。
+    </p>
+  </section>
+
+  <!-- ============ 8 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">08</div>
+      <h2>工期与 token 估算</h2>
+    </div>
+
+    <div class="tw">
+      <table>
+        <thead><tr><th>情形</th><th>触发条件</th><th class="num">Token</th><th class="num">会话时长</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>顺利</td>
+            <td>三个硬决策首选都成立，真实文档无意外</td>
+            <td class="num">200–280K</td><td class="num">2.5 h</td>
+          </tr>
+          <tr>
+            <td><strong>现实</strong></td>
+            <td>两处返工：表格 span 策略 + RTF/EPUB 边界</td>
+            <td class="num"><strong>350–500K</strong></td><td class="num">3–4 h</td>
+          </tr>
+          <tr>
+            <td>不顺</td>
+            <td>表格策略推翻重来，或 anydoc 模型有未文档化的边界</td>
+            <td class="num">700K+</td><td class="num">6 h+</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>估算依据，不是拍的：</p>
+    <ul>
+      <li>600 行 mjs 输出 ≈ 8.5K 输出 token，但真实成本在<strong>迭代</strong>不在首稿；</li>
+      <li>每轮真实文档回归（跑 + 读统计 + 定位）实测 25–40K，前面调研的每一轮我都在这个量级；</li>
+      <li>预计 5–8 轮迭代，P3 占大头；</li>
+      <li>已建立的上下文（<code>index.d.ts</code>、<code>ingest.py</code>、<code>layout.py</code>、实测数据）约 60K，每轮复用。</li>
+    </ul>
+
+    <div class="attn">
+      <span class="attn-k">建议口径</span>
+      <p>
+        <strong>按 400K 立预算，600K 划止损线。</strong>超过 600K 说明踩到了 anydoc 模型的未知边界，
+        这时候继续投入的期望收益已经低于直接换 pandoc-wasm——接缝就是为这一刻留的。
+      </p>
+    </div>
+
+    <p>折成人工大约 <strong>1.5–2 人日</strong>；我连续做是 2.5–4 小时的会话。</p>
+  </section>
+
+  <!-- ============ 9 ============ -->
+  <section>
+    <div class="sec-head">
+      <div class="sec-num">09</div>
+      <h2>风险与退路</h2>
+    </div>
+    <div class="tw">
+      <table>
+        <thead><tr><th>风险</th><th>后果</th><th>缓解</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>表格 span 降级选错</td>
+            <td>采购规范类文档读起来就废，2091 个格子的数据被读重或读丢</td>
+            <td>做成开关，真实文档两种都跑，P2 结束前定死</td>
+          </tr>
+          <tr>
+            <td>anydoc 是 0.x，模型无语义化保证</td>
+            <td>升级后 Writer 崩或静默丢内容</td>
+            <td>Writer 对未知 <code>kind</code> 走 fallback 吐纯文本而非抛错；<code>package.json</code> 里 pin 住版本</td>
+          </tr>
+          <tr>
+            <td>渲染质量长期由我们自己扛</td>
+            <td>这是与 pandoc-wasm 最本质的差别，不可消除</td>
+            <td>把验证脚本连同语料一起提交，当回归基线用</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      退路是明确的：<code>anydoc.py</code> 的 <code>to_markdown_with_assets()</code> 签名不变，
+      函数体换成调 pandoc-wasm 即可，<code>ingest.py</code> 及以上全部无感。
+      所以<strong>第 02 节的接缝要先定，Writer 后写</strong>——顺序反了，退路就没了。
+    </p>
+  </section>
+
+  <footer>
+    调研数据来自本机实测：anydoc 0.2.3、pandoc 3.9（本机）/ 3.10（wasm）、officeparser 7.8.0，
+    语料为 <code>~/Desktop/LIFE/working/</code> 下 6 份真实 docx 与 4 个合成件。
+  </footer>
+
+</div>
