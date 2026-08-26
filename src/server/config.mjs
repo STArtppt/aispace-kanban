@@ -10,10 +10,37 @@ import YAML from 'yaml';
 
 export const CONFIG_DIR = path.join(os.homedir(), '.pmwork', 'dashboard');
 export const PROJECTS_FILE = path.join(CONFIG_DIR, 'projects.json');
+export const RUNTIME_FILE = path.join(CONFIG_DIR, 'runtime.json');
 export const DEFAULT_TEMPLATE_ID = 'pm-aispace';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EMPTY = { schemaVersion: 1, activeProjectId: '', templateRoot: '', projects: [] };
+
+/**
+ * 把「这台机器上的看板运行时信息」落到本机配置目录，供**工作空间脚本**反查。
+ *
+ * 为什么需要：看板 spawn ingest.py 时会注入 ANYDOC_BIN，所以从界面点「转换」永远
+ * 找得到本地 anydoc。但 agent / 用户在终端里直接跑 `python3 scripts/ingest.py` 时
+ * 没有这层注入，脚本只能找 PATH——找不到就退回 MinerU（要外发文件），
+ * 或者 .doc / .ppt 直接转不了。工作空间又无从知道看板装在哪。
+ *
+ * 于是看板每次启动往这里写一行，脚本按需来读。写的是**看板自己的配置目录**
+ * （projects.json 的邻居），不碰任何工作空间，不违反只读红线。
+ * 路径会随升级 / npx 缓存清理过期，所以读的一方必须校验文件还在（见 scripts/anydoc.py）。
+ */
+export function writeRuntimeInfo(info) {
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true });
+    fs.writeFileSync(
+      RUNTIME_FILE,
+      `${JSON.stringify({ ...info, updatedAt: new Date().toISOString() }, null, 2)}\n`,
+      'utf8',
+    );
+  } catch {
+    // 写不进去（只读 HOME、权限不足）不该拦住看板启动：脚本那边照常降级，
+    // 只是终端里跑转换时得自己配 ANYDOC_BIN
+  }
+}
 
 /** 用户自建模板落这里，升级 npm 包不会被覆盖。 */
 export function userTemplatesRoot() {

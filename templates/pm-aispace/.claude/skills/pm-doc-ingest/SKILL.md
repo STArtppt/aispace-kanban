@@ -59,12 +59,26 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
   不能假装「已经能当可靠原型用了」。
 - `⚠ 扫描件需 OCR` — 本地 anydoc 抽不出文字。没配 MinerU key 时台账记警告、退出码仍是 0；
   配了 key 会自动走 MinerU OCR。告诉用户这一点，不要当成转换失败。
-- 提示「找不到 anydoc」 — 看板依赖里应带 `@firecrawl/anydoc`。不要建议用 npx（首次会联网下载）。
+- `⚠ 找不到本地 anydoc：PDF / PPTX 将上传到 MinerU 解析` — **这条最要紧，不要一带而过。**
+  你在终端里跑 `scripts/ingest.py` 时没有看板注入 `ANYDOC_BIN`，脚本只能找 PATH；
+  找不到、而 `.env` 里又配了 MinerU key，PDF 就会被传出去 —— 「默认不外发」这条保证
+  在这条路径上是不成立的。看到它先停下来告诉用户，**别默认继续转涉密资料**。
+  按顺序试：
+  1. **起一次看板**（`npx -y @startist/aispace-kanban@latest`）。它会把自带 anydoc 的位置
+     记进 `~/.pmwork/dashboard/runtime.json`，脚本自己会去读 —— 用户不用配任何东西。
+  2. 还不行就 `npm i -g @firecrawl/anydoc`，让 `anydoc` 进 PATH。
+  3. 特殊机器 / CI：在工作空间 `.env` 里钉死 `ANYDOC_BIN=<cli.js 路径>`（见 `.env.example`）。
+
+  **不要建议用 npx 跑 anydoc 本身**（首次会联网下载，正好把要解决的问题请回来）。
+- 提示「`.doc` / `.ppt` 要靠本地 anydoc 才能转」 — 同一个原因，同样按上面三步修。
+  MinerU 不收这两个格式，所以这里没有在线兜底，装不上就只能请用户另存为。
 
 ## PDF 引擎阶梯
 
-**改完之后默认不外发文件了**，只有显式走 MinerU（或扫描件自动升级）才会上传。
-这是这条链路对用户最重要的一句话。
+**默认不外发文件**，只有显式走 MinerU（或扫描件自动升级）才会上传。
+这是这条链路对用户最重要的一句话 —— 但它有个前提：**本地 anydoc 得真的找得到**。
+从看板点「转换」一定满足（看板注入 `ANYDOC_BIN`）；你在终端里自己跑则未必，
+见上面「找不到本地 anydoc」那条。
 
 ```
 PDF   ① anydoc（默认，本地，不联网）
@@ -79,6 +93,8 @@ PPTX  维持 MinerU；没 key 时兜底 anydoc
 - **扫描版 PDF** → 默认就会自动升级；也可以加 `--ocr --force` 重跑：`python3 scripts/ingest.py --ocr --force`
 - **要抽图、要公式、版式特别复杂**（多栏、跨页大表、图文混排还原乱） → `--pdf-engine mineru`，复杂版式再加 `--model-version vlm`
 - **资料涉密** → 默认的 anydoc 就是本地处理，不用再加开关。**只有 `--pdf-engine mineru` 或扫描件升级才会把文件上传到 MinerU 服务器**。
+  但**先确认脚本开头没有喊「找不到本地 anydoc」** —— 喊了就说明这轮会走 MinerU，
+  此时「默认不外发」不成立，先修环境再转，不要凭这句话打包票。
   看到明显涉密标注（"机密""内部""涉密"）的 PDF，主动提醒用户：默认不会外发；
   如果 TA 要抽图或 OCR，让 TA 决定要不要走 MinerU，不要默默传上去。
 - **鉴权失败 / 超配额** → 免费额度 1000 页/天。报清楚原因，别反复重试撞频控。

@@ -378,6 +378,21 @@ try {
   }
   ok('注册表写在隔离目录里，没碰你自己的登记信息');
 
+  // ── 9 runtime.json：终端里跑 ingest.py 的人靠它零配置找到 anydoc ────────────
+  // 这条断言在乎的是「装包后还写得出、且路径真的能用」——写不出来不会报错，
+  // 只会让 agent 在终端里转 PDF 时悄悄退回 MinerU（外发文件），没人看得见。
+  const runtimeFile = path.join(fakeHome, '.pmwork', 'dashboard', 'runtime.json');
+  if (!fs.existsSync(runtimeFile)) {
+    die('看板启动没写 runtime.json —— 终端里跑 scripts/ingest.py 会找不到本地 anydoc');
+  }
+  const runtime = JSON.parse(fs.readFileSync(runtimeFile, 'utf8'));
+  for (const key of ['anydocBin', 'node']) {
+    if (!runtime[key] || !fs.existsSync(runtime[key])) {
+      die(`runtime.json 的 ${key} 指向不存在的路径：${runtime[key] || '(空)'}`, JSON.stringify(runtime));
+    }
+  }
+  ok('runtime.json 已写出，anydocBin / node 都指向真实文件');
+
   console.log('\n  冒烟全过。这个包可以发。\n');
 } catch (err) {
   failed = true;

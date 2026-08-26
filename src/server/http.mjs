@@ -20,6 +20,7 @@ import {
   suggestRelinkCandidates,
   updateProject,
   userTemplatesRoot,
+  writeRuntimeInfo,
 } from './config.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
@@ -817,6 +818,15 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
  * 禁掉会起子进程 / 写注册表的接口，只读分享不受影响。
  */
 export function createServer({ devOrigin = '', allowMutations = true } = {}) {
+  // 每次起服务刷新一次：让终端里跑 scripts/ingest.py 的人也能找到本地 anydoc，
+  // 不必手配 ANYDOC_BIN。写的是看板自己的配置目录，不碰工作空间。
+  // 连 node 自身的路径一起记：anydoc 的 npm 包入口是 cli.js，没有 node 就跑不起来，
+  // 而 agent 的非交互 shell 里 nvm / volta 装的 node 常常不在 PATH 上。
+  writeRuntimeInfo({
+    anydocBin: resolveAnydocBin(),
+    node: process.execPath,
+    version: APP_VERSION,
+  });
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     try {

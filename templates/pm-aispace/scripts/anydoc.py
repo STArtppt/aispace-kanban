@@ -4,8 +4,8 @@
 为什么单独一个模块：ingest.py 里其它转换都是「调一个 CLI、拿 stdout」，
 anydoc 多了两件自己的事，混进去会把主流程撑乱——
 
-1. **找二进制**：看板经 ANYDOC_BIN 注入 npm 包装的 cli.js；自己跑脚本则走 PATH。
-   不 fallback 到 npx——npx 首次会联网下载，正好把「本地、不外发」请回去。
+1. **找二进制**：见 find_bin() 的四级查找链。不 fallback 到 npx——npx 首次会联网下载，
+   正好把「本地、不外发」请回去。
 2. **识别扫描件**：anydoc 不做 OCR，报错串里自带类型和页数，ingest.py 靠这个
    决定要不要升级 MinerU。
 
@@ -19,6 +19,7 @@ anydoc 多了两件自己的事，混进去会把主流程撑乱——
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -26,7 +27,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from envfile import load_dotenv  # 与本脚本同目录；mineru.py 也用同一份
+
 ENV_BIN = "ANYDOC_BIN"
+# 看板每次启动写在这里，记着它自带的那份 anydoc 在哪。
+# 让「终端里跑脚本」和「看板点转换」用同一个二进制，用户什么都不用配。
+RUNTIME_FILE = Path.home() / ".pmwork" / "dashboard" / "runtime.json"
 
 # unsupported input: PDF has no extractable text (Scanned, 369 pages): OCR is required
 _OCR_RE = re.compile(
@@ -48,13 +54,44 @@ class NeedsOcrError(AnydocError):
         self.pages = pages
 
 
+def _runtime_info() -> dict:
+    """看板配置目录里那份运行时信息。读不到 / 坏了都当空，静默跳过。"""
+    try:
+        info = json.loads(RUNTIME_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return info if isinstance(info, dict) else {}
+
+
+def _runtime_path(key: str) -> str | None:
+    """runtime.json 里的一个路径字段，校验文件还在才认。
+
+    必须校验：看板升级、npx 缓存被清之后这些路径就是死的，
+    认下来只会让每个文件都报一遍「找不到」，不如往下退回 PATH。
+    """
+    candidate = str(_runtime_info().get(key) or "").strip()
+    return candidate if candidate and Path(candidate).is_file() else None
+
+
 def find_bin() -> str | None:
-    """先读看板注入的 ANYDOC_BIN，再找 PATH 上的 anydoc。不走 npx。"""
+    """按四级查找链找 anydoc。不走 npx。
+
+        ① ANYDOC_BIN 环境变量  —— 看板 spawn 时注入的，最权威
+        ② 工作空间根目录 .env  —— 用户显式覆盖（CI、特殊机器）
+        ③ 看板配置目录 runtime.json —— 零配置的常规路径：终端里跑脚本时用的
+           就是看板自带那份，两条触发路径结果一致
+        ④ PATH 上的 anydoc     —— 用户自己 npm i -g 的
+
+    ② 必须自己调 load_dotenv：agent 在终端里跑 ingest.py 时没有看板注入，
+    而 ingest.py 判定引擎是**先问 anydoc 再问 mineru**——.env 从前只由 mineru 那边
+    顺带读入，轮到这里时还是空的，用户写在 .env 里的 ANYDOC_BIN 会被安静地无视。
+    """
+    load_dotenv()
     env = (os.environ.get(ENV_BIN) or "").strip()
     if env:
-        # 即便路径不存在也认：让 to_markdown 报人话，不悄悄退回 markitdown
+        # 即便路径不存在也认：显式配的就该报人话，不悄悄退回别处
         return env
-    return shutil.which("anydoc")
+    return _runtime_path("anydocBin") or shutil.which("anydoc")
 
 
 def available() -> bool:
@@ -70,7 +107,9 @@ def _argv(*args: str) -> list[str]:
             "或设置 ANYDOC_BIN 指向二进制。不要用 npx（首次会联网下载）。"
         )
     if binary.lower().endswith((".js", ".mjs", ".cjs")):
-        node = shutil.which("node") or "node"
+        # PATH 上的 node 优先；退回看板记下的那个——agent 的非交互 shell 里
+        # nvm / volta 装的 node 常常不在 PATH 上，那时 cli.js 根本起不来
+        node = shutil.which("node") or _runtime_path("node") or "node"
         return [node, binary, *args]
     return [binary, *args]
 

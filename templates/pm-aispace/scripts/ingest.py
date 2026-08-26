@@ -1169,12 +1169,25 @@ def main() -> int:
         return 0
 
     engine = resolve_pdf_engine(args.pdf_engine)
+    how_to_get_anydoc = ("起一次看板（它会把自带 anydoc 的位置记下来，本脚本自己会去读），"
+                         "或 npm i -g @firecrawl/anydoc")
     if args.pdf_engine == "auto" and any(f.suffix.lower() in ANYDOC for f in files):
         if engine == "anydoc":
             log("提示：PDF 走本地 anydoc；扫描件才需要 MinerU。")
+        elif engine == "mineru":
+            # 三条降级路里唯一会把文件传出去的一条，必须喊出来。
+            # 退回 markitdown（本地、无害）反倒一直有提示，这条从前是全场最安静的——
+            # 于是「默认不外发」这条承诺在 agent 直接跑脚本时会悄悄失效，没人看得见。
+            log("⚠ 找不到本地 anydoc：PDF / PPTX 将上传到 MinerU 解析，文件会离开这台机器。")
+            log(f"      想留在本地：{how_to_get_anydoc}，然后重跑。")
+            log("      确认要走在线解析：加 --pdf-engine mineru，这条提示就不再出现。")
         elif engine == "markitdown":
             log(f"提示：找不到 anydoc、也没配 {mineru.ENV_KEY}，PDF / PPTX 退回 markitdown。")
             log("      看板依赖里带 @firecrawl/anydoc；MinerU token 见 .env.example（https://mineru.net/apiManage）。")
+    if not anydoc.available() and any(f.suffix.lower() in LEGACY_ANYDOC for f in files):
+        # .doc / .ppt 只有 anydoc 一条路（MinerU 不收这两个格式），单独说清楚，
+        # 否则用户只看到逐个文件的「请另存为」，不知道装个 anydoc 就不用手工转了
+        log(f"提示：.doc / .ppt 要靠本地 anydoc 才能转。{how_to_get_anydoc}。")
 
     tasks = plan(files, engine, requested=args.pdf_engine)
     if args.dry_run:

@@ -36,6 +36,8 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from envfile import load_dotenv  # 与本脚本同目录；anydoc.py 也用同一份
+
 API_BASE = "https://mineru.net/api/v4"
 ENV_KEY = "MINERU_API_KEY"
 
@@ -68,21 +70,6 @@ class Result:
 # --------------------------------------------------------------------------- #
 # 环境变量
 # --------------------------------------------------------------------------- #
-
-def load_dotenv(path: Path | None = None) -> None:
-    """把仓库根目录 .env 里的变量读进 os.environ。已存在的环境变量优先，不覆盖。"""
-    path = path or Path(__file__).resolve().parent.parent / ".env"
-    if not path.is_file():
-        return
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key, value = key.strip(), value.strip().strip("'\"")
-        if key and key not in os.environ:
-            os.environ[key] = value
-
 
 def get_api_key() -> str | None:
     load_dotenv()
