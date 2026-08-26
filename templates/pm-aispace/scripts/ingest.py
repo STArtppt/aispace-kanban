@@ -3,7 +3,7 @@
 
 格式分派
 --------
-docx/odt/rtf → pandoc（顺带抽图）
+docx/odt/rtf/epub → 本地 anydoc 解析 + 自研 Markdown Writer（顺带抽图，不依赖 pandoc）
 PDF → 本地 anydoc（默认，不联网）；扫描件自动升级 MinerU OCR；--pdf-engine mineru 才走在线
 PPTX → 维持 MinerU（抽图）；没 key 时兜底 anydoc
 .msg → markitdown（留着它的唯一理由）
@@ -30,7 +30,7 @@ html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（�
 
 设计原则
 --------
-1. **零 Python 依赖**：只用标准库 + 外部 CLI（pandoc / anydoc / markitdown）+ MinerU HTTP 接口。
+1. **零 Python 依赖**：只用标准库 + 外部 CLI（anydoc / markitdown）+ MinerU HTTP 接口。
    xlsx 解析直接读 OOXML，.xls 走自带的 BIFF8 解析器（scripts/xls_reader.py），
    因此不需要 openpyxl / pandas / xlrd，换机器也能跑。
 2. **可溯源**：每个产物都带 frontmatter，记录来源路径、sha256、转换工具和时间。
@@ -91,8 +91,11 @@ INDEX = REPO / "input" / "INDEX.md"
 PASSTHROUGH = {".md", ".markdown", ".csv", ".tsv", ".txt", ".json", ".yaml", ".yml", ".xml"}
 # 图片：拷到 assets/，由 Claude 用 Read 工具直接看图
 IMAGES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
-# 走 pandoc（能抽图，markdown 结构更好）。html/htm 不在这里——它们是可预览原型载体。
-PANDOC = {".docx": "docx", ".odt": "odt", ".rtf": "rtf", ".epub": "epub"}
+# 富文档：本地 anydoc 解析 + 自研 Markdown Writer（scripts/anydoc_writer.mjs），能抽图。
+# 以前这四种走 pandoc，没装就整批断流；anydoc 是看板自带的 npm 依赖，零配置就能用，
+# 而且它认得出 WPS 导出那种纯数字 styleId 的标题，标题结构比 pandoc 更准。
+# html/htm 不在这里——它们是可预览原型载体。
+RICHDOC = {".docx", ".odt", ".rtf", ".epub"}
 # 走 MinerU 在线 API：抽图、公式、复杂版式；PPTX 默认仍走这里
 MINERU = {".pdf", ".pptx"}
 # 本地 anydoc：PDF 的默认引擎，也是 PPTX 没 key 时的兜底
@@ -800,28 +803,28 @@ def convert_html(src: Path, digest: str) -> Path:
 
 
 # --------------------------------------------------------------------------- #
-# pandoc / markitdown / 拷贝
+# 富文档 / markitdown / 拷贝
 # --------------------------------------------------------------------------- #
 
-def convert_pandoc(src: Path, digest: str, fmt: str) -> Path:
-    name = safe_component(src.stem)
+def convert_richdoc(src: Path, digest: str) -> Path:
+    """docx / odt / rtf / epub：anydoc 解析 + 自研 Writer 渲染，图片落进 assets/。
+
+    图片链接必须相对**产物所在目录**算（镜像目录深度不一，不能写死 ../assets/），
+    而且必须过一遍 md_link：图片目录随源文件取名，名字里的空格和括号会当场打断
+    `![](...)` 语法，链接指到半截路径上。这两条跟 MinerU 那条路是同一套规矩。
+    """
     target = single_target(src, ".md")
     target.parent.mkdir(parents=True, exist_ok=True)
-    img_dir = ASSETS / name
-    media_rel = img_dir.relative_to(REPO).as_posix()
-    cmd = ["pandoc", str(src.relative_to(REPO)), "--from", fmt, "--to", "gfm",
-           "--wrap=none", f"--extract-media={media_rel}", "-o", str(target.relative_to(REPO))]
-    subprocess.run(cmd, cwd=REPO, check=True, capture_output=True, text=True)
-    body = target.read_text(encoding="utf-8")
-    # pandoc 写的图片路径是相对仓库根的，改成相对**产物所在目录**的路径
-    # （镜像目录深度不一，不能再写死 ../assets/）。必须过一遍 md_link：图片目录随源文件
-    # 取名，名字里的空格和括号会当场打断 `![](...)` 语法，链接指到半截路径上。
-    body = body.replace(f"{media_rel}/", md_link(f"{rel_path(img_dir, target.parent)}/"))
-    images = sorted(p.name for p in img_dir.rglob("*") if p.is_file()) if img_dir.exists() else []
+    img_dir = ASSETS / safe_component(src.stem)
+    link_prefix = md_link(f"{rel_path(img_dir, target.parent)}/")
+    body = anydoc.to_markdown_with_assets(src, img_dir, link_prefix)
+    images = [p for p in img_dir.rglob("*") if p.is_file()] if img_dir.exists() else []
     extra = {"kind": "document"}
     if images:
         extra["extracted_images"] = len(images)
-    target.write_text(frontmatter(src, digest, "pandoc", extra) + body, encoding="utf-8")
+    ver = anydoc.version()
+    tool = f"anydoc {ver} writer" if ver else "anydoc writer"
+    target.write_text(frontmatter(src, digest, tool, extra) + body, encoding="utf-8")
     return target
 
 
@@ -1008,8 +1011,8 @@ def plan(files: list[Path], pdf_engine: str, requested: str = "auto") -> list[tu
             out.append((src, "spreadsheet", split_paths(src)[0]))
         elif ext in HTML_PROTOTYPE:
             out.append((src, "html", split_paths(src)[0]))
-        elif ext in PANDOC:
-            out.append((src, "pandoc", single_target(src, ".md")))
+        elif ext in RICHDOC:
+            out.append((src, "richdoc", single_target(src, ".md")))
         elif ext in ANYDOC:
             # PPTX 抽图只有 MinerU 能做；auto 落到 anydoc 时，有 key 的 PPTX 仍走 MinerU
             if pdf_engine == "anydoc":
@@ -1243,10 +1246,8 @@ def main() -> int:
                 out = convert_spreadsheet(src, digest)
             elif how == "html":
                 out = convert_html(src, digest)
-            elif how == "pandoc":
-                if not has_cli("pandoc"):
-                    raise RuntimeError("缺少 pandoc，请先 `brew install pandoc`")
-                out = convert_pandoc(src, digest, PANDOC[src.suffix.lower()])
+            elif how == "richdoc":
+                out = convert_richdoc(src, digest)
             elif how == "anydoc":
                 out = convert_anydoc(src, digest)
             elif how == "markitdown":

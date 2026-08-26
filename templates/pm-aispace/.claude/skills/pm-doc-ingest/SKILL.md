@@ -18,7 +18,7 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 
 | 格式 | 产物 | 说明 |
 | --- | --- | --- |
-| docx / odt / rtf | `.md` + 抽图 | pandoc |
+| docx / odt / rtf / epub | `.md` + 抽图 | **本地 anydoc** |
 | **PDF** | `.md` | **本地 anydoc**（默认，不外发）。扫描件自动升级 MinerU OCR；要抽图 / 公式 / 复杂版式才 `--pdf-engine mineru` |
 | **pptx** | `.md` + 抽图 | **MinerU 在线 API**；没配 key 时兜底本地 anydoc（不抽图） |
 | **`.doc` / `.ppt`** | `.md` | **本地 anydoc**（老版二进制 Office，不抽图）。anydoc 不可用时才退回「请另存为」 |
@@ -38,7 +38,7 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 
 `.html` / `.htm` 在本工作空间里是 **PM 之间传递可点击原型的载体**，不是「再转一版 Markdown」的文档：
 
-- **不要**期望 pandoc 把页面交互转成可读需求正文；交互以 HTML 预览为准。
+- **不要**期望转换脚本把页面交互转成可读需求正文；交互以 HTML 预览为准。
 - 转换结果是「摘要 + 正文目录」，例如 `input/raw/SC-02_发电计划原型.html` →
   - `input/converted/_manifest_SC-02_发电计划原型.md` — 溯源 frontmatter + 体积/编码 +
     **可访问性与安全校验表** + 标题结构线索

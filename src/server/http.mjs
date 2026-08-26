@@ -265,13 +265,6 @@ function summarizeIngestLog(log, exitCode) {
       log: tail,
     };
   }
-  if (/缺少 pandoc/i.test(text)) {
-    return {
-      message: '转换需要 pandoc，请先安装（macOS：`brew install pandoc`），再试一次。'
-        + (tail ? `\n\n${tail}` : ''),
-      log: tail,
-    };
-  }
   if (/缺少 markitdown/i.test(text)) {
     return {
       message: '转换需要 markitdown，请先 `pip install \'markitdown[all]\'`，再试一次。'

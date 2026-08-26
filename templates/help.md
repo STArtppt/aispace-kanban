@@ -37,7 +37,7 @@ input/raw/站点数据/闸门底坎库容.xlsx
 | 格式 | 靠什么 | 要装吗 |
 | --- | --- | --- |
 | PDF、`.doc`、`.ppt` | 本地 anydoc | **看板自带**，从界面点「转换」永远可用 |
-| `.docx` `.odt` `.rtf` `.epub` | pandoc | 要（`brew install pandoc`） |
+| `.docx` `.odt` `.rtf` `.epub` | 本地 anydoc | **看板自带**，从界面点「转换」永远可用 |
 | `.xlsx` `.xls` `.csv`、图片、纯文本 | 脚本自带解析 | 不用 |
 | 扫描件 OCR、pptx 抽图 | MinerU 在线 API | 要 token，见下 |
 

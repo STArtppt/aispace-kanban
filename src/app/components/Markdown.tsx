@@ -160,7 +160,7 @@ function buildComponents(): ComponentProps<typeof ReactMarkdown>['components'] {
     img: ({ className, style, ...props }) => (
       <img
         className={cn('my-4 h-auto max-w-full rounded-lg border border-border', className)}
-        // pandoc 会带 Word 的固定宽高（如 6.76in）；窄栏下保留高度会把图压扁
+        // 老的 pandoc 时代产物会带 Word 的固定宽高（如 6.76in）；窄栏下保留高度会把图压扁
         style={style ? { ...style, height: 'auto' } : undefined}
         {...props}
       />
@@ -354,7 +354,8 @@ export function Markdown({
       <ReactMarkdown
         key={renderKey}
         remarkPlugins={[remarkGfm]}
-        // pandoc 从 docx 转出的图/表是裸 HTML，不是 ![]()；不接 rehype-raw 会被转义掉
+        // MinerU 与 pandoc 时代的老产物会出裸 HTML 图/表，不是 ![]()；不接 rehype-raw 会被转义掉。
+        // docx/odt/rtf/epub 现在走 anydoc_writer.mjs 出的是 ![]()，但**别把这个插件删了**——上面两条路还在。
         rehypePlugins={[rehypeRaw]}
         disallowedElements={['script', 'iframe', 'object', 'embed']}
         components={mdComponents}

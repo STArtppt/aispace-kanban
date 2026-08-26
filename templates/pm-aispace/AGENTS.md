@@ -185,7 +185,7 @@ python3 scripts/ingest.py --no-ignore               # 本次不应用忽略清�
 python3 scripts/pointtable.py --no-ignore           # 点表脚本同理
 ```
 
-格式分派：docx/odt/rtf 走 pandoc（顺带抽图），**PDF 默认走本地 anydoc（不联网）**，
+格式分派：docx/odt/rtf/epub 走本地 anydoc（顺带抽图），**PDF 默认也走本地 anydoc（不联网）**，
 扫描件自动升级 MinerU OCR；PPTX 维持 MinerU（抽图），没配 key 时兜底 anydoc；
 xlsx/xlsm/xls 按 sheet 拆成 CSV；**html/htm 作为 PM 互传的单文件可点击原型**——不转成
 Markdown 正文，而是拷到镜像目录的 `SplittingObject/<名>/` 保留可预览 HTML，并生成配套

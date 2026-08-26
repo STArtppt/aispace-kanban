@@ -33,6 +33,9 @@ ENV_BIN = "ANYDOC_BIN"
 # 看板每次启动写在这里，记着它自带的那份 anydoc 在哪。
 # 让「终端里跑脚本」和「看板点转换」用同一个二进制，用户什么都不用配。
 RUNTIME_FILE = Path.home() / ".pmwork" / "dashboard" / "runtime.json"
+# 自研 Markdown Writer，与本脚本同目录。anydoc 自带的 Writer 会把嵌入图渲染成 alt 文本
+# 就把字节丢了，.docx/.odt/.rtf/.epub 要保住图只能走它。
+WRITER = Path(__file__).resolve().parent / "anydoc_writer.mjs"
 
 # unsupported input: PDF has no extractable text (Scanned, 369 pages): OCR is required
 _OCR_RE = re.compile(
@@ -154,6 +157,73 @@ def to_markdown(src: Path) -> str:
         pages = int(matched.group(2)) if matched else 0
         raise NeedsOcrError(err or "扫描件需 OCR", pdf_type=pdf_type, pages=pages)
     raise AnydocError(err or f"anydoc 退出码 {proc.returncode}")
+
+
+def _writer_module() -> str:
+    """自研 Writer 要侧载的 anydoc API 入口（index.js）的绝对路径。
+
+    npm 包的 bin 是 cli.js，同目录的 index.js 才是 API 入口（toDocument 在那儿）。
+    helper 自己不装 @firecrawl/anydoc —— 从 find_bin() 的结果推出来侧载，
+    这样「看板点转换」和「终端跑脚本」用的是同一份二进制，跟 to_markdown() 一致。
+    """
+    binary = find_bin()
+    if not binary:
+        raise AnydocError(
+            "找不到 anydoc。看板会注入 ANYDOC_BIN；自己跑脚本请把 anydoc 放到 PATH，"
+            "或设置 ANYDOC_BIN 指向二进制。不要用 npx（首次会联网下载）。"
+        )
+    module = Path(binary).resolve().parent / "index.js"
+    if not module.is_file():
+        raise AnydocError(
+            f"anydoc 装得不完整：{binary} 旁边没有 index.js（API 入口）。"
+            f"重装 @firecrawl/anydoc 再试。"
+        )
+    return str(module)
+
+
+def to_markdown_with_assets(src: Path, assets_dir: Path, link_prefix: str) -> str:
+    """把 src 转成 Markdown 正文，**图片按字节落进 assets_dir**，正文里写成相对链接。
+
+    与 to_markdown() 的区别只有图片：anydoc 自带的 Writer 把嵌入图渲染成 alt 文本、
+    字节留在 document.assets 上（README 明说了 Markdown 装不下字节），
+    所以这条路走 scripts/anydoc_writer.mjs —— 拿 toDocument() 的模型自己序列化，
+    顺手把 assets 写成文件。**解析仍然是 anydoc 的，我们只重写渲染那一段。**
+
+    参数:
+        src         源文件（.docx / .odt / .rtf / .epub）
+        assets_dir  图片落盘目录，绝对路径，由调用方算好（这里不猜也不建目录树）
+        link_prefix 正文里图片链接的前缀，**调用方必须先过 layout.md_link()**——
+                    目录名随源文件取，里面的空格和括号会当场打断 `![](...)` 语法
+
+    返回 Markdown 正文（不含 frontmatter）。失败抛 AnydocError。
+
+    这个签名是**引擎无关的接缝**：哪天自研 Writer 扛不动了，把函数体换成别的引擎
+    （pandoc-wasm、装回本机 pandoc）即可，ingest.py 及以上一行都不用动。
+    """
+    node = shutil.which("node") or _runtime_path("node") or "node"
+    argv = [
+        node,
+        str(WRITER),
+        str(src),
+        "--anydoc-module",
+        _writer_module(),
+        "--assets-dir",
+        str(assets_dir),
+        "--link-prefix",
+        link_prefix,
+    ]
+    proc = _run(argv)
+    if proc.returncode == 0:
+        # stderr 上是诊断（降级了哪些节点、几张图没有可用字节），转换成功也可能有，
+        # 原样透出来给人看；ingest.py 不解析它
+        if proc.stderr.strip():
+            sys.stderr.write(proc.stderr)
+        return proc.stdout
+    err = (proc.stderr or proc.stdout or "").strip()
+    if proc.returncode == 2:
+        # 用法错 = 我们自己调错了，不是文档的问题，得让它显眼
+        raise AnydocError(f"anydoc_writer.mjs 用法错：{err}")
+    raise AnydocError(err or f"anydoc_writer.mjs 退出码 {proc.returncode}")
 
 
 def main() -> int:

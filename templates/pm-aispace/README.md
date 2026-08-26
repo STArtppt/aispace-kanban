@@ -72,8 +72,7 @@ CLAUDE.md         Claude Code 入口，引入 AGENTS.md
 
 | 用途 | 依赖 | 安装 |
 | --- | --- | --- |
-| docx / odt / rtf → md | `pandoc` | `brew install pandoc` |
-| **PDF / `.doc` / `.ppt` → md** | **本地 anydoc** | 看板依赖 `@firecrawl/anydoc`；自己跑脚本把 `anydoc` 放到 PATH 或设 `ANYDOC_BIN` |
+| **docx / odt / rtf / epub、PDF、`.doc` / `.ppt` → md** | **本地 anydoc** | 看板依赖 `@firecrawl/anydoc`；自己跑脚本把 `anydoc` 放到 PATH 或设 `ANYDOC_BIN` |
 | PPTX → md（抽图） / 扫描件 OCR | MinerU 在线 API | `.env` 里配 `MINERU_API_KEY` |
 | `.msg` → md | `markitdown` | `pip install 'markitdown[all]'` |
 | xlsx / xlsm → csv | 无（脚本自带 OOXML 解析） | — |
@@ -95,7 +94,7 @@ Python 侧只用标准库，不需要装任何包（连 MinerU 的 HTTP 调用�
 
 ## 四个阶段
 
-**阶段一 · 资料入库**　`scripts/ingest.py` 按格式分派：docx 走 pandoc（顺带抽图），
+**阶段一 · 资料入库**　`scripts/ingest.py` 按格式分派：docx/odt/rtf/epub 走本地 anydoc（顺带抽图），
 PDF 默认走本地 anydoc（不联网；扫描件自动升级 MinerU OCR），PPTX 维持 MinerU（抽图），
 xlsx 按 sheet 拆成 CSV 并生成导航清单；**html/htm 当作 PM 互传的单文件可点击原型**，
 保留 HTML 供直接预览，并生成 `_manifest.md`（校验 + 结构摘要），不把页面正文转成 md。

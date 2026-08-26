@@ -3,7 +3,6 @@
     "allow": [
       "Bash(python3 scripts/ingest.py:*)",
       "Bash(python3 scripts/mineru.py:*)",
-      "Bash(pandoc:*)",
       "Bash(markitdown:*)"
     ]
   }

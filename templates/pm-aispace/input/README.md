@@ -30,7 +30,7 @@ python3 scripts/ingest.py                             # 转换
 
 | 输入 | 产物 | 工具 |
 | --- | --- | --- |
-| `.docx` `.odt` `.rtf` `.epub` | 一个 `.md`，图片抽到 `assets/<名字>/` | pandoc |
+| `.docx` `.odt` `.rtf` `.epub` | 一个 `.md`，图片抽到 `assets/<名字>/` | **本地 anydoc** |
 | `.pdf` | 一个 `.md` | **本地 anydoc**（默认）；扫描件自动升级 MinerU OCR |
 | `.pptx` | 一个 `.md`，图片抽到 `assets/<名字>/` | **MinerU 在线 API**；没 key 时兜底 anydoc（不抽图） |
 | `.doc` `.ppt` | 一个 `.md`（不抽图） | **本地 anydoc** |
@@ -87,7 +87,7 @@ MinerU 的实际限制：单文件 200MB / 200 页，免费额度 1000 页/天�
 ---
 source: input/raw/需求规格说明书.docx   # 原始文件在哪
 source_sha256: 2edc8fbb0f8ca20…        # 内容指纹，用于判断资料是否被换过版本
-converted_by: pandoc                    # 谁转的
+converted_by: anydoc 0.2.3 writer       # 谁转的
 converted_at: 2026-07-30T11:26:13+08:00
 kind: document
 ---

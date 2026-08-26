@@ -9,5 +9,5 @@ Claude Code 专有的两点：
 
 - `.claude/skills/` 下的技能会被自动发现并按需触发，不用手动读 SKILL.md。
   根目录 `skills/` 是指向同一位置的软链接，供不支持自动发现的 Agent 使用。
-- `.claude/settings.json` 已预授权 `scripts/ingest.py`、`pandoc`、`markitdown` 等命令，
+- `.claude/settings.json` 已预授权 `scripts/ingest.py`、`markitdown` 等命令，
   减少权限确认弹窗。
