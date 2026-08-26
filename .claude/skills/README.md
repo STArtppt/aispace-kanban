@@ -1,6 +1,7 @@
 # 工程平面技能(Engineering Skills)
 
-> 总览与边界见根目录 [AGENTS.md](../../AGENTS.md) 第 6 节。
+> 总览与边界见根目录 [AGENTS.md](../../AGENTS.md) 第 7 节;
+> 规划流水线(OpenSpec)见第 6 节。
 
 **本目录只放工程技能 —— 约束「编码 Agent 怎么改这个看板」的纪律与规范。**
 它们由 Claude Code 按 `description` 自动路由,其它 Agent 通过 AGENTS.md 的链接进来读。
@@ -22,12 +23,15 @@
 
 判据:**「指导我们怎么写这个仓库的代码」→ 这里;其它 → 别处。**
 
+某次具体改动的「为什么做、做什么、验收是什么」不属于技能,属于一个 change —— 落 `openspec/changes/`。
+
 ## 目录与格式
 
 ```
 .claude/skills/
 ├── README.md
-└── <skill-name>/SKILL.md      # 一个技能 = 一个目录 + 一份 SKILL.md
+├── <skill-name>/SKILL.md      # 一个技能 = 一个目录 + 一份 SKILL.md
+└── openspec-*/SKILL.md        # OpenSpec 注入,勿手改(见下)
 ```
 
 `SKILL.md` 以 YAML frontmatter 开头(`name` 与目录同名;`description` 写成
@@ -55,6 +59,13 @@
   改写自 [obra/superpowers](https://github.com/obra/superpowers)
 - `verification-before-completion` —— 没有刚跑出来的证据不许下完成结论,对齐本仓
   typecheck + build + 重启冒烟三道闸,同上游
+
+**OpenSpec 注入(入库但勿手改):**
+
+- `openspec-propose` / `openspec-apply-change` / `openspec-archive-change` /
+  `openspec-sync-specs` / `openspec-explore` —— 连同 `.claude/commands/opsx/` 一起,
+  由 `openspec init --tools claude` 生成。它们驱动规划流水线,产物落 `openspec/`。
+  **改了会被重建覆盖**;要调规划产物的写法,改 [`openspec/config.yaml`](../../openspec/config.yaml)。
 
 写法标准遵循 [anthropics/skills](https://github.com/anthropics/skills) 的 SKILL.md 约定。
 

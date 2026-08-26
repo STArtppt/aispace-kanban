@@ -6,6 +6,9 @@
 
 ## Claude Code 专属补充
 
+- **非平凡改动先立 change**:跨平面、动 `api.ts` 契约、引新依赖、要做取舍的,
+  先 `/opsx:propose`,产物落 `openspec/changes/`。琐碎改动直接做。
+  **本仓已开源,规划产物随代码公开** —— 脱敏红线见 AGENTS.md 第 6.1 节。
 - **工程平面技能在 `.claude/skills/`**(只此一份,无 `.agents/` 镜像)。
   接到任务先读对应技能;**加/改功能一律先读 `dashboard-feature-flow`**;缺失处顺手补全。
 - **改完必须**:`pnpm typecheck` + `pnpm build` 都绿。

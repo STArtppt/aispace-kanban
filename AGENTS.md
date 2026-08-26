@@ -84,6 +84,8 @@ aispace-kanban/
 ├── scripts/                # 平面外 · 仓库工具
 │   ├── build-npm-package.mjs  #   组 npm 包(pnpm build:npm),产出 npm-package/
 │   └── smoke-package.mjs      #   ★ 装包冒烟(pnpm smoke:npm),CI 三平台跑的就是它
+├── openspec/               # 平面外 · 规划产物:changes/<name>/ 是提案与任务,specs/ 是已落地的能力
+│   └── config.yaml         #   ★ 写产物的约束(中文、平面影响面、脱敏红线),自动注入给 AI
 ├── .github/workflows/      # 平面外 · CI:ci.yml(日常闸门) + release.yml(推 v* tag 发版)
 ├── templates/              # 平面外 · 工作空间模板,看板代码不 import 它们
 │   ├── init_workspace.py   #   ★ 共享铺骨架入口(runInit --from)
@@ -134,6 +136,7 @@ aispace-kanban/
 | 类型检查 | `pnpm typecheck` |
 | 组 npm 包(发布用) | `pnpm build:npm` → `npm-package/` |
 | 打 tgz + 装包冒烟 | `pnpm pack:npm && pnpm smoke:npm` |
+| 看规划状态(active change / 已落地能力) | `openspec list` / `openspec list --specs` |
 
 **交付闸门(缺一不可):**
 
@@ -228,7 +231,47 @@ aispace-kanban/
 
 ---
 
-## 6. Skills 体系:工程平面
+## 6. 协作流水线:OpenSpec(规划 → 实施 → 归档)
+
+**非平凡改动先规划再动手。** 跨平面、要动 `src/app/lib/api.ts` 契约、引新依赖、
+或者要在几条路之间做取舍的,先立一个 change —— 把「为什么做、做什么、验收是什么」
+落成**仓内文件**,而不是留在会话里或一次性的网页上。
+
+```
+/opsx:propose "<想做什么>"   → openspec/changes/<name>/ 下生成 proposal.md + specs/ + design.md + tasks.md
+/opsx:apply <name>           → 按 tasks.md 逐条实现并勾选
+/opsx:archive <name>         → 归档进 openspec/changes/archive/,把 delta 合并回 openspec/specs/
+```
+
+- **琐碎改动直接做**(改文案、调间距、修显式笔误),不套流程 —— 重量随任务大小伸缩。
+- **bug 走 [`systematic-debugging`](.claude/skills/systematic-debugging/SKILL.md)**:
+  小 bug 直接四阶段;大到要改数据形状或跨平面,才值得立 change。
+- **OpenSpec 定「做什么」,skills 定「在这个仓怎么改不出事」**。立完 change 照样按
+  [`dashboard-feature-flow`](.claude/skills/dashboard-feature-flow/SKILL.md) 的顺序改代码,
+  两者叠加,不互相替代。
+- **产物的写法约束不写在这里**,写在 [`openspec/config.yaml`](openspec/config.yaml) 的
+  `context` / `rules`(中文书写、平面影响面、只读红线、验收闸、脱敏清单),
+  它会被自动注入给 AI。**要改约束就改那个文件**,别在单个 change 里重复一遍。
+- `/opsx:*` 用不了时(`.claude/` 丢了)跑 `openspec init --tools claude` 重建 ——
+  **不是** `openspec update`,tool 注册记录一并丢失时它只报 `No configured tools found` 就退出。
+  生成的 `.claude/commands/opsx/` 与 `.claude/skills/openspec-*/` **入库但勿手改**,重建会覆盖。
+
+### 6.1 公开仓库脱敏红线
+
+本仓已开源(`github.com/STArtppt/aispace-kanban`),**`openspec/` 下的一切都随代码公开发布,
+进了 git 历史就删不干净**。所以规划产物里只写「公开仓库的读者也该看到」的信息:
+真实客户与业务方名称(包括藏在文件名里的)、本机绝对路径、内网地址与内部 Git 远端、
+任何凭据、真实资料的正文与截图,一律不进产物 —— 需要举证就化名或换成合成件。
+
+最容易破防的是 `design.md` 的「Context / 现状」:调研阶段的实测数据经常带着真实文件名和
+本机路径,搬进产物前先替换。**拿不准就不写**,细节留在会话里,产物里只写结论。
+
+完整清单(连同替换写法)在 [`openspec/config.yaml`](openspec/config.yaml) 的 `context`,
+那份是真正注入给 AI 的版本 —— 改脱敏规则改那里。
+
+---
+
+## 7. Skills 体系:工程平面
 
 本项目只有**一个技能平面 —— 工程平面**:约束「Agent 怎么改这个看板」的纪律与规范,
 不随产品交付。位置 **`.claude/skills/<name>/SKILL.md`**,**只此一份**(不做 `.agents/` 镜像,
@@ -250,13 +293,16 @@ aispace-kanban/
 
 ---
 
-## 7. 给 Agent 的协作守则
+## 8. 给 Agent 的协作守则
 
-1. **先定平面再动手**:需求落在 CLI / 服务端 / 前端哪个平面?跨几个平面?
+1. **非平凡改动先立 change**:跨平面、动契约、引依赖、要做取舍的,先 `/opsx:propose`,
+   别一边聊一边改。琐碎改动不套流程(第 6 节)。
+2. **先定平面再动手**:需求落在 CLI / 服务端 / 前端哪个平面?跨几个平面?
    跨平面就按 `dashboard-feature-flow` 的顺序走,不要东改一笔西改一笔。
-2. **契约先行**:要改数据形状,先把 `src/app/lib/api.ts` 的 type 和服务端产出对齐,再写 UI。
-3. **只读红线不碰**:任何往工作空间里写的想法,先停下来问人。
-4. **改完必验**:`pnpm typecheck` + `pnpm build` + 重启冒烟,三样都做过再说完成。
-5. **沉淀而非一次性**:踩过的坑补进对应 skill(尤其 `systematic-debugging` 的分诊启发),
+3. **契约先行**:要改数据形状,先把 `src/app/lib/api.ts` 的 type 和服务端产出对齐,再写 UI。
+4. **只读红线不碰**:任何往工作空间里写的想法,先停下来问人。
+5. **改完必验**:`pnpm typecheck` + `pnpm build` + 重启冒烟,三样都做过再说完成。
+6. **沉淀而非一次性**:踩过的坑补进对应 skill(尤其 `systematic-debugging` 的分诊启发),
    而不是只改完代码。
-6. **保持事实源唯一**:协作约定只写在本文件,别复制进 `CLAUDE.md` 或 `README.md`。
+7. **保持事实源唯一**:协作约定只写在本文件,别复制进 `CLAUDE.md` 或 `README.md`;
+   规划产物的写法约束只写在 `openspec/config.yaml`,别复制进单个 change。
