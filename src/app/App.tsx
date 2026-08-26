@@ -511,7 +511,8 @@ export default function App() {
             */}
             <header
               className={cn(
-                'flex shrink-0 items-center gap-2 border-b border-border bg-background px-3 py-2.5 sm:px-5 sm:py-3',
+                // h-16 与 Reader / HelpPanel 顶栏对齐，并排时底边才是一条线
+                'flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:px-5',
                 !scan && 'min-[900px]:hidden',
               )}
             >

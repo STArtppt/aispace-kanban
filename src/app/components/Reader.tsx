@@ -723,7 +723,7 @@ export function Reader({
         'transition-[border-color] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
       )}
     >
-      <header className="flex shrink-0 items-start gap-2 border-b border-border px-3 py-3 sm:px-4">
+      <header className="flex h-16 shrink-0 items-center gap-2 border-b border-border px-3 sm:px-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
           <span className="truncate text-sm font-medium">{item.title || item.name}</span>
           <span className="truncate font-mono text-[11px] text-muted-foreground">{item.path}</span>
