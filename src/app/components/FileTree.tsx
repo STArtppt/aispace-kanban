@@ -94,20 +94,23 @@ export function ViewModeToggle({
 }
 
 /**
- * 目录行尾的动作。复制路径 + 在文件管理器里定位是所有清单共有的，
+ * 目录行尾的动作。复制相对路径 / 复制绝对路径 / 在文件管理器里定位是所有清单共有的，
  * 额外的（比如「转这一整个目录」）由各清单自己传 extra 进来。
  * dirPath 是工作空间内的相对路径 —— 树是前端按路径拼的，只有调用方知道它对应磁盘上的哪个目录。
+ * absPath 是拼好的取绝对路径函数，可选：调用方没给（比如「未知来源」这种磁盘上没有的档）就不出这项。
  */
 export function DirActions({
   projectId,
   fileManager,
   dirPath,
+  absPath,
   extra,
   busy,
 }: {
   projectId: string;
   fileManager: string;
   dirPath: string;
+  absPath?: (relPath: string) => string;
   extra?: RowAction[];
   busy?: boolean;
 }) {
@@ -123,6 +126,17 @@ export function DirActions({
             void writeClipboard(dirPath);
           },
         },
+        ...(absPath
+          ? [
+              {
+                label: '复制绝对路径',
+                icon: Copy,
+                onSelect: () => {
+                  void writeClipboard(absPath(dirPath));
+                },
+              },
+            ]
+          : []),
         {
           label: `在${fileManager}中显示`,
           icon: FolderOpen,

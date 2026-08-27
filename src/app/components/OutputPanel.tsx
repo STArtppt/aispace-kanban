@@ -16,10 +16,10 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, Row, RowActions, Stat, TruncatedHint, writeClipboard } from '@/components/Primitives';
-import { useFileManagerName } from '@/hooks/useFileManager';
+import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { usePins } from '@/hooks/usePins';
 import { api, type FileItem, type Scan } from '@/lib/api';
-import { datePrefix, formatRelative, formatWords, markdownLink } from '@/lib/format';
+import { absolutePath, datePrefix, formatRelative, formatWords, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 const GROUPS = [
@@ -118,6 +118,7 @@ function annotationLabel(item: FileItem): string {
 function OutputRow({
   item,
   pinned,
+  absPath,
   onTogglePin,
   projectId,
   fileManager,
@@ -126,6 +127,8 @@ function OutputRow({
 }: {
   item: FileItem;
   pinned: boolean;
+  /** 拼好的取绝对路径函数，「复制绝对路径」用 */
+  absPath: (relPath: string) => string;
   onTogglePin: (path: string) => void;
   projectId: string;
   fileManager: string;
@@ -169,6 +172,13 @@ function OutputRow({
             },
           },
           {
+            label: '复制绝对路径',
+            icon: Copy,
+            onSelect: () => {
+              void writeClipboard(absPath(item.path));
+            },
+          },
+          {
             label: `在${fileManager}中显示`,
             icon: FolderOpen,
             onSelect: () => {
@@ -189,6 +199,7 @@ function OutputGroup({
   total,
   searching,
   pins,
+  absPath,
   onTogglePin,
   projectId,
   fileManager,
@@ -204,6 +215,8 @@ function OutputGroup({
   total: number;
   searching: boolean;
   pins: Set<string>;
+  /** 拼好的取绝对路径函数，「复制绝对路径」用 */
+  absPath: (relPath: string) => string;
   onTogglePin: (path: string) => void;
   projectId: string;
   fileManager: string;
@@ -222,6 +235,7 @@ function OutputGroup({
               key={item.path}
               item={item}
               pinned={pins.has(item.path)}
+              absPath={absPath}
               onTogglePin={onTogglePin}
               projectId={projectId}
               fileManager={fileManager}
@@ -251,6 +265,12 @@ export function OutputPanel({
   const { output } = scan;
   const projectId = scan.project.id;
   const fileManager = useFileManagerName();
+  // 「复制绝对路径」要工作空间在磁盘上的位置，scan.project.root 里带着；拿不到时 absolutePath 自己退回相对路径
+  const sep = usePathSeparator();
+  const absPath = useMemo(
+    () => (relPath: string) => absolutePath(scan.project.root, relPath, sep),
+    [scan.project.root, sep],
+  );
   // 预览头部也有同一个收藏按钮，两处共用一份状态
   const { pins, togglePin } = usePins(projectId);
   // 旧服务进程不返回 annotations，那时候退回只显示字数
@@ -400,6 +420,7 @@ export function OutputPanel({
               total={total}
               searching={searching}
               pins={pins}
+              absPath={absPath}
               onTogglePin={togglePin}
               projectId={projectId}
               fileManager={fileManager}

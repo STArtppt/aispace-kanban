@@ -18,11 +18,11 @@ import {
   type RowAction,
 } from '@/components/Primitives';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
-import { useFileManagerName } from '@/hooks/useFileManager';
+import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
 import { api, type ConvertedItem, type FileItem, type IngestJob, type Scan } from '@/lib/api';
-import { formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
+import { absolutePath, formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 /** 待转换 / 转换产物列表一页条数 */
@@ -113,6 +113,7 @@ function ConvertedRow({
   indent,
   hasOutputs,
   pinned,
+  absPath,
   onTogglePin,
   openPath,
   onOpen,
@@ -126,6 +127,8 @@ function ConvertedRow({
   indent?: number;
   hasOutputs: boolean;
   pinned: boolean;
+  /** 拼好的取绝对路径函数，「复制绝对路径」用 */
+  absPath: (relPath: string) => string;
   onTogglePin: (path: string) => void;
   openPath: string;
   onOpen: (item: FileItem) => void;
@@ -188,6 +191,13 @@ function ConvertedRow({
               void writeClipboard(markdownLink(item.title || item.name, item.path));
             },
           },
+          {
+            label: '复制绝对路径',
+            icon: Copy,
+            onSelect: () => {
+              void writeClipboard(absPath(item.path));
+            },
+          },
         ]}
       />
     </Row>
@@ -215,6 +225,7 @@ function PendingRow({
   projectId,
   fileManager,
   pinned,
+  absPath,
   onTogglePin,
   openPath,
   onOpen,
@@ -231,6 +242,8 @@ function PendingRow({
   projectId: string;
   fileManager: string;
   pinned: boolean;
+  /** 拼好的取绝对路径函数，「复制绝对路径」用 */
+  absPath: (relPath: string) => string;
   onTogglePin: (path: string) => void;
   openPath: string;
   onOpen: (item: FileItem) => void;
@@ -288,6 +301,13 @@ function PendingRow({
             },
           },
           {
+            label: '复制绝对路径',
+            icon: Copy,
+            onSelect: () => {
+              void writeClipboard(absPath(item.path));
+            },
+          },
+          {
             label: `在${fileManager}中显示`,
             icon: FolderOpen,
             onSelect: () => {
@@ -304,6 +324,7 @@ function PendingList({
   items,
   viewMode,
   projectId,
+  absPath,
   openPath,
   onOpen,
   canIngest,
@@ -316,6 +337,8 @@ function PendingList({
   items: FileItem[];
   viewMode: ViewMode;
   projectId: string;
+  /** 拼好的取绝对路径函数，「复制绝对路径」用 */
+  absPath: (relPath: string) => string;
   openPath: string;
   onOpen: (item: FileItem) => void;
   canIngest: boolean;
@@ -341,6 +364,7 @@ function PendingList({
   const rowProps = {
     projectId,
     fileManager,
+    absPath,
     onTogglePin: togglePin,
     openPath,
     onOpen,
@@ -392,6 +416,7 @@ function PendingList({
               projectId={projectId}
               fileManager={fileManager}
               dirPath={dirPath}
+              absPath={absPath}
               extra={extra}
               busy={(ingestRunning && ingestingPath === dirPath) || ignoringPath === dirPath}
             />
@@ -452,6 +477,7 @@ function ConvertedList({
   viewMode,
   viewToggle,
   projectId,
+  absPath,
   openPath,
   onOpen,
   canIngest,
@@ -465,6 +491,8 @@ function ConvertedList({
   /** 视图开关只挂在本视图的第一个清单上；不是第一个时不传 */
   viewToggle?: ReactNode;
   projectId: string;
+  /** 拼好的取绝对路径函数，「复制绝对路径」用 */
+  absPath: (relPath: string) => string;
   openPath: string;
   onOpen: (item: FileItem) => void;
   canIngest: boolean;
@@ -636,6 +664,7 @@ function ConvertedList({
                 projectId={projectId}
                 fileManager={fileManager}
                 dirPath={`input/raw/${dirKey}`}
+                absPath={absPath}
               />
             )
           }
@@ -645,6 +674,7 @@ function ConvertedList({
               indent={indent}
               hasOutputs={hasOutputs}
               pinned={pins.has(item.path)}
+              absPath={absPath}
               onTogglePin={togglePin}
               openPath={openPath}
               onOpen={onOpen}
@@ -663,6 +693,7 @@ function ConvertedList({
               item={item}
               hasOutputs={hasOutputs}
               pinned={pins.has(item.path)}
+              absPath={absPath}
               onTogglePin={togglePin}
               openPath={openPath}
               onOpen={onOpen}
@@ -824,6 +855,12 @@ export function InputPanel({
   // 旧服务进程没有 assetGroups：退回平铺网格
   const galleries = input.assetGroups || [];
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(INPUT_VIEW_KEY));
+  // 「复制绝对路径」要工作空间在磁盘上的位置，scan.project.root 里带着；拿不到时 absolutePath 自己退回相对路径
+  const sep = usePathSeparator();
+  const absPath = useCallback(
+    (relPath: string) => absolutePath(scan.project.root, relPath, sep),
+    [scan.project.root, sep],
+  );
 
   const ignore = useCallback(
     async (targetPath: string) => {
@@ -949,6 +986,7 @@ export function InputPanel({
             items={input.pending}
             viewMode={viewMode}
             projectId={projectId}
+            absPath={absPath}
             openPath={openPath}
             onOpen={onOpen}
             canIngest={canIngest}
@@ -971,6 +1009,7 @@ export function InputPanel({
             viewMode={viewMode}
             viewToggle={input.pending.length ? undefined : viewToggle}
             projectId={projectId}
+            absPath={absPath}
             openPath={openPath}
             onOpen={onOpen}
             canIngest={canIngest}

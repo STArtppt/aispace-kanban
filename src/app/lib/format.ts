@@ -44,6 +44,16 @@ export function markdownLink(label: string, path: string): string {
   return `[${text}](${dest})`;
 }
 
+/**
+ * 把工作空间内相对路径拼成磁盘上的绝对路径，按服务所在机器的分隔符写 ——
+ * 这条路径是拿去粘给终端 / 文件管理器的，得跟那台机器的写法一致。
+ * root 拿不到时退回相对路径：少一段前缀好过复制出一条坏路径。
+ */
+export function absolutePath(projectRoot: string | undefined, relPath: string, sep: string): string {
+  if (!projectRoot) return relPath;
+  return `${projectRoot.replace(/[/\\]+$/, '')}${sep}${relPath.split('/').join(sep)}`;
+}
+
 /** 文件名前缀日期：2026-07-30-xxx.md → 2026-07-30 */
 export function datePrefix(name: string): string {
   const m = /^(\d{4}-\d{2}-\d{2})[-_]/.exec(name);
