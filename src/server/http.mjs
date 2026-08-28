@@ -25,6 +25,7 @@ import {
 } from './config.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
+import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
 import { scanWorkspace, verifySource } from './scan.mjs';
 import { resolveAppVersion } from './version.mjs';
 
@@ -69,6 +70,28 @@ const MIME = {
   '.tsx': 'text/plain; charset=utf-8',
   '.wasm': 'application/wasm',
 };
+
+/**
+ * 从工作空间伺服出去的参考页与原型包**必须**落进不透明源。
+ *
+ * 这些 HTML 是别人写的（采下来的线上页面、工具产出的包），而看板的接口没有鉴权：
+ * 不隔离的话，它们的脚本和 /api/projects/* 同源，可以直接列出你所有登记的工作空间、读任意文件。
+ * `sandbox` 指令让响应落进不透明源 —— 页面照常渲染、脚本照常跑，但同源请求、cookie、
+ * localStorage 全拿不到；不给 allow-top-navigation，frame-busting 脚本也跳不走外层窗口。
+ */
+const SANDBOX_CSP = 'sandbox allow-scripts allow-forms allow-popups';
+
+/** 直出一个静态文件。isolate = true 时挂 sandbox 头（伺服工作空间里的页面一律要挂）。 */
+function sendStaticFile(res, abs, { isolate = false } = {}) {
+  const ext = path.extname(abs).toLowerCase();
+  const headers = {
+    'content-type': MIME[ext] || 'application/octet-stream',
+    'cache-control': 'no-cache',
+  };
+  if (isolate) headers['content-security-policy'] = SANDBOX_CSP;
+  res.writeHead(200, headers);
+  return fs.createReadStream(abs).pipe(res);
+}
 
 function json(res, status, payload) {
   const body = JSON.stringify(payload);
@@ -479,6 +502,134 @@ function ingestStatus(projectId) {
   };
 }
 
+/** 壳页里要拼进 HTML 的都是用户目录名和 meta.json 里的字符串 —— 一律转义。 */
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+const SHOT_LABEL = { hero: '首屏', full: '完整页', mobile: '移动端' };
+
+/**
+ * 参考查看器：**看板自己的**一张 HTML。
+ *
+ * iframe 铺满装那份被隔离的 index.html，缩略图和灯箱画在壳上 ——
+ * 不能注入进原始页面（那等于给它开口子），也不需要它配合（它在不透明源里，
+ * 壳页同样拿不到它的 DOM）。一张截图都没有时整个缩略图区域不渲染。
+ */
+function renderReferenceViewer({ title, frameUrl, shots }) {
+  const cards = shots
+    .map(
+      (shot, i) => `<button type="button" class="thumb" data-index="${i}" title="${escapeHtml(shot.label)}">`
+        + `<img src="${escapeHtml(shot.url)}" alt="${escapeHtml(shot.label)}" loading="lazy">`
+        + `<span>${escapeHtml(shot.label)}</span></button>`,
+    )
+    .join('');
+  const shotsJson = JSON.stringify(shots).replace(/</g, '\\u003c');
+
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)} · 参考</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0b0b0c; }
+  iframe { display: block; width: 100%; height: 100%; border: 0; background: #fff; }
+  .bar {
+    position: fixed; left: 16px; bottom: 16px; z-index: 10;
+    display: flex; align-items: flex-end; gap: 8px;
+    font: 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  .thumb {
+    display: flex; flex-direction: column; gap: 4px; align-items: center;
+    padding: 6px; border: 1px solid rgba(255,255,255,.18); border-radius: 8px;
+    background: rgba(20,20,22,.82); color: rgba(255,255,255,.78);
+    backdrop-filter: blur(8px); cursor: pointer;
+  }
+  .thumb:hover { border-color: rgba(255,255,255,.45); color: #fff; }
+  .thumb img { width: 104px; height: 66px; object-fit: cover; object-position: top center; border-radius: 4px; background: #fff; }
+  .exit {
+    padding: 7px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 8px;
+    background: rgba(20,20,22,.82); color: rgba(255,255,255,.78);
+    backdrop-filter: blur(8px); text-decoration: none; white-space: nowrap;
+  }
+  .exit:hover { border-color: rgba(255,255,255,.45); color: #fff; }
+  /* 不透明：底下装的是别人的页面，半透明会把它的正文透上来，图就看不清了 */
+  .box { position: fixed; inset: 0; z-index: 20; display: none; background: #0b0b0c; }
+  .box[data-open="1"] { display: flex; flex-direction: column; }
+  .box header {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 16px; color: rgba(255,255,255,.8);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif;
+  }
+  .box .body { flex: 1; min-height: 0; overflow: auto; padding: 0 16px 16px; text-align: center; }
+  .box .body img { max-width: 100%; border-radius: 6px; background: #fff; }
+  .box nav { display: flex; gap: 6px; }
+  .box button {
+    padding: 5px 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 6px;
+    background: transparent; color: rgba(255,255,255,.8); cursor: pointer; font: inherit;
+  }
+  .box button:hover { border-color: rgba(255,255,255,.5); color: #fff; }
+</style>
+</head>
+<body>
+<iframe src="${escapeHtml(frameUrl)}" title="${escapeHtml(title)}"></iframe>
+<div class="bar">
+  ${cards}
+  <a class="exit" href="${escapeHtml(frameUrl)}" target="_blank" rel="noreferrer">直接打开原始页面</a>
+</div>
+<div class="box" id="box" data-open="0">
+  <header>
+    <span id="box-label"></span>
+    <nav>
+      <button type="button" id="prev">上一张</button>
+      <button type="button" id="next">下一张</button>
+      <button type="button" id="close">关闭</button>
+    </nav>
+  </header>
+  <div class="body"><img id="box-img" alt=""></div>
+</div>
+<script>
+  var shots = ${shotsJson};
+  var box = document.getElementById('box');
+  var img = document.getElementById('box-img');
+  var label = document.getElementById('box-label');
+  var at = 0;
+  function show(i) {
+    if (!shots.length) return;
+    at = (i + shots.length) % shots.length;
+    img.src = shots[at].url;
+    img.alt = shots[at].label;
+    label.textContent = shots[at].label + '（' + (at + 1) + '/' + shots.length + '）';
+    box.dataset.open = '1';
+  }
+  // 灯箱只是盖在 iframe 上，关掉后里面的页面状态不动（从没卸载过）
+  function hide() { box.dataset.open = '0'; }
+  Array.prototype.forEach.call(document.querySelectorAll('.thumb'), function (el) {
+    el.addEventListener('click', function () { show(Number(el.dataset.index)); });
+  });
+  document.getElementById('prev').addEventListener('click', function () { show(at - 1); });
+  document.getElementById('next').addEventListener('click', function () { show(at + 1); });
+  document.getElementById('close').addEventListener('click', hide);
+  box.addEventListener('click', function (e) { if (e.target === box) hide(); });
+  document.addEventListener('keydown', function (e) {
+    if (box.dataset.open !== '1') return;
+    if (e.key === 'Escape') hide();
+    if (e.key === 'ArrowLeft') show(at - 1);
+    if (e.key === 'ArrowRight') show(at + 1);
+  });
+</script>
+</body>
+</html>`;
+}
+
 function requireProject(id) {
   const project = getProject(id);
   if (!project) {
@@ -489,19 +640,43 @@ function requireProject(id) {
   return project;
 }
 
-/** 监听工作空间的资料与产出目录，变了就通过 SSE 推给前端。 */
+/**
+ * 监听工作空间的资料、产出与视觉目录，变了就通过 SSE 推给前端。
+ *
+ * `visualization/` 整树（覆盖 references/ 与 prototypes/ 两个子目录）：
+ * 参考或原型包增删、zip 替换后都要推。它**可能启动时还不存在** —— 老工作空间要等用户
+ * 手工 `mv` 才有，采集也是第一次采才建。所以再非递归地看一眼工作空间根，
+ * 这个目录冒出来时补挂递归 watcher，用户跑完 mv 不用重启服务就能看到卡片。
+ */
 function watchWorkspace(root, onChange) {
   const watchers = [];
-  // prototypes/ 整树：HTML 包增删或 zip 替换后要推 SSE 刷新
-  for (const dir of ['input', 'output', 'prototypes']) {
+  const watched = new Set();
+
+  function watchTree(dir) {
     const abs = path.join(root, dir);
-    if (!fs.existsSync(abs)) continue;
+    if (watched.has(dir) || !fs.existsSync(abs)) return;
     try {
       watchers.push(fs.watch(abs, { recursive: true }, onChange));
+      watched.add(dir);
     } catch {
       // 平台不支持 recursive 就退化成不监听，前端还有手动刷新
     }
   }
+
+  for (const dir of ['input', 'output', 'visualization']) watchTree(dir);
+
+  // 根上（非递归）：捕获 input / output / visualization 启动后才被创建的情况
+  try {
+    watchers.push(
+      fs.watch(root, (event, name) => {
+        if (name === 'visualization' || name === 'input' || name === 'output') watchTree(String(name));
+        onChange(event, name);
+      }),
+    );
+  } catch {
+    /* 同上 */
+  }
+
   for (const file of ['project.yaml', 'project.yml']) {
     const abs = path.join(root, file);
     if (fs.existsSync(abs)) {
@@ -667,8 +842,14 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return json(res, 200, scanPrototypes(project.root, project.id));
   }
 
-  // 伺服 axhub-make 导出的 HTML 包（文件夹或已解压到缓存的 zip）
+  if (head === 'projects' && id && action === 'references') {
+    const project = requireProject(id);
+    return json(res, 200, scanReferences(project.root, project.id));
+  }
+
+  // 伺服工具产出的可点击 HTML 包（文件夹或已解压到缓存的 zip）
   // 路径：/api/projects/:id/proto/:slug[/...相对路径]
+  // url 形态的原型不走这里 —— 它没有本地产物，前端直接开 target。
   if (head === 'projects' && id && action === 'proto') {
     const project = requireProject(id);
     const slug = segments[3] || '';
@@ -686,13 +867,56 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
       return json(res, 404, { error: '文件不存在' });
     }
-    const ext = path.extname(abs).toLowerCase();
-    const mime = MIME[ext] || 'application/octet-stream';
-    res.writeHead(200, {
-      'content-type': mime,
-      'cache-control': 'no-cache',
-    });
-    return fs.createReadStream(abs).pipe(res);
+    // 别人做的包，一律关进不透明源
+    return sendStaticFile(res, abs, { isolate: true });
+  }
+
+  // 伺服参考页：/api/projects/:id/ref/:slug[/...相对路径]
+  //   .../view  → 看板自己的查看器壳页（同源，带缩略图与灯箱）
+  //   其余      → visualization/references/<slug>/ 下的静态文件，HTML 带 sandbox 头
+  if (head === 'projects' && id && action === 'ref') {
+    const project = requireProject(id);
+    const slug = segments[3] || '';
+    if (!slug) return json(res, 400, { error: '缺少参考标识' });
+    const refDir = resolveReferenceDir(project.root, slug);
+    if (!refDir) return json(res, 404, { error: '找不到这份参考' });
+    const relParts = segments.slice(4);
+
+    if (relParts.length === 1 && relParts[0] === 'view') {
+      const listed = scanReferences(project.root, project.id);
+      const item = listed.items.find((i) => i.itemKey === slug);
+      if (!item) return json(res, 404, { error: '找不到这份参考' });
+      const shots = ['hero', 'full', 'mobile']
+        .filter((k) => item.screenshots[k])
+        .map((k) => ({ key: k, label: SHOT_LABEL[k], url: item.screenshots[k] }));
+      const body = renderReferenceViewer({
+        title: item.title,
+        frameUrl: `/api/projects/${encodeURIComponent(project.id)}/ref/${encodeURIComponent(slug)}/index.html`,
+        shots,
+      });
+      // 壳页是看板自己的 HTML，不带 sandbox —— 被它装载的 index.html 才带
+      res.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-cache',
+        'content-length': Buffer.byteLength(body),
+      });
+      return res.end(body);
+    }
+
+    const relFile = relParts.length ? relParts.join('/') : 'index.html';
+    // 两道闸：先保证没跑出工作空间，再保证没跑出这份参考自己的目录
+    const abs = resolveInside(project.root, path.join(REFERENCES_DIR, slug, relFile));
+    const base = path.resolve(refDir);
+    if (abs !== base && !abs.startsWith(base + path.sep)) {
+      const err = new Error('路径超出参考目录范围');
+      err.statusCode = 403;
+      throw err;
+    }
+    if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
+      return json(res, 404, { error: '文件不存在' });
+    }
+    // 采下来的页面是别人写的，一律关进不透明源（截图是普通静态资源，挂着也无害）
+    return sendStaticFile(res, abs, { isolate: true });
   }
 
   // 读文件正文：md / csv / txt 走这里，图片也走这里（按 MIME 直出）

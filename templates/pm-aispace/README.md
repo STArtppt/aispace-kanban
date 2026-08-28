@@ -52,8 +52,11 @@ output/           阶段三：产出
   analysis/         现状基线、需求拆解、澄清问题清单
   docs/             PRD、需求规格、评审材料
   decisions/        决策记录，一事一档
-prototypes/       阶段四：可预览原型库（Axhub Make 客户端 / zip 包 / 自己写的单页 HTML）
-  <名字>/index.html  一个东西一个子目录，入口必须叫 index.html，否则看板扫不到
+visualization/    阶段四：视觉平面 —— 给人看、能点开的页面（不是要转换的文档）
+  references/       收下来的别人的页面：竞品、友商后台、公开文档站
+    <名字>/index.html  一份参考一个目录，入口必须叫 index.html
+  prototypes/       工具产出的可点击原型（已构建的 HTML 包 / zip 包 / 自己写的单页 HTML）
+    <名字>/index.html  一个东西一个子目录，入口必须叫 index.html，否则看板扫不到
 scripts/
   ingest.py         文档转换调度
   layout.py         converted/ 的落点规则（三个转换脚本共用一份）
@@ -113,11 +116,16 @@ xlsx 按 sheet 拆成 CSV 并生成导航清单；**html/htm 当作 PM 互传的
 [Axhub Make](https://github.com/lintendo/Axhub-Make)。
 
 Axhub Make 服务端是后台常驻服务，**不在本项目里启动**。在它的页面上新建项目并指向本仓库的
-`prototypes/`，它会自动在该目录下构建客户端（自带 README 和目录结构）——那个目录别去动。
+`visualization/prototypes/`，它会自动在该目录下构建客户端（自带 README 和目录结构）——那个目录别去动。
 
-`prototypes/` 同时也是**可预览原型库**：AI 生成的方案页、可视化、演示页也放这里，
+`visualization/prototypes/` 同时也是**可预览原型库**：AI 生成的方案页、可视化、演示页也放这里，
 规则是**一个东西一个子目录、入口叫 `index.html`**（散装 `.html` 放根上看板扫不到）。
+看板只认**已构建好**的产物；源码包请先用工具的「导出 HTML」，或者用一份 `meta.json`
+记一条云端发布链接（`{ "kind": "url", "title": "…", "target": "https://…" }`）。
 自带 `.md` 源文的交付文档仍然走 `output/docs/`，两者的分界见 AGENTS.md。
+
+收参考走隔壁的 `visualization/references/`：竞品、友商后台、公开文档站，
+一份参考一个目录、入口同样叫 `index.html`。它是别人的页面，不是本工作空间的产出。
 
 ## 越用越顺手
 

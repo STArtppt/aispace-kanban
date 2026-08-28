@@ -31,14 +31,17 @@ HERE = Path(__file__).resolve().parent
 # template.yaml 是给看板发现模板用的，不铺进工作空间。
 COPY_ENTRIES = ["AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", ".env.example", "scripts", ".claude"]
 
-# 四个基本目录（及 input 下的约定子目录）缺了就建。output 的子目录跟模板走，
+# 基本目录（及 input 下的约定子目录）缺了就建。output 的子目录跟模板走，
 # 不在这里写死 analysis/docs/decisions —— 那是 PM 模板自己的阶段。
+# visualization/ 是视觉平面：references/ 放收下来的别人的页面，prototypes/ 放工具产出的原型。
+# 它和 input/ output/ 的差别在于这边是给人看、能点开的页面，不是要转换的文档。
 BASE_DIRS = [
     "input/raw",
     "input/converted",
     "input/assets",
     "output",
-    "prototypes",
+    "visualization/references",
+    "visualization/prototypes",
     "scripts",
 ]
 

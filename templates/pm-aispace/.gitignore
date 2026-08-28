@@ -12,13 +12,21 @@ __pycache__/
 .venv/
 venv/
 
-# Axhub Make 会在 prototypes/ 下自动构建客户端，其依赖和产物不入库。
-# 客户端本身是否入库看你的需要——要入库就把下面几行留着，
-# 不想让生成内容进版本库就整体忽略 prototypes/（保留 .gitkeep 以便目录还在）。
-prototypes/**/node_modules/
-prototypes/**/.axhub-cache/
-prototypes/**/dist/
-prototypes/**/.cache/
+# 视觉平面 visualization/：references/ 收下来的页面、prototypes/ 工具产出的原型。
+#
+# 原型工具会在包目录里留下依赖和中间产物，这些一律不入库。
+# 原型包本身（已构建的 index.html + 资源）是否入库看你的需要——
+# 不想让生成内容进版本库就整体忽略 visualization/prototypes/（保留 .gitkeep 以便目录还在）。
+visualization/prototypes/**/node_modules/
+visualization/prototypes/**/.axhub-cache/
+visualization/prototypes/**/dist/
+visualization/prototypes/**/.cache/
+
+# 参考页**默认入库**：一份参考是整页 HTML + 几张截图，单份几 MB 到十几 MB。
+# 它是项目的一手资料（当时的那个页面，之后可能就改了或没了），
+# 值这个体积，也应该跟着工作空间一起被拷走、被 AI 找到。
+# 仓库体积吃紧时再取消下面这行的注释，改成只留在本地。
+# visualization/references/
 
 # Office 编辑时产生的锁文件
 ~$*

@@ -101,16 +101,29 @@ export interface TablePage {
 export interface PrototypeItem {
   itemKey: string;
   title: string;
-  /** 看板伺服的入口地址，新窗口打开 */
+  /** 看板伺服的入口地址，新窗口打开。`kind === 'url'` 时为空 —— 那种形态没有本地产物 */
   url: string;
-  /** folder = 已解压目录；zip = 由看板缓存解压。可选：旧服务进程没有 */
-  kind?: 'folder' | 'zip';
+  /**
+   * bundle 的两种物理形态：folder = 已解压目录；zip = 由看板缓存解压。
+   * 'url' 是云端发布的原型（axhub-make 发布、figma make 的 publish / share 链接），
+   * 本地只有 meta.json 和可选封面。
+   * **前端据此决定点击行为**：'url' 直接开外部 `target`，其余开看板伺服的 `url`。
+   * 可选：旧服务进程没有这个字段，缺了就当 bundle 处理（退回改动前的行为）。
+   */
+  kind?: 'folder' | 'zip' | 'url';
+  /**
+   * `kind === 'url'` 时的目标地址，新窗口直接打开，不经看板伺服。
+   * 服务端已经校过协议：非 http/https 一律置空 —— 空串 = 地址不合法，卡片不可点击。
+   */
+  target?: string;
+  /** 封面图地址（url 形态的 cover.png）。没有就走窗框占位，不得出现破图 */
+  cover?: string;
   sourcePath?: string;
   mtime?: string;
 }
 
 /**
- * prototypes/ 下的 HTML 导出包清单。
+ * visualization/prototypes/ 下的原型清单（已构建的 HTML 包 + 云端发布链接）。
  * clientReady / serverRunning / origin 是旧 Axhub 开发服务时代的字段，
  * 新逻辑里 clientReady≈有可预览包、serverRunning 同义、origin 常为空 —— 都保留作兼容。
  */
@@ -119,6 +132,47 @@ export interface Prototypes {
   serverRunning: boolean;
   origin: string;
   items: PrototypeItem[];
+  note: string;
+  updatedAt?: string;
+  /**
+   * 工作空间根上还有非空的旧 `prototypes/` 时才出现（值就是 'prototypes'）。
+   * **只用于在空态里给一行迁移提示** —— 看板对工作空间只读，不代替用户搬家。
+   * 可选：搬完了、或旧服务进程没这个字段时都缺省，缺了就不显示提示。
+   */
+  legacyDir?: string;
+}
+
+/**
+ * visualization/references/ 下的一份参考：收下来的别人的页面。
+ * 判定条件只有一条 —— 目录根上有 index.html；其余全可选。
+ */
+export interface ReferenceItem {
+  itemKey: string;
+  title: string;
+  /** 查看器壳页地址（看板自己的 HTML，里面 iframe 装被隔离的原始页面），新窗口打开 */
+  url: string;
+  /** 采集来源地址。手工摆进来的参考没有这个 */
+  sourceUrl?: string;
+  /**
+   * manual = 用户手工摆进来（也是 meta.json 缺失 / 坏掉时的退路）。
+   * url-capture / plugin 是后面两个 change（贴 URL 采集、浏览器插件投递）用的取值，
+   * 类型里先写全，省得下次再动契约。
+   */
+  source?: 'manual' | 'url-capture' | 'plugin';
+  /** 这页有没有经过脱敏。**只是告知，不是安全保证** */
+  scrubbed?: boolean;
+  capturedAt?: string;
+  sourcePath?: string;
+  mtime?: string;
+  /** 卡片封面（screenshots/hero.png）。没有就走窗框占位 */
+  cover?: string;
+  /** 实际存在的那几张截图的地址，键是 hero / full / mobile */
+  screenshots?: Partial<Record<'hero' | 'full' | 'mobile', string>>;
+}
+
+/** 参考清单。形状与 Prototypes 同类，但没有 Axhub 时代那三个兼容字段。 */
+export interface References {
+  items: ReferenceItem[];
   note: string;
   updatedAt?: string;
 }
@@ -198,6 +252,13 @@ export interface Scan {
       annotations?: number;
     };
   };
+  /**
+   * visualization/references/ 的参考清单。
+   * 可选：**旧服务进程没有这个字段**（改完代码没重启 serve）。新服务哪怕工作空间里
+   * 根本没有 visualization/ 也会返回空结构，所以「字段缺失」就等于「服务进程比前端旧」——
+   * 这时参考 tab 显示「重启看板服务」，原型 tab 照常工作，不得白屏。
+   */
+  references?: References;
   prototypes: Prototypes;
 }
 
@@ -330,6 +391,11 @@ export const api = {
   removeProject: (id: string) => request<{ removed: boolean }>(`/api/projects/${id}`, { method: 'DELETE' }),
   scan: (id: string) => request<Scan>(`/api/projects/${id}/scan`),
   prototypes: (id: string) => request<Prototypes>(`/api/projects/${id}/prototypes`),
+  /**
+   * 参考清单。scan 里已经带了同一份数据，这个接口是给独立刷新用的（与 prototypes 对称）。
+   * 老服务没有这个接口（404），调用方要自己兜住。
+   */
+  references: (id: string) => request<References>(`/api/projects/${id}/references`),
   file: (id: string, path: string) =>
     request<{ path: string; size: number; mtime: string; content: string }>(
       `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,

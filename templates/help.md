@@ -87,13 +87,15 @@ input/raw/站点数据/闸门底坎库容.xlsx
 | `docs/` | 成稿：报告 / 方案 / PRD / 稿件 | 要交出去的 |
 | `decisions/` | 决策记录，一事一档，只追加 | 回头查「当时为什么这么定」 |
 
-`prototypes/` 放可点击原型，看板里能直接预览。
+`visualization/` 是视觉平面，看板的「视觉呈现」视图分两个 tab 展示它：
+`references/` 放收下来的别人的页面（一份参考一个目录，入口叫 `index.html`），
+`prototypes/` 放工具产出的、**已构建好**的可点击 HTML 包，或用一份 `meta.json` 记一条云端发布链接。
 
 ---
 
 ## 常见问题
 
-**界面没更新？** 看板监听 `input/` `output/` `prototypes/` 和 `project.yaml` 的改动，
+**界面没更新？** 看板监听 `input/` `output/` `visualization/` 和 `project.yaml` 的改动，
 自动刷新。其他位置的变化不在监听范围内，点左下角「重新扫描」。
 
 **工作空间标红 / 打不开？** 目录被改名或移走了。点工作空间右侧的齿轮，重新指路径。

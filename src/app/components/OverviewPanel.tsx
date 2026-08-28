@@ -13,18 +13,19 @@ type Stage = { key: string; title: string; hint: string; done: boolean; current:
  * 推断出来的东西一律标 [推断]，不冒充项目事实 —— 这是工作空间的硬规矩。
  */
 function inferStages(scan: Scan): Stage[] {
-  const { input, output, prototypes } = scan;
+  const { input, output, references, prototypes } = scan;
   const hasRaw = input.stats.raw > 0;
   const converted = input.stats.converted > 0 && input.stats.pending === 0;
   const analyzed = output.stats.analysis > 0;
   const documented = output.stats.docs > 0;
-  const prototyped = prototypes.items.length > 0;
+  // 视觉呈现这一步：有参考或有原型都算走过。references 缺字段（旧服务进程）时退回只看原型
+  const showcased = (references?.items.length || 0) > 0 || prototypes.items.length > 0;
 
   const stages: Stage[] = [
     { key: 'ingest', title: '资料入库', hint: 'input/raw → input/converted', done: converted, current: false },
     { key: 'analysis', title: '现状与需求分析', hint: 'output/analysis', done: analyzed, current: false },
     { key: 'docs', title: '文档交付', hint: 'output/docs', done: documented, current: false },
-    { key: 'prototype', title: '原型', hint: 'prototypes/', done: prototyped, current: false },
+    { key: 'showcase', title: '视觉呈现', hint: 'visualization/', done: showcased, current: false },
   ];
   if (!hasRaw) return stages;
   const currentIndex = stages.findIndex((s) => !s.done);

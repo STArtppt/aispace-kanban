@@ -12,8 +12,8 @@
 工作是单向流水线，每一阶段的产物是下一阶段的输入：
 
 ```
-input/  →  （分析）  →  output/  →  prototypes/
-资料      技能+上下文    文档产出    可点击原型
+input/  →  （分析）  →  output/  →  visualization/
+资料      技能+上下文    文档产出    视觉呈现（参考 + 原型）
 ```
 
 | 目录 | 职责 | 写入规则 |
@@ -26,7 +26,8 @@ input/  →  （分析）  →  output/  →  prototypes/
 | `output/analysis/` | 分析中间产物（现状基线、需求拆解、澄清问题清单） | 自由写 |
 | `output/docs/` | 对外交付文档（PRD、需求规格、评审材料）；**演示/汇报用的 HTML 也放这里** | 自由写，见下文 |
 | `output/decisions/` | 决策记录：一个决策一个文件 | 只追加，不要改历史决策 |
-| `prototypes/` | 可预览原型库：Axhub Make 客户端、zip 导出包、自己写的单页 HTML | **一个东西一个子目录，入口必须叫 `index.html`**，见下文 |
+| `visualization/references/` | 收下来的**别人的**页面：竞品、友商后台、公开文档站 | **一份参考一个目录，入口必须叫 `index.html`**；这是收来的原样材料，不要改它的内容 |
+| `visualization/prototypes/` | 可预览原型库：Axhub Make 客户端、zip 导出包、自己写的单页 HTML | **一个东西一个子目录，入口必须叫 `index.html`**，见下文 |
 
 ## 产物落点：`input/converted/` 镜像 `input/raw/`
 
@@ -320,33 +321,50 @@ output/docs/2026-08-18-需求评审材料.html    ← 渲染产物，一起改
 - **看板已经支持**：`output/docs/*.html` 在「产出文档」视图里带「可演示」标记，
   点开是 iframe 预览，下面有「全屏演示」和「用浏览器打开」——汇报现场直接用。
 
-**和 `prototypes/` 怎么分**：看有没有 `.md` 源文。
+**和 `visualization/prototypes/` 怎么分**：看有没有 `.md` 源文。
 
 - 有 md 源、html 只是它的渲染产物（PRD、评审材料）→ `output/docs/`，两份并排同名。
-- **没有 md 源、页面本身就是产物**（原型、可视化、方案页、演示页）→ `prototypes/<名字>/index.html`，见下节。
+- **没有 md 源、页面本身就是产物**（原型、可视化、方案页、演示页）→
+  `visualization/prototypes/<名字>/index.html`，见下节。
 
-## 阶段四：原型
+## 阶段四：视觉呈现
 
-`prototypes/` 是**可预览原型库**。看板扫这个目录，把每一项渲染成能点开的页面。
-里面可以同时住三种东西：
+`visualization/` 是**视觉平面**：给人看、能点开的页面。它和 `input/` `output/` 的差别在于
+那两个装的是要转换、要写的**文档**，这里装的是**页面**。看板的「视觉呈现」视图分两个 tab 展示它。
+
+### `visualization/references/`：收下来的别人的页面
+
+竞品、友商后台、公开文档站 —— 刚接手一个项目时先出现的就是这些，
+它们是做概念表达最快的捷径。一份参考一个目录，入口叫 `index.html`，
+旁边可以有 `meta.json`（记来源 URL、采集时间）和 `screenshots/{hero,full,mobile}.png`。
+**它是别人的页面，收进来保持原样**，不是本工作空间的产出。
+
+### `visualization/prototypes/`：工具产出的可点击原型
+
+看板扫这个目录，把每一项渲染成能点开的页面。里面可以同时住这几种东西：
 
 | 来源 | 形态 |
 | --- | --- |
 | [Axhub Make](https://github.com/lintendo/Axhub-Make) 构建的客户端 | 它自己建的目录，自带 README 和结构 |
 | 别人给的 zip 导出包 | `<名字>.zip`，包内根上有 `index.html` |
 | **你自己写的、或 AI 生成的单页 HTML** | `<名字>/index.html` |
+| 云端发布的原型（Axhub Make 发布、figma make 的 publish / share 链接） | `<名字>/meta.json`：`{ "kind": "url", "title": "…", "target": "https://…" }`，可选 `cover.png` |
 
 **三条硬规则**：
 
 - **一个东西一个子目录，入口必须叫 `index.html`。** 看板只认
-  `<子目录>/index.html`、`prototypes/index.html` 和 zip 包 ——
-  散装的 `方案.html` 直接扔进 `prototypes/` 根上，**根本扫不到**，界面上什么都不会出现。
+  `<子目录>/index.html`、`visualization/prototypes/index.html` 和 zip 包 ——
+  散装的 `方案.html` 直接扔进 `visualization/prototypes/` 根上，**根本扫不到**，
+  界面上什么都不会出现。
+- **只认已构建好的产物。** 未构建的源码包（figma make 的源码导出、Axhub Make 的
+  「导出源码」包）看板扫不到，也不会为它们装依赖、跑构建 —— 请用工具的「导出 HTML」，
+  或者用上面那条云端发布链接。
 - **`<title>` 就是看板里显示的名字**，别留空、别叫「Document」。
 - **自包含**：内联 CSS、不引外部字体和脚本（看板自己也只声明字体栈不加载 web 字体），
   双击能在浏览器打开，拷给别人也能看。
 
 Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也不要尝试在这里跑 `npx @axhub/make`。
-用户在它的页面上新建项目并指向本仓库的 `prototypes/`，它会自动在该目录下构建客户端。
+用户在它的页面上新建项目并指向本仓库的 `visualization/prototypes/`，它会自动在该目录下构建客户端。
 **不要动它生成的目录**；你自己的东西各占一个子目录，两边互不干扰。
 
 你在阶段四的职责是**准备好输入**：用 `pm-prototype-brief` 把 `output/` 里的文档收敛成
@@ -368,7 +386,8 @@ Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也�
 - 不要手改 `input/converted/` 的产物，改脚本或在 `output/analysis/` 里记录修正。
 - 不要往 `input/converted/` 里手动建目录。落点规则在 `scripts/layout.py`，
   `SplittingObject/` 和 `MergedObject/` 由脚本创建，手建的目录看板认不出来。
-- 不要把散装 `.html` 直接扔在 `prototypes/` 根上（扫不到），也不要动 Axhub Make 生成的目录。
+- 不要把散装 `.html` 直接扔在 `visualization/prototypes/` 或 `visualization/references/` 根上
+  （两边都扫不到），也不要动 Axhub Make 生成的目录。
   自己的单页 HTML 一个子目录一个 `index.html`，见上文。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。
 - 不要用推断填平资料空白，标注出来交给用户去确认。

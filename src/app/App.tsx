@@ -20,9 +20,9 @@ import { HelpPanel } from '@/components/HelpPanel';
 import { InputPanel } from '@/components/InputPanel';
 import { OutputPanel } from '@/components/OutputPanel';
 import { OverviewPanel } from '@/components/OverviewPanel';
-import { PrototypePanel } from '@/components/PrototypePanel';
 import { Reader } from '@/components/Reader';
 import { UnavailableWorkspace, WorkspaceDialog } from '@/components/WorkspaceSettings';
+import { VisualPanel } from '@/components/VisualPanel';
 import { useBoardSession, type View } from '@/hooks/useBoardSession';
 import { useIngestJob } from '@/hooks/useIngestJob';
 import { useProjects, useScan } from '@/hooks/useWorkspace';
@@ -94,7 +94,8 @@ const NAV: { key: View; label: string; icon: typeof LayoutDashboard }[] = [
   { key: 'overview', label: '概览', icon: LayoutDashboard },
   { key: 'input', label: '输入资料', icon: FolderInput },
   { key: 'output', label: '产出文档', icon: FolderOutput },
-  { key: 'prototypes', label: '原型', icon: MonitorPlay },
+  // 路由键保持 'prototypes'：这是 UI 状态不是目录名，改了每个人的「上次视图」都会掉回概览
+  { key: 'prototypes', label: '视觉呈现', icon: MonitorPlay },
 ];
 
 /** 看板版本：老服务进程没有这个字段时不显示，退回改动前的侧栏。 */
@@ -430,7 +431,7 @@ export default function App() {
               onOpen={selectFileAndCloseHelp}
             />
           ) : null}
-          {view === 'prototypes' ? <PrototypePanel prototypes={scan.prototypes} /> : null}
+          {view === 'prototypes' ? <VisualPanel scan={scan} /> : null}
         </>
       ) : null}
     </>

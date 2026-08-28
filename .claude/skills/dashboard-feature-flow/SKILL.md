@@ -42,7 +42,8 @@ description: 在 aispace-kanban 里新增或修改任何功能时使用 —— �
 ### 步骤 1 · 服务端先产出数据(`src/server/**`)
 
 - 扫描 / 计算类:加在 `scan.mjs`(工作空间目录)、`meta.mjs`(`project.yaml`)、
-  `prototypes.mjs`(Axhub 原型)里,沿用已有的 `listFiles` / `rel` / `stat` 工具与 `SKIP` 集合。
+  `prototypes.mjs`(`visualization/prototypes/`)、`references.mjs`(`visualization/references/`)里,
+  沿用已有的 `listFiles` / `rel` / `stat` 工具与 `SKIP` 集合。
 - 新接口:加在 `http.mjs` 的 `handleApi` 里,按现有 `head / id / action` 三段式匹配。
   - 返回统一走 `json(res, status, payload)`。
   - 出错 `throw new Error('中文说明')`,需要状态码就挂 `err.statusCode`,由 `createServer` 统一转 JSON。
@@ -77,7 +78,8 @@ description: 在 aispace-kanban 里新增或修改任何功能时使用 —— �
 ### 步骤 4 · 检查自动刷新范围(涉及新数据源时)
 
 SSE 由 `http.mjs` 的 `watchWorkspace` 提供,**只监听**:
-`input/`、`output/`、`prototypes/.axhub`(递归)+ 根下的 `project.yaml` / `project.yml`。
+`input/`、`output/`、`visualization/`(递归)+ 工作空间根(非递归,用来捕获这三个目录**启动后才被创建**
+的情况)+ 根下的 `project.yaml` / `project.yml`。
 
 新数据源在这些路径之外(比如工作空间根下另一个目录),它**不会自动刷新**。
 要么把目录加进 `watchWorkspace` 的列表,要么在界面上说清"需要手动刷新"。别默认它会更新。

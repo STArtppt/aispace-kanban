@@ -795,7 +795,7 @@ def convert_html(src: Path, digest: str) -> Path:
         "",
         "- 这是 PM 之间传递的**可点击单文件原型**，权威交互以 HTML 预览为准。",
         "- AI 默认读本 `_manifest.md` 做台账与摘要；不要把整页 HTML 当需求正文转写进 PRD。",
-        "- 正式可维护原型仍走 `prototypes/`（Axhub Make）；本目录产物只作输入资料。",
+        "- 正式可维护原型仍走 `visualization/prototypes/`（Axhub Make）；本目录产物只作输入资料。",
         "",
     ]
     manifest_path.write_text("\n".join(lines), encoding="utf-8")

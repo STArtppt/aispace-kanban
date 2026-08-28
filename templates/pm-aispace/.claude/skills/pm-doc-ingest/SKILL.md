@@ -45,7 +45,7 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
   - `input/converted/SplittingObject/SC-02_发电计划原型/*.html` — 可直接预览
     （看板输入区按网页打开；本地也可双击）
 - AI 默认读 `_manifest_<名>.md` 做台账与摘要；需要点评交互时再结合预览，**不要把整页 HTML 当 PRD 正文抄进去**。
-- 正式、可维护的多页原型仍走阶段四 `prototypes/`（Axhub Make）；raw 里的 HTML 只是输入资料。
+- 正式、可维护的多页原型仍走阶段四 `visualization/prototypes/`（Axhub Make）；raw 里的 HTML 只是输入资料。
 
 看脚本输出，这些情况必须处理，不要转完就当资料齐了：
 

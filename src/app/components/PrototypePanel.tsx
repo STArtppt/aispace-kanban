@@ -1,17 +1,26 @@
-import { ExternalLink, MonitorPlay } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
 import { EmptyState, SectionTitle } from '@/components/Primitives';
+import { ShowcaseCard, ShowcaseGrid } from '@/components/ShowcaseCard';
 import type { PrototypeItem, Prototypes } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
+
+/** 用户跑完这条就搬完家了。看板只给命令，不代劳（对工作空间只读）。 */
+const MIGRATE_CMD = 'mkdir -p visualization && mv prototypes visualization/prototypes';
 
 function kindLabel(kind?: PrototypeItem['kind']) {
   if (kind === 'zip') return 'zip';
   if (kind === 'folder') return '文件夹';
+  if (kind === 'url') return '云端链接';
   return '';
 }
 
+/**
+ * 「视觉呈现 · 原型」：工具产出的可点击 HTML 包，或云端发布链接。
+ *
+ * 两种形态点击行为不同：bundle 开看板伺服的 url，url 形态直接开外部 target。
+ * kind 缺失（旧服务进程）时当 bundle 处理，退回改动前的行为。
+ */
 export function PrototypePanel({ prototypes }: { prototypes: Prototypes }) {
-  const { items, note, updatedAt } = prototypes;
+  const { items, note, updatedAt, legacyDir } = prototypes;
 
   return (
     <div className="flex flex-col gap-4">
@@ -22,6 +31,7 @@ export function PrototypePanel({ prototypes }: { prototypes: Prototypes }) {
         ) : null}
       </div>
 
+      {/* note 也承载单个 zip 的解压失败等信息，清单为空时照样要显示，否则那条错误就没人看得见 */}
       {note ? (
         <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
           {note}
@@ -29,74 +39,43 @@ export function PrototypePanel({ prototypes }: { prototypes: Prototypes }) {
       ) : null}
 
       {items.length ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <ShowcaseGrid>
           {items.map((item) => {
-            const disabled = !item.url;
-            const kind = kindLabel(item.kind);
-            const CardBody = (
-              <>
-                {/* 缩略图区：静态导出包没有现成封面图，用统一视觉占位 + 标题首字 */}
-                <div className="relative flex aspect-[16/10] items-center justify-center overflow-hidden rounded-md border border-border bg-muted/50">
-                  <div className="absolute inset-0 opacity-[0.06]"
-                    style={{
-                      backgroundImage:
-                        'linear-gradient(to right, currentColor 1px, transparent 1px), linear-gradient(to bottom, currentColor 1px, transparent 1px)',
-                      backgroundSize: '24px 24px',
-                    }}
-                  />
-                  <div className="relative flex flex-col items-center gap-2 text-muted-foreground">
-                    <MonitorPlay className="size-8" />
-                    <span className="max-w-[90%] truncate px-2 text-center text-xs font-medium text-foreground/80">
-                      {item.title}
-                    </span>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-medium">{item.title}</div>
-                    <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                      {item.sourcePath || item.itemKey}
-                    </div>
-                  </div>
-                  {kind ? (
-                    <Badge variant="muted" className="shrink-0 font-mono text-[10px]">
-                      {kind}
-                    </Badge>
-                  ) : null}
-                  {disabled ? null : <ExternalLink className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />}
-                </div>
-              </>
-            );
-
-            if (disabled) {
-              return (
-                <div
-                  key={item.itemKey}
-                  className="flex cursor-not-allowed flex-col gap-3 rounded-lg border border-border bg-card p-3 opacity-60"
-                >
-                  {CardBody}
-                </div>
-              );
-            }
-
+            const isUrl = item.kind === 'url';
+            // url 形态的 target 已由服务端校过协议：空串 = 地址不合法
+            const href = isUrl ? item.target || '' : item.url;
             return (
-              <a
+              <ShowcaseCard
                 key={item.itemKey}
-                href={item.url}
-                target="_blank"
-                rel="noreferrer"
-                className="flex flex-col gap-3 rounded-lg border border-border bg-card p-3 transition-colors hover:border-foreground/30 hover:bg-accent"
-              >
-                {CardBody}
-              </a>
+                title={item.title}
+                subtitle={isUrl ? item.target || item.sourcePath || item.itemKey : item.sourcePath || item.itemKey}
+                cover={item.cover}
+                href={href}
+                badge={kindLabel(item.kind) || undefined}
+                disabledHint={isUrl && !href ? '这条云端原型的地址不合法（只支持 http / https），看板不打开它' : undefined}
+              />
             );
           })}
-        </div>
+        </ShowcaseGrid>
       ) : (
-        <EmptyState
-          title="还没有原型页面"
-          hint="把 axhub-make 导出的 HTML 包（zip 或解压后的文件夹，根目录含 index.html）放进 prototypes/ 即可"
-        />
+        <div className="flex flex-col gap-3">
+          <EmptyState
+            title="还没有原型"
+            hint="把工具产出的、已构建好的 HTML 包（zip 或解压后的文件夹，根目录含 index.html）放进 visualization/prototypes/；云端发布的原型写一份 meta.json 记下链接即可。未构建的源码包不在支持范围内，请先用工具的「导出 HTML」。"
+          />
+          {legacyDir ? (
+            <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-xs text-muted-foreground">
+              <p>
+                检测到旧位置还有原型（工作空间根上的 <code className="font-mono">{legacyDir}/</code>）。
+                原型已经搬到 <code className="font-mono">visualization/prototypes/</code>，
+                看板对工作空间只读、不代替你搬家 —— 在工作空间根目录跑一次：
+              </p>
+              <pre className="mt-2 overflow-x-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-[11px] text-foreground">
+                {MIGRATE_CMD}
+              </pre>
+            </div>
+          ) : null}
+        </div>
       )}
     </div>
   );

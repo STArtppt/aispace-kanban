@@ -36,7 +36,7 @@ description: 在 aispace-kanban 里新建文件、不确定代码该放哪个平
 
 **服务端(`src/server/`)**
 
-- 一个文件一个职责,小写单词 `.mjs`(`scan` / `meta` / `config` / `http` / `frontmatter` / `prototypes`)
+- 一个文件一个职责,小写单词 `.mjs`(`scan` / `meta` / `config` / `http` / `frontmatter` / `prototypes` / `references`)
 - 导出用具名 `export function`;文件顶部用块注释写清这个模块负责什么
 - 工作空间内的相对路径统一用 `/` 分隔(用 `scan.mjs` 的 `rel()`)
 

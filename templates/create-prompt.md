@@ -25,7 +25,9 @@ CLAUDE.md              # 只指向 AGENTS.md，不要把约定再写一遍
 project.yaml           # 这个角色的元信息字段；新建时几乎全是 null
 input/                 # 原始资料入口（至少含 raw/ converted/ assets/）
 output/                # 产出；子目录按这个角色自己的阶段来，不要照抄 PM 的 analysis/docs/decisions
-prototypes/            # 给原型工具留的空目录，不要往里放文件
+visualization/         # 视觉平面：references/ 收下来的别人的页面、prototypes/ 工具产出的原型
+  references/
+  prototypes/
 scripts/               # 可以几乎是空的；如果这个角色会丢 docx/PDF/xlsx，再从产品经理模板拷 ingest 相关脚本
 .claude/skills/
   skill-creator/       # 必须原样复制，路径：{{skillCreator}}
@@ -40,7 +42,7 @@ description: <一两句，说明谁用、干什么>
 ```
 
 硬约束：
-- 四个目录 `input/` `output/` `prototypes/` `scripts/` 不能缺。
+- 四个目录 `input/` `output/` `visualization/`（含 `references/` `prototypes/`）`scripts/` 不能缺。
 - `skill-creator` 必须在，让以后这个空间里还能把重复套路做成新技能。
 - 不要把产品经理那套 `pm-*` 技能整包拷过来，除非我就是产品经理。
 - 不要写看板仓库、不要改 npm 包里的文件。

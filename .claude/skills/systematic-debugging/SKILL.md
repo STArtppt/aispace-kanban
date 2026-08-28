@@ -28,7 +28,7 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 整页白屏 / 报 `cannot read property of undefined` | 前端把**可选字段当必填**用了 | 看该字段在 `api.ts` 里是不是 `?`,前端有没有兜底 |
 | 界面改了没变化 | 非 dev 模式的 serve 伺服 `dist/` | `pnpm build`;或改用 `pnpm dev` 开 5180 |
 | 前端 5180 打得开但接口全挂 | 代理指向的 7788 没起来 | `curl -s localhost:7788/api/health` |
-| 文件变了但界面不自动刷新 | 数据源不在 SSE 监听范围 | `http.mjs` 的 `watchWorkspace` 只看 `input/`、`output/`、`prototypes/.axhub`、`project.yaml` |
+| 文件变了但界面不自动刷新 | 数据源不在 SSE 监听范围 | `http.mjs` 的 `watchWorkspace` 只看 `input/`、`output/`、`visualization/`(递归)、工作空间根(非递归)、`project.yaml` |
 | 某工作空间整个没内容 | 登记目录被改名 / 移走 | 侧栏有橙色警告;`node bin/cli.mjs list` 看 `status`;用 `relink` 接回 |
 | 接口 403 路径超出范围 | `resolveInside` 拦住了(通常是相对路径拼错) | 打出传进去的 `relPath`,它必须是工作空间内的相对路径、`/` 分隔 |
 | 服务端改动"没生效"且不报错 | **`.mjs` 不参与类型检查**,写错的属性名会静默返回 `undefined` | 在服务端 `console.log` 出真实对象,别靠推断 |

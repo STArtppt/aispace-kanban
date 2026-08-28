@@ -9,6 +9,7 @@ import { countAnnotations, linkReferences } from './citations.mjs';
 import { countWords, parseFrontmatter } from './frontmatter.mjs';
 import { readMeta } from './meta.mjs';
 import { scanPrototypes } from './prototypes.mjs';
+import { scanReferences } from './references.mjs';
 
 const SKIP = new Set(['.git', 'node_modules', '.DS_Store', '.gitkeep']);
 const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.csv', '.tsv', '.json', '.yaml', '.yml', '.xml']);
@@ -616,6 +617,9 @@ export function scanWorkspace(project, status = { ok: true, reasons: [] }) {
     meta: readMeta(root),
     input,
     output,
+    // 视觉平面的两条清单。references 是新字段：没有 visualization/ 时也返回空结构，
+    // 好让前端区分「没有参考」和「旧服务进程根本没有这个字段」。
+    references: scanReferences(root, project.id),
     prototypes: scanPrototypes(root, project.id),
   };
 }
