@@ -122,7 +122,14 @@ export function useBoardSession(activeId: string, scan: Scan | null) {
     if (!path) return;
     const item = findFileInScan(scan, path);
     if (!item) return;
-    setOpenFile((current) => current ?? item);
+    setOpenFile((current) => {
+      if (!current) return item;
+      if (current.path !== item.path) return current;
+      // 同一篇：换上当次扫描的条目，mtime 才能进 Reader 触发正文重读。
+      // 磁盘没变就保住原引用，避免无谓重渲。
+      if (current.mtime === item.mtime && current.size === item.size) return current;
+      return item;
+    });
   }, [scan, activeId]);
 
   return { view, setView, openFile, selectFile };

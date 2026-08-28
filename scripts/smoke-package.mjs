@@ -208,11 +208,17 @@ try {
     '.gitignore',
     'input/raw/.gitkeep',
     'input/.ingestignore',
+    'visualization/references',
+    'visualization/prototypes',
     '.claude/skills/pm-doc-ingest/SKILL.md',
     '.claude/skills/skill-creator/SKILL.md',
   ];
   const missing = must.filter((rel) => !fs.existsSync(path.join(wsPath, rel)));
   if (missing.length) die(`新工作空间缺文件：${missing.join('、')}`);
+  // 原型已经搬进 visualization/，根上不该再铺一个空的 prototypes/（那会让人以为还是老位置）
+  if (fs.existsSync(path.join(wsPath, 'prototypes'))) {
+    die('新工作空间根上还有 prototypes/ —— 原型的唯一落点是 visualization/prototypes/');
+  }
   const skills = path.join(wsPath, 'skills');
   if (!fs.existsSync(path.join(skills, 'pm-doc-ingest', 'SKILL.md'))) {
     die('新工作空间的 skills/ 用不了（AGENTS.md 里的技能链接全指向它）');
@@ -371,6 +377,89 @@ try {
     die('用户模板铺出来缺 input/ 或 output/');
   }
   ok('用户自建模板能被扫到，新建后带 skill-creator');
+
+  // ── 7d 视觉平面：参考与原型的扫描、伺服隔离与旧位置探测 ────────────────────
+  const visRoot = path.join(wsPath, 'visualization');
+  const refDir = path.join(visRoot, 'references', 'foo');
+  fs.mkdirSync(path.join(refDir, 'screenshots'), { recursive: true });
+  fs.writeFileSync(path.join(refDir, 'index.html'), '<html><head><title>冒烟参考</title></head><body>ref</body></html>');
+  fs.writeFileSync(path.join(refDir, 'screenshots', 'hero.png'), 'not-a-real-png');
+  // 散装 .html 直接扔在 references/ 根上：不是一份参考，必须扫不到
+  fs.writeFileSync(path.join(visRoot, 'references', 'bar.html'), '<html></html>');
+  // 原型：一个 bundle、一条 url、一个既无 index.html 又无 meta.json 的空目录
+  const protoBundle = path.join(visRoot, 'prototypes', '冒烟原型');
+  fs.mkdirSync(protoBundle, { recursive: true });
+  fs.writeFileSync(path.join(protoBundle, 'index.html'), '<html><head><title>冒烟原型</title></head><body>p</body></html>');
+  const protoUrl = path.join(visRoot, 'prototypes', '线上版');
+  fs.mkdirSync(protoUrl, { recursive: true });
+  fs.writeFileSync(
+    path.join(protoUrl, 'meta.json'),
+    JSON.stringify({ kind: 'url', title: '线上版', target: 'https://example.com/p/abc' }),
+  );
+  fs.mkdirSync(path.join(visRoot, 'prototypes', '草稿'), { recursive: true });
+  // 旧位置：只该被探测成 legacyDir，绝不该被列进清单
+  const legacyPkg = path.join(wsPath, 'prototypes', '旧包');
+  fs.mkdirSync(legacyPkg, { recursive: true });
+  fs.writeFileSync(path.join(legacyPkg, 'index.html'), '<html><head><title>旧包</title></head><body>old</body></html>');
+
+  const visScan = await fetch(`${base}/api/projects/${created.id}/scan`).then((r) => r.json());
+  if (!visScan.references) die('扫描没有 references 字段 —— 新前端会以为服务进程是旧的');
+  const refKeys = (visScan.references.items || []).map((i) => i.itemKey);
+  if (!refKeys.includes('foo')) die('visualization/references/foo/index.html 没被列出', JSON.stringify(refKeys));
+  if (refKeys.includes('bar') || refKeys.includes('bar.html')) {
+    die('散装的 references/bar.html 被当成参考列出来了', JSON.stringify(refKeys));
+  }
+  const protoItems = visScan.prototypes?.items || [];
+  const protoKeys = protoItems.map((i) => i.itemKey);
+  if (!protoKeys.includes('冒烟原型')) die('visualization/prototypes/ 里的 bundle 没被列出', JSON.stringify(protoKeys));
+  if (protoKeys.includes('旧包')) die('旧位置 prototypes/ 里的包被列进清单了 —— 那里只该被探测');
+  if (protoKeys.includes('草稿')) die('既无 index.html 又无 meta.json 的空目录产生了占位卡片');
+  const urlItem = protoItems.find((i) => i.itemKey === '线上版');
+  if (!urlItem || urlItem.kind !== 'url' || urlItem.target !== 'https://example.com/p/abc') {
+    die('meta.json 记的 kind: url 没被列成 url 原型', JSON.stringify(urlItem));
+  }
+  if (urlItem.url) die('url 形态的原型不该有看板伺服地址');
+  if (visScan.prototypes?.legacyDir !== 'prototypes') {
+    die(`根上还有非空 prototypes/ 却没报 legacyDir：${visScan.prototypes?.legacyDir}`);
+  }
+  ok('视觉平面扫描正确：参考只认子目录 index.html，url 原型成立，旧位置只探测不列出');
+
+  // 伺服：参考与原型的 HTML 都必须落进不透明源（否则页面里的脚本能直接调看板接口）
+  const refHtml = await fetch(`${base}/api/projects/${created.id}/ref/foo/index.html`);
+  if (refHtml.status !== 200) die(`参考伺服失败：${refHtml.status}`);
+  if (!/\bsandbox\b/.test(refHtml.headers.get('content-security-policy') || '')) {
+    die(`参考 HTML 没带 CSP sandbox 头：${refHtml.headers.get('content-security-policy')}`);
+  }
+  if (/allow-same-origin/.test(refHtml.headers.get('content-security-policy') || '')) {
+    die('参考 HTML 的 sandbox 给了 allow-same-origin —— 隔离等于没做');
+  }
+  const protoHtml = await fetch(`${base}/api/projects/${created.id}/proto/${encodeURIComponent('冒烟原型')}/index.html`);
+  if (protoHtml.status !== 200) die(`原型伺服失败：${protoHtml.status}`);
+  if (!/\bsandbox\b/.test(protoHtml.headers.get('content-security-policy') || '')) {
+    die('原型 bundle 的伺服响应没带 CSP sandbox 头');
+  }
+  const urlServe = await fetch(`${base}/api/projects/${created.id}/proto/${encodeURIComponent('线上版')}/index.html`);
+  if (urlServe.status === 200) die('url 形态的原型被看板伺服了 —— 它本地根本没有产物');
+  const viewer = await fetch(`${base}/api/projects/${created.id}/ref/foo/view`);
+  const viewerBody = await viewer.text();
+  if (viewer.status !== 200 || !viewerBody.includes('<iframe')) die(`参考查看器壳页不对：${viewer.status}`);
+  if ((viewer.headers.get('content-security-policy') || '').includes('sandbox')) {
+    die('查看器壳页自己带了 sandbox —— 它是看板的页面，带了就没法读截图和画灯箱');
+  }
+  const shot = await fetch(`${base}/api/projects/${created.id}/ref/foo/screenshots/hero.png`);
+  if (shot.status !== 200) die(`参考截图读不到：${shot.status}`);
+  // 穿越必须整段百分号编码：URL 解析器会先把裸 ../ 规范化掉，那样根本到不了处理函数。
+  // 而 %2e%2e%2f… 里带别的字符，不构成「双点段」，会原样送到服务端再由它解码 —— 这才是真实攻击面。
+  for (const bad of ['%2e%2e%2fetc%2fpasswd', '%2e%2e%2f%2e%2e%2foutput%2fdocs%2ffoo.md']) {
+    const esc = await fetch(`${base}/api/projects/${created.id}/ref/foo/${bad}`);
+    if (esc.status !== 403) die(`参考伺服的路径穿越没被挡住（${bad} 返回 ${esc.status}，应该是 403）`);
+  }
+  // 截图走同一条伺服路径，同样不许越界（从 screenshots/ 往上爬四层就出了这份参考的目录）
+  const escShot = await fetch(
+    `${base}/api/projects/${created.id}/ref/foo/screenshots/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2foutput%2fdocs%2ffoo.md`,
+  );
+  if (escShot.status !== 403) die(`参考截图路径的穿越没被挡住（返回 ${escShot.status}，应该是 403）`);
+  ok('参考与原型伺服都落进不透明源，查看器壳页可用，路径穿越被挡住');
 
   // ── 8 注册表没写到真 HOME ─────────────────────────────────────────────────
   if (!fs.existsSync(path.join(fakeHome, '.pmwork', 'dashboard', 'projects.json'))) {

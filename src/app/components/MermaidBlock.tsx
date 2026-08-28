@@ -36,6 +36,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { renderMermaid, type MermaidTheme } from '@/lib/mermaid';
+import { pickSourceAttrs } from '@/lib/sourceAnchor';
 import { cn } from '@/lib/utils';
 
 type RenderStatus =
@@ -77,7 +78,14 @@ function sanitizeId(id: string) {
  * 行为对齐 pentou MermaidBlock：预览/源码切换、复制、全屏缩放拖拽。
  * 表面用语义令牌，不照搬 pentou 的 zinc 硬编码。
  */
-export function MermaidBlock({ source }: { source: string; className?: string }) {
+export function MermaidBlock({
+  source,
+  className,
+  ...props
+}: {
+  source: string;
+  className?: string;
+} & Record<string, unknown>) {
   const dark = useIsDark();
   const reactId = sanitizeId(useId());
   const renderRef = useRef(0);
@@ -147,8 +155,13 @@ export function MermaidBlock({ source }: { source: string; className?: string })
 
   const showSource = view === 'source' || status.kind === 'error';
 
+  const a2 = pickSourceAttrs(props);
+
   return (
-    <div className="relative my-4 overflow-hidden rounded-lg border border-border bg-card">
+    <div
+      className={cn('relative my-4 overflow-hidden rounded-lg border border-border bg-card', className)}
+      {...a2}
+    >
       <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/60 px-3 py-2">
         <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
           mermaid

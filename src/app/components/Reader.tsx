@@ -25,11 +25,15 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { AnnotationLayer } from '@/components/AnnotationLayer';
+import { AnnotationPanel } from '@/components/AnnotationPanel';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
+import { useAnnotations } from '@/hooks/useAnnotations';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
+import { utf8Len } from '@/lib/sourceAnchor';
 import {
   api,
   type AssetGroup,
@@ -44,17 +48,22 @@ import { cn } from '@/lib/utils';
 const TABLE_PAGE_SIZE = 50;
 
 /** 只做展示用的 frontmatter 拆分，和服务端那份保持一致的宽松规则。 */
-function splitFrontmatter(text: string): { meta: [string, string][]; body: string } {
-  if (!text.startsWith('---')) return { meta: [], body: text };
+function splitFrontmatter(text: string): { meta: [string, string][]; body: string; bodyCharOffset: number } {
+  if (!text.startsWith('---')) return { meta: [], body: text, bodyCharOffset: 0 };
   const end = text.indexOf('\n---', 3);
-  if (end === -1) return { meta: [], body: text };
+  if (end === -1) return { meta: [], body: text, bodyCharOffset: 0 };
   const raw = text.slice(text.indexOf('\n') + 1, end);
   const meta: [string, string][] = [];
   for (const line of raw.split(/\r?\n/)) {
     const kv = /^([\w.-]+):\s*(.*)$/.exec(line);
     if (kv && kv[2]) meta.push([kv[1], kv[2]]);
   }
-  return { meta, body: text.slice(end + 4).replace(/^\r?\n/, '') };
+  const fenceEnd = end + 4;
+  const rest = text.slice(fenceEnd);
+  const nl = rest.match(/^\r?\n/);
+  const extra = nl ? nl[0].length : 0;
+  const bodyCharOffset = fenceEnd + extra;
+  return { meta, body: text.slice(bodyCharOffset), bodyCharOffset };
 }
 
 function dirOf(path: string) {
@@ -442,7 +451,7 @@ function cacheKey(projectId: string, path: string) {
  * - 无缓存：不立刻亮「读取中」；超过短延迟仍未返回才提示
  * - 切换 path 时保留上一份正文直到新正文到位（或延迟后仍无内容才显示读取中）
  */
-function useFileContent(projectId: string, path: string | null, refreshKey = 0) {
+function useFileContent(projectId: string, path: string | null, refreshKey: string | number = 0) {
   const [content, setContent] = useState('');
   /** 当前 content 对应的 path；与请求 path 一致才算已对齐 */
   const [resolvedPath, setResolvedPath] = useState<string | null>(null);
@@ -669,7 +678,11 @@ export function Reader({
   }, [item.path]);
 
   // 表格内容由 TableReader 自行拉取；此处只负责 md / 纯文本
-  const { content, loading, error } = useFileContent(projectId, contentPath, reconvertedAt);
+  const { content, loading, error } = useFileContent(
+    projectId,
+    contentPath,
+    `${reconvertedAt}:${item.mtime}`,
+  );
 
   // 目录型表格包 / html 原型：manifest 做摘要、SQL 指南、校验说明
   const { content: manifestContent, loading: manifestLoading, error: manifestError } = useFileContent(
@@ -678,11 +691,14 @@ export function Reader({
     reconvertedAt,
   );
 
-  const { meta, body } = useMemo(() => {
+  const { meta, body, bodyCharOffset } = useMemo(() => {
     if (mode === 'markdown') return splitFrontmatter(content);
     if ((multiSheet || mode === 'html') && manifestContent) return splitFrontmatter(manifestContent);
-    return { meta: [] as [string, string][], body: content };
+    return { meta: [] as [string, string][], body: content, bodyCharOffset: 0 };
   }, [content, mode, multiSheet, manifestContent]);
+  const sourceByteOffset = mode === 'markdown' ? utf8Len(content.slice(0, bodyCharOffset)) : 0;
+  const annotateFile = mode === 'markdown' ? contentPath || item.path : '';
+  const annotations = useAnnotations(projectId, annotateFile);
 
   const base = dirOf(mode === 'markdown' && isDir ? manifestPath : item.path);
   // 单文件 HTML（output/docs 下的汇报材料）没有 _manifest.md，校验说明这一栏不该出现
@@ -776,49 +792,69 @@ export function Reader({
         目录 absolute 贴预览右缘：展开/收起时位置固定，不参与 flex 分宽（避免左右摇摆）
       */}
       {mode === 'markdown' ? (
-        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-          <div
-            ref={mdScrollRef}
-            data-reader-scroll
-            className={cn(
-              'h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5',
-              // 与目录轨同宽，加载前后布局高度/宽度稳定
-              'min-[900px]:pr-[calc(200px+0.75rem)] xl:pr-[calc(220px+0.75rem)]',
-            )}
-          >
-            {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
-            {content && !error ? (
-              <div className="mx-auto w-full max-w-[76ch]">
-                <SourceBar
-                  key={item.path}
-                  meta={meta}
-                  sourceState={sourceState}
-                  projectId={projectId}
-                  path={verifyPath}
-                  canIngest={canIngest}
-                  ingest={ingest}
-                  onReconverted={onReconverted}
-                />
-                <Markdown
-                  key={item.path}
-                  urlTransform={(url) => api.fileUrl(projectId, resolveRelative(base, url))}
-                  onHeadingsChange={(items) => setTocState({ path: item.path, items })}
-                >
-                  {body}
-                </Markdown>
-              </div>
-            ) : null}
-          </div>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+            <div
+              ref={mdScrollRef}
+              data-reader-scroll
+              className={cn(
+                'h-full min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5',
+                // 与目录轨同宽，加载前后布局高度/宽度稳定
+                'min-[900px]:pr-[calc(200px+0.75rem)] xl:pr-[calc(220px+0.75rem)]',
+              )}
+            >
+              {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              {content && !error ? (
+                <div className="mx-auto w-full max-w-[76ch]">
+                  <SourceBar
+                    key={item.path}
+                    meta={meta}
+                    sourceState={sourceState}
+                    projectId={projectId}
+                    path={verifyPath}
+                    canIngest={canIngest}
+                    ingest={ingest}
+                    onReconverted={onReconverted}
+                  />
+                  <AnnotationLayer
+                    notes={annotations.notes}
+                    contentKey={body}
+                    onCreate={(input) => annotations.add(input, item.mtime)}
+                  >
+                    <Markdown
+                      key={item.path}
+                      sourceFile={annotateFile}
+                      sourceByteOffset={sourceByteOffset}
+                      urlTransform={(url) => api.fileUrl(projectId, resolveRelative(base, url))}
+                      onHeadingsChange={(items) => setTocState({ path: item.path, items })}
+                    >
+                      {body}
+                    </Markdown>
+                  </AnnotationLayer>
+                </div>
+              ) : null}
+            </div>
 
-          <div
-            className={cn(
-              'absolute inset-y-0 right-0 hidden w-[200px] flex-col bg-background px-3 py-4 xl:w-[220px]',
-              'min-[900px]:flex',
-            )}
-          >
-            <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
+            <div
+              className={cn(
+                'absolute inset-y-0 right-0 hidden w-[200px] flex-col bg-background px-3 py-4 xl:w-[220px]',
+                'min-[900px]:flex',
+              )}
+            >
+              <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
+            </div>
           </div>
+          <AnnotationPanel
+            file={annotateFile}
+            mtime={item.mtime}
+            notes={annotations.notes}
+            seenMtime={annotations.seenMtime}
+            onUpdate={annotations.update}
+            onRemove={annotations.remove}
+            onClear={annotations.clear}
+            onKeep={annotations.keep}
+          />
         </div>
       ) : tablePackage ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">

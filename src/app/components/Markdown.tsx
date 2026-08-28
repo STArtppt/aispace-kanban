@@ -17,6 +17,7 @@ import remarkGfm from 'remark-gfm';
 import { MarkdownCodeBlock } from '@/components/MarkdownCodeBlock';
 import { MermaidBlock } from '@/components/MermaidBlock';
 import { useScrollActivity } from '@/hooks/useScrollActivity';
+import { pickSourceAttrs, rehypeSourcePos } from '@/lib/sourceAnchor';
 import { cn } from '@/lib/utils';
 
 export type TocItem = { id: string; text: string; level: number; index: number };
@@ -115,12 +116,17 @@ function buildComponents(): ComponentProps<typeof ReactMarkdown>['components'] {
         isBlock?: boolean;
       } & typeof props;
       const isBlock = Boolean(isBlockProp) || String(className || '').includes('language-');
+      const a2 = pickSourceAttrs(rest as Record<string, unknown>);
       if (isBlock) {
         const language = className?.match(/language-(\S+)/)?.[1];
         if (language === 'mermaid') {
-          return <MermaidBlock source={String(children).replace(/\n$/, '')} />;
+          return <MermaidBlock source={String(children).replace(/\n$/, '')} {...a2} />;
         }
-        return <MarkdownCodeBlock className={className}>{children}</MarkdownCodeBlock>;
+        return (
+          <MarkdownCodeBlock className={className} {...a2}>
+            {children}
+          </MarkdownCodeBlock>
+        );
       }
       return (
         <code className={cn('rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]', className)} {...rest}>
@@ -328,11 +334,16 @@ export function Markdown({
   children,
   urlTransform,
   onHeadingsChange,
+  sourceFile,
+  sourceByteOffset = 0,
 }: {
   children: string;
   urlTransform?: (url: string) => string;
   /** 渲染完成后回调实际标题列表（与 DOM 锚点一致） */
   onHeadingsChange?: (items: TocItem[]) => void;
+  /** 相对工作空间根。不传就不盖 A2 属性（帮助文档等） */
+  sourceFile?: string;
+  sourceByteOffset?: number;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const onHeadingsChangeRef = useRef(onHeadingsChange);
@@ -345,9 +356,14 @@ export function Markdown({
   }, [children]);
 
   const renderKey = useMemo(
-    () => `${children.length}:${children.slice(0, 64)}`,
-    [children],
+    () => `${children.length}:${children.slice(0, 64)}:${sourceFile ?? ''}:${sourceByteOffset}`,
+    [children, sourceFile, sourceByteOffset],
   );
+
+  const rehypePlugins: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = useMemo(() => {
+    if (!sourceFile) return [rehypeRaw];
+    return [rehypeRaw, [rehypeSourcePos, { file: sourceFile, source: children, byteOffset: sourceByteOffset }]];
+  }, [sourceFile, children, sourceByteOffset]);
 
   return (
     <div ref={rootRef} className="markdown-body max-w-[76ch]">
@@ -359,7 +375,7 @@ export function Markdown({
         remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
         // MinerU 与 pandoc 时代的老产物会出裸 HTML 图/表，不是 ![]()；不接 rehype-raw 会被转义掉。
         // docx/odt/rtf/epub 现在走 anydoc_writer.mjs 出的是 ![]()，但**别把这个插件删了**——上面两条路还在。
-        rehypePlugins={[rehypeRaw]}
+        rehypePlugins={rehypePlugins}
         disallowedElements={['script', 'iframe', 'object', 'embed']}
         components={mdComponents}
         urlTransform={urlTransform}

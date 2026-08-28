@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { CodeBlock } from '@/components/ui/code-block';
+import { pickSourceAttrs } from '@/lib/sourceAnchor';
 
 /**
  * Markdown 围栏代码块 → @startist/code-block 适配层。
@@ -9,19 +10,22 @@ import { CodeBlock } from '@/components/ui/code-block';
 export function MarkdownCodeBlock({
   children,
   className,
+  ...props
 }: {
   children?: ReactNode;
   className?: string;
-}) {
+} & Record<string, unknown>) {
   const text = String(children ?? '').replace(/\n$/, '');
   const language = className?.replace(/language-/, '') || 'snippet';
+  const a2 = pickSourceAttrs(props);
 
   return (
-    <CodeBlock
-      code={text}
-      language={language === 'snippet' ? 'text' : language}
-      filename={language}
-      className="my-4"
-    />
+    <div className="my-4" {...a2}>
+      <CodeBlock
+        code={text}
+        language={language === 'snippet' ? 'text' : language}
+        filename={language}
+      />
+    </div>
   );
 }

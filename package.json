@@ -16,7 +16,8 @@
     "build:npm": "pnpm build && node scripts/build-npm-package.mjs",
     "pack:npm": "cd npm-package && npm pack",
     "smoke:npm": "node scripts/smoke-package.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:anchor": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/test-anchor.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
