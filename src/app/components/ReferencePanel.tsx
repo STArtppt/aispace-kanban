@@ -1,5 +1,7 @@
+import { CaptureBar } from '@/components/CaptureBar';
 import { EmptyState, SectionTitle } from '@/components/Primitives';
 import { ShowcaseCard, ShowcaseGrid } from '@/components/ShowcaseCard';
+import type { CaptureControl } from '@/hooks/useCaptureJob';
 import type { References } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -15,7 +17,13 @@ const SOURCE_LABEL: Record<string, string> = {
  * references 为 undefined = 服务进程比前端旧（改完代码没重启 serve）——
  * 这时只说明要重启，不白屏、不报错；原型 tab 不受影响。
  */
-export function ReferencePanel({ references }: { references?: References }) {
+export function ReferencePanel({
+  references,
+  capture,
+}: {
+  references?: References;
+  capture: CaptureControl;
+}) {
   if (!references) {
     return (
       <div className="flex flex-col gap-4">
@@ -38,6 +46,19 @@ export function ReferencePanel({ references }: { references?: References }) {
           <span className="text-xs text-muted-foreground">最近更新 {formatRelative(updatedAt)}</span>
         ) : null}
       </div>
+
+      <CaptureBar
+        plane="reference"
+        control={capture}
+        placeholder="贴一条公开可访问的网址，例如 https://example.com/pricing"
+        actionLabel="采集"
+        scopeNote={
+          // 相邻仓验证过的坑：登录后的页面抓下来是登录页，任务却显示成功。
+          // 我们不做检测（那会把登录态注入整条线拖进来），改成在入口旁说清楚。
+          '只适合不用登录就能看的页面 —— 需要登录的系统请用采集插件。'
+          + '采下来的是页面当时的全部内容，不做脱敏，别对着不该落盘的页面点采集。'
+        }
+      />
 
       {/* note 也承载单个 zip 的解压失败等信息，清单为空时照样要显示，否则那条错误就没人看得见 */}
       {note ? (

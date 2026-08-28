@@ -23,6 +23,8 @@ import {
   userTemplatesRoot,
   writeRuntimeInfo,
 } from './config.mjs';
+import { captureStatus, startCapture } from './capture.mjs';
+import { resolveInside } from './paths.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
@@ -108,18 +110,6 @@ async function readBody(req) {
   } catch {
     return {};
   }
-}
-
-/** 把相对路径解回工作空间内的绝对路径，挡掉 ../ 穿越。 */
-function resolveInside(root, relPath) {
-  const abs = path.resolve(root, relPath || '');
-  const base = path.resolve(root);
-  if (abs !== base && !abs.startsWith(base + path.sep)) {
-    const err = new Error('路径超出工作空间范围');
-    err.statusCode = 403;
-    throw err;
-  }
-  return abs;
 }
 
 /**
@@ -726,6 +716,54 @@ function rejectIfRemoteWrite(res, allowMutations) {
   return true;
 }
 
+/**
+ * **来源判定 —— 所有会写盘 / 起子进程的接口共用这一个函数。**
+ *
+ * 环回 ≠ 可信:服务端没有 token,`readBody` 连 Content-Type 都不看,
+ * 于是浏览器里**任意一个网页**都能用 `enctype="text/plain"` 的表单往 `127.0.0.1:<端口>` POST,
+ * body 拼成合法 JSON 就被收下 —— 这种表单提交不触发预检,`allowMutations` 那条闸拦不住它。
+ * 所以再加一道:请求表明自己来自别的站点时一律拒绝。
+ *
+ * 判据两条(浏览器一定会带其中之一,非浏览器客户端如 curl 两条都没有 → 放行):
+ *   1. `Sec-Fetch-Site` 存在且不是 same-origin / none → 拒(cross-site、same-site 都拒);
+ *   2. 没有该头但有 `Origin`,且 Origin 的 host 与本次请求的 Host 不同 → 拒。
+ *
+ * ⚠️ **要放行别的可信来源(下一个 change 的浏览器扩展经回环投递采集包,
+ * 来源是 `chrome-extension://<id>`,按上面两条会被一刀拒掉)时,
+ * 只在这个函数里加一条分支** —— 不要去改各个接口,那样迟早漏掉一个。
+ * 扩展实际带哪些头由那个 change 实测后定,这里不猜。
+ *
+ * 只读接口(扫描、读文件、SSE)不过这道闸:它们不改本机状态,
+ * 而只读分享(`--host`)场景本来就要能跨机器访问。
+ *
+ * @returns {boolean} true = 已经回了 403，调用方直接 return
+ */
+function rejectIfForeignOrigin(req, res) {
+  const site = req.headers['sec-fetch-site'];
+  if (site && site !== 'same-origin' && site !== 'none') {
+    json(res, 403, {
+      error: `这个请求来自其它站点（Sec-Fetch-Site: ${site}），看板不接受跨站的写操作。`
+        + '请在看板自己的页面上操作。',
+    });
+    return true;
+  }
+  if (!site && req.headers.origin) {
+    let originHost = '';
+    try {
+      originHost = new URL(req.headers.origin).host;
+    } catch {
+      originHost = '';
+    }
+    if (originHost !== (req.headers.host || '')) {
+      json(res, 403, {
+        error: `这个请求的来源（${req.headers.origin}）不是看板自己，已拒绝。请在看板自己的页面上操作。`,
+      });
+      return true;
+    }
+  }
+  return false;
+}
+
 async function handleApi(req, res, url, { allowMutations = true } = {}) {
   const segments = url.pathname.split('/').filter(Boolean).slice(1).map(decodeSegment); // 去掉 'api'
   const [head, id, action] = segments;
@@ -748,6 +786,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     }
     if (req.method === 'POST') {
       if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
       const body = await readBody(req);
       const project = addProject(body.root, body.name);
       return json(res, 200, project);
@@ -757,10 +796,12 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   if (head === 'projects' && id && !action) {
     if (req.method === 'DELETE') {
       if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
       return json(res, 200, { removed: removeProject(id) });
     }
     if (req.method === 'PATCH') {
       if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
       const body = await readBody(req);
       return json(res, 200, updateProject(id, { root: body.root, name: body.name }));
     }
@@ -810,6 +851,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   // 新建工作空间：调共享 init_workspace.py 铺选中的模板，建完自动登记
   if (head === 'workspaces' && req.method === 'POST') {
     if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
     const body = await readBody(req);
     const name = (body.name || '').trim();
     const target = (body.path || '').trim();
@@ -980,6 +1022,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   if (head === 'projects' && id && action === 'reveal' && req.method === 'POST') {
     // 起系统进程只在服务所在机器上有意义；远程分享场景禁掉，避免被当成任意 open 入口
     if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     const abs = resolveInside(project.root, body.path);
@@ -996,6 +1039,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     }
     if (req.method === 'POST') {
       if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
       const body = await readBody(req);
       const started = await startIngest(project, body.path);
       return json(res, 200, started);
@@ -1005,9 +1049,27 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   // 往 input/.ingestignore 追加一行：用户在待转换列表点「忽略」时走这里
   if (head === 'projects' && id && action === 'ignore' && req.method === 'POST') {
     if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, addIgnore(project, body.path));
+  }
+
+  // 贴 URL 采集 / 导入：看板唯一往工作空间写文件的接口。
+  // 目标平面由请求体的 plane 决定（reference / prototype），**写路径始终由服务端生成** ——
+  // 请求体里夹带的任何路径字段都不参与（见 capture.mjs 的 writeCaptureDir）。
+  if (head === 'projects' && id && action === 'capture') {
+    const project = requireProject(id);
+    if (req.method === 'GET') {
+      return json(res, 200, captureStatus(project.id));
+    }
+    if (req.method === 'POST') {
+      // 先环回闸，再来源闸 —— 两条都过了才起子进程
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      const body = await readBody(req);
+      return json(res, 200, startCapture(project, body.plane, body.url));
+    }
   }
 
   if (head === 'projects' && id && action === 'events') {

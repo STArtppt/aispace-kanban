@@ -1,5 +1,7 @@
+import { CaptureBar } from '@/components/CaptureBar';
 import { EmptyState, SectionTitle } from '@/components/Primitives';
 import { ShowcaseCard, ShowcaseGrid } from '@/components/ShowcaseCard';
+import type { CaptureControl } from '@/hooks/useCaptureJob';
 import type { PrototypeItem, Prototypes } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -19,7 +21,13 @@ function kindLabel(kind?: PrototypeItem['kind']) {
  * 两种形态点击行为不同：bundle 开看板伺服的 url，url 形态直接开外部 target。
  * kind 缺失（旧服务进程）时当 bundle 处理，退回改动前的行为。
  */
-export function PrototypePanel({ prototypes }: { prototypes: Prototypes }) {
+export function PrototypePanel({
+  prototypes,
+  capture,
+}: {
+  prototypes: Prototypes;
+  capture: CaptureControl;
+}) {
   const { items, note, updatedAt, legacyDir } = prototypes;
 
   return (
@@ -30,6 +38,22 @@ export function PrototypePanel({ prototypes }: { prototypes: Prototypes }) {
           <span className="text-xs text-muted-foreground">最近更新 {formatRelative(updatedAt)}</span>
         ) : null}
       </div>
+
+      <CaptureBar
+        plane="prototype"
+        control={capture}
+        placeholder="贴一条云端发布链接，例如 https://…/p/abc"
+        actionLabel="导入"
+        scopeNote={
+          // 这里收的不是文件：云端原型是 SPA，抓下来既失真又没意义，点它就该开原站
+          <>
+            这里收的是<strong className="font-medium text-foreground">云端发布链接</strong>
+            （axhub-make 发布、figma make 的 publish / share）—— 只存链接和一张封面，
+            点卡片打开的是原站，本地不留页面副本。本地的 HTML 包请直接放进{' '}
+            <code className="font-mono">visualization/prototypes/</code>。
+          </>
+        }
+      />
 
       {/* note 也承载单个 zip 的解压失败等信息，清单为空时照样要显示，否则那条错误就没人看得见 */}
       {note ? (

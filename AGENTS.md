@@ -36,8 +36,17 @@
      用户在列表点「忽略此文件 / 忽略此目录」才写,只追加一行模式,不改原件。
      不经过 ingest.py:这不是转换,旧工作空间的脚本也没有写入入口;
      这份文件是看板和 ingest.py 共用的约定,改动会被 `input/` 的 SSE 捕获、两边同时生效
-2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/http.mjs`),挡 `../` 穿越。
-   新增任何接收路径参数的接口,第一件事就是过它。
+   - 采集视觉材料时写 `visualization/`(`src/server/capture.mjs` 的 `writeCaptureDir`)——
+     **这是第二条窄例外,范围就是下面六条,越界即为 bug**:
+     ① 只允许写 `<工作空间根>/visualization/references/<slug>/` 与
+     `visualization/prototypes/<slug>/`;`input/` `output/` `project.yaml` 仍然只读;
+     ② 必须用户在看板上贴 URL 明确发起,没有后台自动抓、没有定时任务;
+     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`);
+     ④ 路径必须过 `resolveInside()`,slug 由服务端生成并安全化,不接受客户端传来的任何路径片段;
+     ⑤ **只新建,不覆盖、不删除** —— 同一 URL 再采生成新 slug,删除由用户自己在文件系统里做;
+     ⑥ 后续别的写入来源(浏览器插件投递等)复用同一个收口,**不得扩大它的目录范围**
+2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
+   新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
 4. **非环回监听时禁写。** `--host` 不是环回地址时,所有会起子进程 / 写注册表的接口一律 403
    (`createServer({ allowMutations })`,`bin/cli.mjs` 按 `LOOPBACK` 传入)。
@@ -74,6 +83,8 @@ aispace-kanban/
 │   │   ├── frontmatter.mjs #   frontmatter / 标题 / 字数
 │   │   ├── prototypes.mjs  #   扫 visualization/prototypes/ → 原型清单(index.html / zip / url 形态)
 │   │   ├── references.mjs  #   扫 visualization/references/ → 参考清单(子目录 index.html)
+│   │   ├── capture.mjs     #   ★ 唯一的工作空间写入收口:贴 URL 采集 → visualization/ 之下
+│   │   ├── paths.mjs       #   ★ resolveInside 的唯一实现(不变量 2 的载体)
 │   │   └── platform.mjs    #   ★ 三平台差异只写在这:开浏览器 / 定位文件 / 找 python
 │   └── app/                # 平面 3 · 前端 SPA(TS,`@/` 指向这里)
 │       ├── App.tsx         #   外壳:侧栏 + 四视图路由 + 主题
@@ -253,9 +264,11 @@ aispace-kanban/
 - **产物的写法约束不写在这里**,写在 [`openspec/config.yaml`](openspec/config.yaml) 的
   `context` / `rules`(中文书写、平面影响面、只读红线、验收闸、脱敏清单),
   它会被自动注入给 AI。**要改约束就改那个文件**,别在单个 change 里重复一遍。
-- `/opsx:*` 用不了时(`.claude/` 丢了)跑 `openspec init --tools claude` 重建 ——
+- `/opsx:*` 用不了时(`.claude/` 丢了)跑 `openspec init --tools claude,pi` 重建 ——
   **不是** `openspec update`,tool 注册记录一并丢失时它只报 `No configured tools found` 就退出。
-  生成的 `.claude/commands/opsx/` 与 `.claude/skills/openspec-*/` **入库但勿手改**,重建会覆盖。
+  Claude Code 生成 `.claude/commands/opsx/`(命令带冒号 `/opsx:propose`),pi 生成 `.pi/prompts/opsx-*.md`
+  (pi 不认冒号,命令是连字符 `/opsx-propose`,且项目须已信任才会加载项目级模板)。
+  生成的 `.claude/commands/opsx/`、`.claude/skills/openspec-*/` 与 `.pi/prompts/` **入库但勿手改**,重建会覆盖。
 
 ### 6.1 公开仓库脱敏红线
 

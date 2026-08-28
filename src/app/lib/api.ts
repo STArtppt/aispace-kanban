@@ -326,6 +326,45 @@ export interface IngestJob {
 }
 
 /**
+ * POST/GET /api/projects/:id/capture 的采集任务状态。
+ * 与 IngestJob 同构：一个工作空间同一时刻至多一个进行中的采集。
+ * idle = 这个服务进程里还没采过；running 时前端轮询；done/error 时展示 message。
+ */
+export type CaptureStatus = 'idle' | 'running' | 'done' | 'error';
+
+/** 采集目标平面：参考收整页 + 三张截图，原型只收链接 + 一张封面。 */
+export type CapturePlane = 'reference' | 'prototype';
+
+export interface CaptureJob {
+  status: CaptureStatus;
+  /** 本轮采的是哪一边。idle 时为空串 */
+  plane: CapturePlane | '';
+  /** 用户贴的地址（服务端已规范化） */
+  target: string;
+  /**
+   * 三态各自的人话：running 是「正在采…」，done 是「已收进 <目录>/」，
+   * error 是**工具给的原因原样带出来**。前端直接显示它，不要自己写「操作失败请重试」。
+   */
+  message: string;
+  startedAt?: string;
+  finishedAt?: string;
+  /** 成功时服务端生成的目录名（同一 URL 采第二次是 `<slug>-2`，不覆盖旧的） */
+  slug?: string;
+  /** 成功时的工作空间内相对路径，如 `visualization/references/某页` */
+  sourcePath?: string;
+  /**
+   * 这次少了哪些档位。`screenshots` = 参考没出截图，`cover` = 原型没出封面。
+   * **非空不等于失败** —— status 仍是 done，卡片照常出现，只是少了图。
+   */
+  degraded?: string[];
+  /**
+   * 降级的人话说明，缺工具时**带可直接复制的安装命令**。
+   * 它跟着 done 一起显示，用中性语气，不要走 orange —— orange 只给真正的失败。
+   */
+  degradedHint?: string;
+}
+
+/**
  * GET /api/projects/:id/verify-source 的结果：重算原件 sha256 跟产物记的比。
  * 'unknown' = 比不了（没记来源 / 没记 sha256 / 来源是目录），reason 里是中文原因，
  * 这种情况不要拿扫描的 mtime 结论冒充哈希结论。
@@ -443,6 +482,20 @@ export const api = {
    * already = 清单里已有这条（或更宽的目录）时没再追加。
    * 旧服务进程没有这个接口，request 会带上「重启 serve」的提示。
    */
+  /**
+   * 贴 URL 采集（plane: 'reference'）或导入云端原型（plane: 'prototype'）。
+   * 立刻返回 running，进度用 captureStatus 轮询；落盘由 visualization/ 的 SSE 捕获，清单自己刷新。
+   *
+   * **写路径完全由服务端决定** —— 这里只传 plane 和 url，别指望能指定目录。
+   * 已有采集在进行中时返回 409，把它的 error 原样显示即可（那句话说清了在采哪个地址）。
+   * 旧服务进程没有这个接口（404），调用方要兜住并提示重启看板服务。
+   */
+  startCapture: (id: string, plane: CapturePlane, url: string) =>
+    request<CaptureJob>(`/api/projects/${id}/capture`, {
+      method: 'POST',
+      body: JSON.stringify({ plane, url }),
+    }),
+  captureStatus: (id: string) => request<CaptureJob>(`/api/projects/${id}/capture`),
   addIgnore: (id: string, targetPath: string) =>
     request<{ ok: boolean; pattern: string; already?: boolean }>(`/api/projects/${id}/ignore`, {
       method: 'POST',

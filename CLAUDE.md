@@ -14,7 +14,9 @@
 - **改完必须**:`pnpm typecheck` + `pnpm build` 都绿。
   另外 `src/server/**` 与 `bin/cli.mjs` **没有任何静态检查**,改了必须重启 `pnpm serve` / `pnpm dev`
   并在浏览器点一遍受影响视图 —— 光看类型检查过了不算做完。
-- **红线**:看板对工作空间**只读**;工作空间内路径必须过 `resolveInside()`。
+- **红线**:看板对工作空间**只读**,只有 AGENTS.md 不变量 1 列的那几条窄例外能写
+  (`visualization/` 采集是其中之一,范围以那份清单为准,**别在这里复制一份**);
+  工作空间内路径必须过 `resolveInside()`。
 - **配色**:黑白灰为主,orange(`--destructive`)只用于"需要注意";令牌只写在
   `src/app/styles/globals.css`,组件里不硬编码色值。
 

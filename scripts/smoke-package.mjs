@@ -461,6 +461,155 @@ try {
   if (escShot.status !== 403) die(`参考截图路径的穿越没被挡住（返回 ${escShot.status}，应该是 403）`);
   ok('参考与原型伺服都落进不透明源，查看器壳页可用，路径穿越被挡住');
 
+  // ── 7e 跨站防护：浏览器里任意一个网页都能往 127.0.0.1 POST，环回 ≠ 可信 ────────
+  // 覆盖全部五条会写盘 / 起子进程的接口（新的采集 + 既有四条）。
+  // 这条要是漏了，恶意网页能用 enctype=text/plain 的表单静默触发本机操作。
+  const crossSite = [
+    ['POST', '/api/projects'],
+    ['POST', '/api/workspaces'],
+    [`POST`, `/api/projects/${created.id}/ingest`],
+    [`POST`, `/api/projects/${created.id}/ignore`],
+    [`POST`, `/api/projects/${created.id}/capture`],
+  ];
+  for (const [method, endpoint] of crossSite) {
+    const res = await fetch(`${base}${endpoint}`, {
+      method,
+      headers: { 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' },
+      body: JSON.stringify({}),
+    });
+    if (res.status !== 403) die(`跨站 ${method} ${endpoint} 没被拒（返回 ${res.status}，应该是 403）`);
+  }
+  // 没有 Sec-Fetch-Site 但 Origin 不是本机服务：同样要拒
+  const foreignOrigin = await fetch(`${base}/api/projects/${created.id}/capture`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+    body: JSON.stringify({ plane: 'reference', url: 'https://example.com/' }),
+  });
+  if (foreignOrigin.status !== 403) die(`外站 Origin 的采集请求没被拒（${foreignOrigin.status}）`);
+  // 只读接口不受这条影响 —— 只读分享本来就要能跨机器访问
+  const roCross = await fetch(`${base}/api/projects/${created.id}/scan`, {
+    headers: { 'sec-fetch-site': 'cross-site' },
+  });
+  if (roCross.status !== 200) die(`只读扫描被跨站校验误伤了（${roCross.status}）`);
+  ok('五条写接口都拒跨站请求，只读接口不受影响');
+
+  // ── 7f 采集：缺 single-file 时失败且带安装命令，写路径完全由服务端定 ──────────
+  // 冒烟机器上通常没有 single-file（它不是看板的依赖，这正是要验的降级面）。
+  const capBefore = () => {
+    const listDir = (d) => (fs.existsSync(d) ? fs.readdirSync(d).sort().join(',') : '(无)');
+    return {
+      input: listDir(path.join(wsPath, 'input')),
+      output: listDir(path.join(wsPath, 'output', 'docs')),
+      yaml: fs.existsSync(path.join(wsPath, 'project.yaml'))
+        ? fs.readFileSync(path.join(wsPath, 'project.yaml'), 'utf8')
+        : '',
+    };
+  };
+  const snapshot = capBefore();
+
+  // 请求体里夹带路径字段：必须被完全忽略，只写服务端自己生成的 slug 目录
+  const capStarted = await fetch(`${base}/api/projects/${created.id}/capture`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      plane: 'reference',
+      url: 'https://example.com/',
+      slug: '../../output/docs',
+      path: '../../output/docs',
+    }),
+  }).then((r) => r.json());
+  if (capStarted.status !== 'running') die(`发起采集没返回 running：${JSON.stringify(capStarted)}`);
+
+  const finished = await waitFor(async () => {
+    const job = await fetch(`${base}/api/projects/${created.id}/capture`).then((r) => r.json());
+    return job.status === 'running' ? null : job;
+  }, { timeout: 180000, interval: 1000 });
+
+  const hasSingleFile = finished.status !== 'error';
+  if (!hasSingleFile) {
+    // 没装 single-file：必须失败、必须给出安装命令、必须不写盘
+    if (!String(finished.message).includes('single-file-cli')) {
+      die('缺 single-file 的失败说明里没有安装命令', finished.message);
+    }
+    const refRoot = path.join(visRoot, 'references');
+    const after = fs.readdirSync(refRoot).sort();
+    if (after.join(',') !== ['bar.html', 'foo'].join(',')) {
+      die('采集失败却在 references/ 下留了东西', after.join(','));
+    }
+    ok('没装 single-file：采集失败、说明带安装命令、不留半成品目录');
+  } else {
+    // 装了 single-file：产物必须落在服务端生成的 slug 下，绝不在 output/
+    if (!String(finished.sourcePath || '').startsWith('visualization/references/')) {
+      die(`采集写到了别处：${finished.sourcePath}`, JSON.stringify(finished));
+    }
+    if (String(finished.sourcePath).includes('..')) die(`slug 里带了穿越片段：${finished.sourcePath}`);
+    ok(`装了 single-file：采集落在 ${finished.sourcePath}，请求体里的路径字段被忽略`);
+  }
+
+  // 无论成败，input/ output/ project.yaml 都必须一字未动
+  const nowSnap = capBefore();
+  for (const key of ['input', 'output', 'yaml']) {
+    if (nowSnap[key] !== snapshot[key]) die(`采集改动了 ${key} —— 只读红线被打破`, `${snapshot[key]}\n→\n${nowSnap[key]}`);
+  }
+  ok('采集前后 input/ output/ project.yaml 一字未动');
+
+  // ── 7g 原型 URL 导入：只写 meta.json，绝不留 HTML 副本 ───────────────────────
+  const protoJob = await fetch(`${base}/api/projects/${created.id}/capture`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ plane: 'prototype', url: 'https://example.com/p/smoke' }),
+  }).then((r) => r.json());
+  if (protoJob.status !== 'running') die(`发起原型导入没返回 running：${JSON.stringify(protoJob)}`);
+  const protoDone = await waitFor(async () => {
+    const job = await fetch(`${base}/api/projects/${created.id}/capture`).then((r) => r.json());
+    return job.status === 'running' ? null : job;
+  }, { timeout: 180000, interval: 1000 });
+  if (protoDone.status !== 'done') die(`原型导入没成功（它不该依赖 single-file）：${protoDone.message}`);
+  const protoDir = path.join(wsPath, protoDone.sourcePath);
+  if (fs.existsSync(path.join(protoDir, 'index.html'))) {
+    die('原型 URL 导入把页面本体抓下来了 —— 那种形态本地不该有 HTML 副本');
+  }
+  const protoMeta = JSON.parse(fs.readFileSync(path.join(protoDir, 'meta.json'), 'utf8'));
+  if (protoMeta.kind !== 'url' || protoMeta.target !== 'https://example.com/p/smoke') {
+    die('原型 meta.json 形状不对', JSON.stringify(protoMeta));
+  }
+  if (protoMeta.source !== 'url-capture') die(`原型 meta.json 的 source 不是 url-capture：${protoMeta.source}`);
+  ok('原型 URL 导入只写 meta.json（kind:url、target 原样），目录里没有 index.html');
+
+  // ── 7h 非环回监听时采集 403，工作空间一个字节都不许多 ────────────────────────
+  // --host 是给评审只读分享用的，不能变成局域网里的可执行入口。
+  {
+    const hostPort = await freePort();
+    const hostServer = spawn(
+      process.execPath,
+      [path.join(installed, 'bin', 'cli.mjs'), 'serve', '--no-open', '--host', '0.0.0.0', '--port', String(hostPort)],
+      {
+        cwd: work,
+        env: { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+    try {
+      const hostBase = `http://127.0.0.1:${hostPort}`;
+      await waitFor(async () => (await fetch(`${hostBase}/api/health`)).ok);
+      const listBefore = fs.readdirSync(path.join(visRoot, 'references')).sort().join(',');
+      const denied = await fetch(`${hostBase}/api/projects/${created.id}/capture`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ plane: 'reference', url: 'https://example.com/' }),
+      });
+      if (denied.status !== 403) die(`非环回监听时采集没被拒（${denied.status}，应该是 403）`);
+      // 只读扫描仍要能用，否则只读分享就废了
+      const roScan = await fetch(`${hostBase}/api/projects/${created.id}/scan`);
+      if (roScan.status !== 200) die(`非环回时只读扫描也被拒了（${roScan.status}）`);
+      const listAfter = fs.readdirSync(path.join(visRoot, 'references')).sort().join(',');
+      if (listAfter !== listBefore) die('非环回采集被拒了却还是写了盘', `${listBefore} → ${listAfter}`);
+      ok('非环回监听：采集 403、工作空间没被写入，只读扫描照常');
+    } finally {
+      hostServer.kill();
+    }
+  }
+
   // ── 8 注册表没写到真 HOME ─────────────────────────────────────────────────
   if (!fs.existsSync(path.join(fakeHome, '.pmwork', 'dashboard', 'projects.json'))) {
     die('注册表没写进隔离目录 —— 冒烟可能污染了你自己的看板，检查 HOME 传递');

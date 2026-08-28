@@ -91,6 +91,23 @@ input/raw/站点数据/闸门底坎库容.xlsx
 `references/` 放收下来的别人的页面（一份参考一个目录，入口叫 `index.html`），
 `prototypes/` 放工具产出的、**已构建好**的可点击 HTML 包，或用一份 `meta.json` 记一条云端发布链接。
 
+**这两样都能在看板上贴 URL 收进来**：参考 tab 贴一个公开可访问的网址，
+原型 tab 贴一条云端发布链接（axhub-make 发布、figma make 的 publish / share）。
+参考会抓下整页 + 三张截图；原型只存链接和一张封面，点开的是原站、本地不留副本。
+
+贴 URL 采集要靠本机的两个**独立工具**，它们不随看板一起安装，看板只是调用它们：
+
+| 工具 | 干什么 | 装不装 | 装法 |
+| --- | --- | --- | --- |
+| `single-file-cli` | 把整页抓成一个自包含 HTML | **参考采集必需** | `npm i -g single-file-cli` |
+| `playwright` | 出截图 / 封面 | 可选，**缺了只是没有图** | `npm i -g playwright && playwright install chromium` |
+
+缺 `single-file` 时参考采集会失败并告诉你装什么；缺 `playwright` 时任务照样成功，
+只是没有截图 / 封面，界面上会写清怎么补。
+
+> 采集只适合**不用登录就能看的页面**，而且采下来的是页面当时的**全部内容、不做脱敏** ——
+> 别对着不该落盘的页面点采集。
+
 ---
 
 ## 常见问题
@@ -103,5 +120,7 @@ input/raw/站点数据/闸门底坎库容.xlsx
 **docx、PDF 在网页里不渲染？** 那是原件。点「用默认程序打开」交给系统。
 要在网页里读，读它在 `converted/` 里的产物。
 
-**看板会不会改我的文件？** 不会。看板对工作空间**只读**——写文件的只有你、AI，
-以及你亲手点的那次转换（跑的是工作空间自己的 `scripts/ingest.py`）。
+**看板会不会改我的文件？** 基本不会。看板对工作空间**只读**——写文件的只有你、AI，
+以及两件你亲手点的事：那次转换（跑的是工作空间自己的 `scripts/ingest.py`），
+和贴 URL 采集（只往 `visualization/references/` 与 `visualization/prototypes/` 下**新建**目录，
+不覆盖、不删除任何已有内容；`input/` `output/` `project.yaml` 始终只读）。

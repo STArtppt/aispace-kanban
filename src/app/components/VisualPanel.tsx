@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PrototypePanel } from '@/components/PrototypePanel';
 import { ReferencePanel } from '@/components/ReferencePanel';
+import { useCaptureJob } from '@/hooks/useCaptureJob';
 import type { Scan } from '@/lib/api';
 
 type VisualTab = 'reference' | 'prototype';
@@ -24,6 +25,9 @@ function readTab(): VisualTab {
  */
 export function VisualPanel({ scan }: { scan: Scan }) {
   const [tab, setTab] = useState<VisualTab>(readTab);
+  // 采集任务的状态提到这一层：服务端一个工作空间只允许一轮，
+  // 两个 tab 各存一份的话第二处会撞 409 却显示成「没反应」
+  const capture = useCaptureJob(scan.project.id);
 
   const select = (value: VisualTab) => {
     setTab(value);
@@ -45,10 +49,10 @@ export function VisualPanel({ scan }: { scan: Scan }) {
         <TabsTrigger value="prototype">原型</TabsTrigger>
       </TabsList>
       <TabsContent value="reference">
-        <ReferencePanel references={scan.references} />
+        <ReferencePanel references={scan.references} capture={capture} />
       </TabsContent>
       <TabsContent value="prototype">
-        <PrototypePanel prototypes={scan.prototypes} />
+        <PrototypePanel prototypes={scan.prototypes} capture={capture} />
       </TabsContent>
     </Tabs>
   );

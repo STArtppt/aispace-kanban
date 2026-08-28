@@ -125,6 +125,19 @@ for (const file of [...walk(path.join(OUT, 'src', 'server')), path.join(OUT, 'bi
 // 不显式补上，发出去的包就没有这个依赖，装包的人转 PDF 会悄悄退回兜底。
 for (const name of ['@firecrawl/anydoc']) used.add(name);
 
+/**
+ * 反过来：**故意不进 dependencies** 的运行时可选包。
+ *
+ * `src/server/capture.mjs` 用动态 `import('playwright')` 探测截图能力，探测失败就整体降级
+ * （参考只出 index.html，任务仍算成功）。把它写进 dependencies 会让每个装看板的人
+ * 多下一个 Chromium —— 为一个可选功能付这个价钱不划算，所以这里显式豁免。
+ *
+ * 往这个名单里加东西前先想清楚：**代码必须真的兜住它缺席的情况**，
+ * 否则装包的人一调到那条路径就是 ERR_MODULE_NOT_FOUND，而这道闸本来就是拦这个的。
+ * （`single-file` 不在这里 —— 它是 `spawn` 的一个字符串，压根不进 import 图。）
+ */
+for (const name of ['playwright']) used.delete(name);
+
 const dependencies = {};
 const unknown = [];
 for (const name of [...used].sort()) {
