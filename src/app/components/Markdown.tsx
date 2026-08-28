@@ -353,7 +353,10 @@ export function Markdown({
     <div ref={rootRef} className="markdown-body max-w-[76ch]">
       <ReactMarkdown
         key={renderKey}
-        remarkPlugins={[remarkGfm]}
+        // 关掉单波浪删除线：中文文档里「6~8 月」「0~2 MW」这类区间写法太常见，
+        // 同一段出现两个 `~` 就会被 remark-gfm 默认的 singleTilde 配对成删除线。
+        // 成对 `~~删除~~` 不受影响；全角 `～` 本就不会触发（micromark 只认 ASCII ~）。
+        remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
         // MinerU 与 pandoc 时代的老产物会出裸 HTML 图/表，不是 ![]()；不接 rehype-raw 会被转义掉。
         // docx/odt/rtf/epub 现在走 anydoc_writer.mjs 出的是 ![]()，但**别把这个插件删了**——上面两条路还在。
         rehypePlugins={[rehypeRaw]}

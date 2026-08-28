@@ -34,7 +34,8 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 服务端改动"没生效"且不报错 | **`.mjs` 不参与类型检查**,写错的属性名会静默返回 `undefined` | 在服务端 `console.log` 出真实对象,别靠推断 |
 | 只有**某些**工作空间点进去全报"没有登记过的项目" | 那几个的 `id` 里有中文/空格 —— URL 路径段是百分号编码的,服务端忘了解码 | `curl "localhost:7788/api/projects/中文名/scan"` 对比 ASCII 名的;`handleApi` 的 `decodeSegment` 就是修这个的 |
 | 明明已经转过的资料还挂在「待转换」 | 覆盖判据只认**产物里记着的来源** —— 没有 `.md` 产物的类型(图片)得另有出处:`assets/<组>/_manifest.md` 的 `sources` | `curl` 看 `input.pending`;再看该 raw 文件有没有出现在某份 frontmatter 的 `source` / `sources` 里。旧版工作空间的 `scripts/ingest.py` 不写这份清单,重跑一次即可 |
-| markdown 正文图片空白 / 页面上露出裸 `<img>` | 出裸 HTML 图的产物;docx/odt/rtf/epub 现在走 `anydoc_writer.mjs`,出的是 `![]()`,但 MinerU 仍可能出 HTML,老产物也可能是 pandoc 时代留下的 | 打开 converted `.md` 看是 `<img` 还是 `![](`;`Markdown.tsx` 必须接 `rehype-raw`(**别删**,MinerU 那条路还要用) |
+| markdown 正文图片空白 / 页面上露出裸 `<img>` | 出裸 HTML 图的产物；docx/odt/rtf/epub 现在走 `anydoc_writer.mjs`，出的是 `![]()`，但 MinerU 仍可能出 HTML，老产物也可能是 pandoc 时代留下的 | 打开 converted `.md` 看是 `<img` 还是 `![](`；`Markdown.tsx` 必须接 `rehype-raw`（**别删**，MinerU 那条路还要用） |
+| markdown 预览凭空出删除线（如「6~8 月」到「0~2 MW」整段被划掉） | 同段里有两个**单** ASCII `~` 被配对 —— remark-gfm 默认 `singleTilde: true`（GFM 兼容）；全角 `～` 并不触发（micromark 只认 126） | `Markdown.tsx` 已配 `[remarkGfm, { singleTilde: false }]`；存疑时把段落用同管线喂给 node 里的 react-markdown，数 `<del>` 个数 |
 | 装成 npm 包后才出的毛病(白屏 / 新建工作空间失败) | 包里缺东西:`dist/` 没构建、依赖没进 `dependencies`、模板文件被 npm 打包规则吃掉 | `pnpm smoke:npm` —— 它在干净目录装上真跑一遍,比在源码仓怎么试都准 |
 | CI `npm publish` 422，报 `repository.url` 是 `""` / provenance 校验失败 | 发出去的 `package.json` 缺 `repository`，或 URL 不是签发仓库 | 看 `scripts/build-npm-package.mjs` 写进 `npm-package/package.json` 的 `repository.url`，必须是 `https://github.com/STArtppt/aispace-kanban`（不能拿 origin / 内网 Gitea 地址） |
 | 点开预览后白屏，控制台 `Rendered more/fewer hooks` 或 `change in the order of Hooks` | 同一组件实例里有 `if (...) return` **之后**又调了 `useMemo` / `useState` / `useEffect`（典型：`TableReader` 单 sheet 提前返回、切到多 sheet 才补 hook） | 看堆栈里的组件名，把所有 hooks 挪到任何 early return 之前；切换条目时组件常被复用、不会自动卸载 |
