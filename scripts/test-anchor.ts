@@ -68,8 +68,10 @@ function htmlToPlain(html: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
-    // React 转义撇号写的是十六进制 &#x27;,不是十进制 &#39; —— 只认十进制的话,
-    // 带撇号的片段(spawn('open', ...))重渲染后就成了字面 &#x27;,对不回渲染文本
+    // 跨行内代码时源码切片里的反引号会切开渲染文本,covers(slice, needle) 对不上,
+    // 只能靠重渲染。renderToStaticMarkup 把撇号写成 &#x27;(十六进制),不是 &#39;:
+    // 只认十进制的话,AGENTS.md 里 spawn('open', ...) 那段会留下字面 &#x27;,
+    // 判定器就把「切片带反引号」误判成真实锚点错误,随机压测因此 flaky。
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
     .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
     .replace(/&amp;/g, '&');
@@ -173,6 +175,8 @@ const FIXTURE = [
   '',
   '跨块的第二段。',
   '',
+  "别在别处再写第二次 `spawn('open', ...)`，那是本仓踩过的坑。",
+  '',
 ].join('\n');
 
 type Case = {
@@ -193,6 +197,10 @@ const CASES: Case[] = [
   { name: '跨列表项', quote: '项甲\n列表项乙' },
   { name: '代码块', quote: 'const x = 1;' },
   { name: '跨块', quote: '第一段。\n跨块的第二' },
+  // 选区跨进带撇号的行内代码:源码切片里的反引号让原文对不上,必须走重渲染;
+  // 重渲染又会把撇号写成 &#x27;,htmlToPlain 解不开就会假报锚点错误。
+  { name: '行内代码含撇号', quote: "spawn('open', ...)" },
+  { name: '跨行内代码含撇号', quote: "二次 spawn('open'", sourceMustInclude: "`spawn('open', ...)`" },
 ];
 
 function runCases(source: string, cases: Case[]): void {
@@ -239,8 +247,10 @@ function stress(source: string, rounds: number): { ok: number; unsupported: numb
       continue;
     }
     if (!sliceCoversQuote(source, result)) {
+      const slice = sliceUtf8(source, result.start, result.end);
+      const rendered = htmlToPlain(renderPipeline(slice, false));
       errors.push(
-        `选区 ${JSON.stringify(quote.slice(0, 40))} → ${result.start},${result.end} 切片 ${JSON.stringify(sliceUtf8(source, result.start, result.end).slice(0, 80))}`,
+        `选区 ${JSON.stringify(quote.slice(0, 40))} → ${result.start},${result.end} 切片 ${JSON.stringify(slice.slice(0, 80))} 重渲染 ${JSON.stringify(rendered.slice(0, 80))}`,
       );
       continue;
     }
@@ -260,7 +270,7 @@ function main() {
   assert(/data-source-range="\d+,\d+"/.test(html), `缺 data-source-range：${html}`);
   console.log('  ok  元素上同时有 data-source-file 与 data-source-range');
 
-  console.log('2. 十一种选区');
+  console.log('2. 选区用例');
   runCases(FIXTURE, CASES);
 
   console.log('3. 元素拾取：每个带区间的元素');
