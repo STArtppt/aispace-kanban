@@ -576,3 +576,28 @@ export function domRangeFromBytes(root: Element, start: number, end: number): Ra
   }
   return range;
 }
+
+/**
+ * 元素拾取的锚点：直接用这个元素自己声明的 A2 区间。
+ *
+ * 与选区锚点（`anchorFromDomSelection`）互为补充：选区精确到字符但要人先划一遍，
+ * 拾取一点就是一整块、切出来的源码天然是完整的语法单元（段落 / 表格行 / 列表项）。
+ * 元素自己没声明区间时（裸 HTML 片段里的节点）退到最近的、声明过的祖先，
+ * 与选区那条路上的兜底同一套规则。
+ */
+export function anchorFromElement(root: Element, el: Element): AnchorResult {
+  if (el === root || !root.contains(el)) return { ok: false, reason: 'unsupported' };
+  const ancestors = ancestorsFromElement(el, root);
+  const range = a2FromElement(el)?.range ?? nearestRange(ancestors);
+  if (!range || range.end <= range.start) return { ok: false, reason: 'unsupported' };
+  // 引用给的是渲染后的可见文字：换行与缩进在提示词里没有意义，压成单空格
+  const quote = (el.textContent || '').replace(/\s+/g, ' ').trim();
+  if (!quote) return { ok: false, reason: 'empty' };
+  return {
+    ok: true,
+    start: range.start,
+    end: range.end,
+    quote,
+    structure: inferStructure(ancestors, ancestors),
+  };
+}

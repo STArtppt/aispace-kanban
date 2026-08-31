@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildAnnotationPrompt } from '../src/app/lib/annotationPrompt.ts';
 import {
+  a2FromProps,
   anchorFromLeaves,
   countTextWrapperSpans,
   findQuoteRange,
@@ -27,7 +28,13 @@ import {
 const FILE = 'output/方案.md';
 const remarkPlugins = [[remarkGfm, { singleTilde: false }]] as const;
 
-type HastNode = { type: string; children?: HastNode[]; value?: string };
+type HastNode = {
+  type: string;
+  tagName?: string;
+  properties?: Record<string, unknown>;
+  children?: HastNode[];
+  value?: string;
+};
 
 function capturePlugin(box: { tree: HastNode | null }) {
   return (tree: HastNode) => {
@@ -114,6 +121,34 @@ function pipelineLeaves(source: string): { leaves: ReturnType<typeof hastLeaves>
 
 function assert(cond: unknown, message: string): asserts cond {
   if (!cond) throw new Error(message);
+}
+
+function hastText(node: HastNode): string {
+  if (node.type === 'text') return node.value || '';
+  return (node.children || []).map(hastText).join('');
+}
+
+/**
+ * 元素拾取会产出的那些锚点：区间是元素自己声明的那一段，引用是它的可见文字。
+ * 走 HAST 而不是 DOM —— 这个脚本不起浏览器，而两边读的是同一份属性。
+ */
+function elementAnchors(tree: HastNode): { tag: string; anchor: AnchorOk }[] {
+  const found: { tag: string; anchor: AnchorOk }[] = [];
+  function visit(node: HastNode) {
+    if (node.type === 'element' && node.properties?.dataSourceText !== '1') {
+      const declared = a2FromProps(node.properties);
+      const quote = hastText(node).replace(/\s+/g, ' ').trim();
+      if (declared && quote) {
+        found.push({
+          tag: node.tagName || '?',
+          anchor: { ok: true, ...declared.range, quote, structure: '段落' },
+        });
+      }
+    }
+    for (const child of node.children || []) visit(child);
+  }
+  visit(tree);
+  return found;
 }
 
 const FIXTURE = [
@@ -228,15 +263,26 @@ function main() {
   console.log('2. 十一种选区');
   runCases(FIXTURE, CASES);
 
+  console.log('3. 元素拾取：每个带区间的元素');
+  const picked = elementAnchors(pipelineLeaves(FIXTURE).tree);
+  assert(picked.length > 0, '一个带区间的元素都没有');
+  for (const { tag, anchor } of picked) {
+    assert(
+      sliceCoversQuote(FIXTURE, anchor),
+      `[<${tag}>] 切片重渲染盖不住这块的可见文字\n区间 ${anchor.start},${anchor.end}\n切片：${JSON.stringify(sliceUtf8(FIXTURE, anchor.start, anchor.end))}\n文字：${JSON.stringify(anchor.quote)}`,
+    );
+  }
+  console.log(`  ok  ${picked.length} 个元素，切出来的源码都盖得住自己的可见文字`);
+
   const here = dirname(fileURLToPath(import.meta.url));
   const agents = readFileSync(join(here, '..', 'AGENTS.md'), 'utf8');
-  console.log('3. AGENTS.md 随机选区压测');
+  console.log('4. AGENTS.md 随机选区压测');
   const t0 = performance.now();
   const stats = stress(agents, 300);
   const t1 = performance.now();
   console.log(`  ok  300 次：命中 ${stats.ok} / 空选区 ${stats.empty} / 暂不支持 ${stats.unsupported}  (${(t1 - t0).toFixed(0)}ms)`);
 
-  console.log('4. 包 span 的渲染开销');
+  console.log('5. 包 span 的渲染开销');
   const once = pipelineLeaves(agents);
   console.log(`  AGENTS.md：${once.spans} 个文本 span，源 ${agents.length} 字`);
   const long = (agents + '\n\n').repeat(8);
@@ -250,7 +296,7 @@ function main() {
     console.log('  ok  未超出可感范围');
   }
 
-  console.log('5. 提示词倒序');
+  console.log('6. 提示词倒序');
   const prompt = buildAnnotationPrompt('output/方案.md', [
     { start: 10, end: 20, quote: '前面', comment: '改前面', structure: '段落' },
     { start: 80, end: 90, quote: '后面', comment: '改后面', structure: '段落' },

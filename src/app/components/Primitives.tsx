@@ -168,12 +168,14 @@ export async function writeClipboard(text: string): Promise<boolean> {
 export function HeaderIconButton({
   label,
   pressed,
+  disabled,
   className,
   onClick,
   children,
 }: {
   label: string;
   pressed?: boolean;
+  disabled?: boolean;
   className?: string;
   onClick: () => void;
   children: ReactNode;
@@ -189,6 +191,7 @@ export function HeaderIconButton({
               className={className}
               aria-label={label}
               aria-pressed={pressed}
+              disabled={disabled}
               onClick={onClick}
             />
           }

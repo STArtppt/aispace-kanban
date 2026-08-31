@@ -28,9 +28,10 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AnnotationLayer } from '@/components/AnnotationLayer';
-import { AnnotationPanel } from '@/components/AnnotationPanel';
+import { AnnotationToolbar } from '@/components/AnnotationToolbar';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
+import { useAnnotationSession } from '@/hooks/useAnnotationSession';
 import { isDocumentChanged, useAnnotations } from '@/hooks/useAnnotations';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
@@ -703,14 +704,15 @@ export function Reader({
   const annotations = useAnnotations(projectId, annotateFile);
   const canAnnotate = mode === 'markdown';
   const notesDirty = isDocumentChanged(annotations.seenMtime, item.mtime, annotations.notes.length);
-  // 默认收起：底部常驻面板会切掉预览高度，打开文档时不再那么顺。
-  // 换文档时若有「可能已处理」提示则自动展开，避免漏看。
-  const [annotating, setAnnotating] = useState(false);
+  // 批注是一种模式：点了这个按钮、胶囊出现之后，正文才开始接「选取元素 / 选中文字」。
+  // 没激活时划选就只是划选，不再自己冒出「批注」按钮。
+  const annotate = useAnnotationSession(item.path);
+  const setAnnotating = annotate.setActive;
   useEffect(() => {
     // 只跟 path：用户手动收起后，不要因为 notesDirty 还是 true 又被拉开
     setAnnotating(isDocumentChanged(annotations.seenMtime, item.mtime, annotations.notes.length));
   }, [item.path]);
-  const annotateLabel = annotating
+  const annotateLabel = annotate.active
     ? '收起批注'
     : annotations.notes.length
       ? `批注（${annotations.notes.length}）`
@@ -778,15 +780,15 @@ export function Reader({
           ) : null}
           {canAnnotate ? (
             <HeaderIconButton
-              className={annotating ? 'bg-accent' : undefined}
+              className={annotate.active ? 'bg-accent' : undefined}
               label={annotateLabel}
-              pressed={annotating}
-              onClick={() => setAnnotating((v) => !v)}
+              pressed={annotate.active}
+              onClick={annotate.toggle}
             >
               <Pencil
                 className={cn(
                   'size-4',
-                  annotating && 'fill-current',
+                  annotate.active && 'fill-current',
                   notesDirty && 'text-destructive',
                 )}
               />
@@ -843,10 +845,14 @@ export function Reader({
                   <AnnotationLayer
                     notes={annotations.notes}
                     contentKey={body}
-                    onCreate={(input) => {
-                      annotations.add(input, item.mtime);
-                      setAnnotating(true);
-                    }}
+                    active={annotate.active}
+                    mode={annotate.mode}
+                    request={annotate.request}
+                    onCreate={(input) => annotations.add(input, item.mtime)}
+                    onUpdate={annotations.update}
+                    onRequestDone={annotate.clearRequest}
+                    onToast={annotate.say}
+                    onEscape={() => setAnnotating(false)}
                   >
                     <Markdown
                       key={item.path}
@@ -870,14 +876,12 @@ export function Reader({
             >
               <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
             </div>
-            <AnnotationPanel
+            <AnnotationToolbar
               file={annotateFile}
               mtime={item.mtime}
               notes={annotations.notes}
               seenMtime={annotations.seenMtime}
-              open={annotating}
-              onClose={() => setAnnotating(false)}
-              onUpdate={annotations.update}
+              session={annotate}
               onRemove={annotations.remove}
               onClear={annotations.clear}
               onKeep={annotations.keep}
