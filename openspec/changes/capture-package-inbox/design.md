@@ -102,25 +102,53 @@ visualization/references/<slug>/
 **MUST NOT 自己造一个 `index.html`**。看板写进工作空间的每一个字节都必须是包里带来的;
 一旦开始生成内容,「看板只读、写入是窄例外」这条就说不清了。
 
-### 4. 来源放行:先实测,再写死
+### 4. 来源放行:实测过了,按 Origin 的扩展协议放行(只对这一条路径)
 
 `visual-capture-engine` 立的规矩是「`Sec-Fetch-Site` 表明来自其它站点就拒绝」。
 扩展的 background service worker 带 `host_permissions: ["http://127.0.0.1/*"]` 直接 fetch,
 来源是 `chrome-extension://<id>` —— **不是同源**,按那条规矩会被一刀拒掉。
 
-所以这条分支必须加,但**加之前要先抓一次真实的投递请求,看它到底带哪些头**
-(`Origin` 是什么、`Sec-Fetch-Site` 是 `none` 还是 `cross-site`、有没有预检)。
-我没跑过,不在这里写死。任务里第一条就是这个实测。
+#### 实测结果(任务 1.1,2026-08-31)
 
-放行的形状,按实测结果二选一:
+装 `apps/extension/dist` 的真实未打包扩展进 Chromium(Playwright 持久上下文),
+在它的 background service worker 里跑 `background.ts:103` 一模一样的 fetch,
+打向一台只打印请求头的探针服务。**收到的是这些:**
 
-- 若请求带稳定的 `Origin: chrome-extension://<id>` → 只放行 `chrome-extension:` 协议的来源,
-  **且只对 `/capture-package` 这一条路径**。其它 mutation 接口不放行。
-- 若头信息不足以区分「扩展」和「任意网页」→ 那就不能靠头放行,退回到让用户在看板上
-  显式打开一个「接收窗口」(限时的一次性开关)。这条更啰嗦,但不能为了省事把
-  `127.0.0.1` 上的写接口对所有网页敞开。
+```
+POST /capture-package
+origin: chrome-extension://dadabbidphjibjkpmfkmbdkinmpigjba
+sec-fetch-site: none
+sec-fetch-mode: cors
+sec-fetch-dest: empty
+content-type: application/json
+```
 
-无论哪条,`allowMutations`(非环回禁写)那道闸不动。
+三条要点:
+
+1. **没有预检。** `content-type: application/json` 本来会触发 OPTIONS,但扩展的
+   `host_permissions: ["http://127.0.0.1/*"]` 让这次请求走的不是网页那套 CORS,
+   探针只收到一次 POST。接收端**不用实现 OPTIONS**。
+2. `Origin` 稳定且带 `chrome-extension:` 协议 —— 决策 4 的**第一条路走得通**,
+   不必退回「接收窗口」那条啰嗦路。
+3. ⚠️ **`Sec-Fetch-Site` 是 `none`,不是 `cross-site`。** 这条推翻了本节开头的假设:
+   现有守卫的第一条分支放行 `none`,第二条分支又因为 `site` 存在而被跳过 ——
+   也就是说**今天任何一个已装的扩展都能打通全部五条写接口**,不止这一条。
+   这是本 change 之前就存在的洞,顺手一起收窄。
+
+#### 按实测定下的形状
+
+来源判定函数里**先判扩展**(Origin 的协议以 `-extension:` 结尾),再走原来的两条分支:
+
+- 是扩展来源 + 本次是 `/capture-package` → 放行;
+- 是扩展来源 + 其它任何接口 → **403**(这就是上面第 3 点那个洞的收口);
+- 不是扩展来源 → 原来的两条分支一字不动(dev 模式经 Vite 代理过来的请求带
+  `Sec-Fetch-Site: same-origin`,不受影响)。
+
+放行只认「是不是扩展」,认不了「是不是**我们这个**扩展」—— 头里没有能区分的东西。
+接受这个代价:扩展得用户自己装,写入面仍只有 `visualization/references/<slug>/`,
+且包还要过契约 C 的校验。比起把这条路对所有网页敞开,这是小得多的面。
+
+`allowMutations`(非环回禁写)那道闸不动。
 
 **备选:干脆不校验来源,反正是环回。** 不选。那正是 `visual-capture-engine` 决策 6 要堵的洞:
 任意网页都能用 `enctype="text/plain"` 的表单往 `127.0.0.1` POST 出合法 JSON,不触发预检。
@@ -175,6 +203,11 @@ visualization/references/<slug>/
 
 ## Open Questions
 
-**一条,必须实测后才能写实现:** 扩展的 background fetch 打到 `127.0.0.1` 时,
-实际带的 `Origin` 与 `Sec-Fetch-Site` 是什么,有没有预检。决策 4 的两条路取哪条由它决定。
-任务 1.1 就是这次实测。
+**原先那条已由任务 1.1 的实测答掉**(结果写在决策 4 里):`Origin` 是
+`chrome-extension://<id>`、`Sec-Fetch-Site` 是 `none`、没有预检,走第一条路。
+
+**新冒出来一条,留给下一版:** 接收端把包投进「登记表里的 `activeProjectId`」,
+而这个字段**只在新建 / 登记工作空间时写**,用户在界面上切换工作空间并不会更新它。
+所以「最近打开的那个」目前等于「最近登记的那个」。落点写进响应的 `location` 让用户
+一眼看得见,投错了重投即可;要让它名副其实,得加一条「切换即置为活动」的写回,
+那是独立的一处改动,不混进本 change。

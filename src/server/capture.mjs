@@ -118,6 +118,12 @@ function slugify(title, url) {
   return safe || `capture-${Date.now()}`;
 }
 
+/**
+ * 给采集包接收端(`capture-inbox.mjs`)复用的两样东西 —— **slug 生成与体积上限只此一份**。
+ * 各写一套的话,两条入口迟早在「什么样的目录名算安全」上漂开。
+ */
+export { slugify as slugifyCapture, MAX_HTML_BYTES as MAX_CAPTURE_BYTES };
+
 // ── 写入收口 ─────────────────────────────────────────────────────────────────
 
 /**
@@ -164,14 +170,18 @@ export function writeCaptureDir(root, plane, baseSlug, stageDir) {
   return { slug, dir: dirAbs, rel: `${planeDir.split(path.sep).join('/')}/${slug}` };
 }
 
-/** 临时目录:看板自家缓存,不在工作空间里。 */
-function makeStageDir() {
+/**
+ * 临时目录:看板自家缓存,不在工作空间里。
+ * `capture-inbox.mjs`(采集包接收端)也用它 —— 两条入口共用同一个
+ * 「先在缓存里摆好、再整体移进工作空间」的姿势,失败时 `visualization/` 下不留半截目录。
+ */
+export function makeStageDir() {
   const root = path.join(CONFIG_DIR, 'capture-tmp');
   fs.mkdirSync(root, { recursive: true });
   return fs.mkdtempSync(path.join(root, 'cap-'));
 }
 
-function dropStageDir(stageDir) {
+export function dropStageDir(stageDir) {
   try {
     fs.rmSync(stageDir, { recursive: true, force: true });
   } catch {

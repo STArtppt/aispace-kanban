@@ -17,7 +17,8 @@
     "pack:npm": "cd npm-package && npm pack",
     "smoke:npm": "node scripts/smoke-package.mjs",
     "typecheck": "tsc --noEmit",
-    "test:anchor": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/test-anchor.ts"
+    "test:anchor": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/test-anchor.ts",
+    "test:rich-doc": "node scripts/check-rich-doc.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

@@ -24,6 +24,7 @@ import {
   writeRuntimeInfo,
 } from './config.mjs';
 import { captureStatus, startCapture } from './capture.mjs';
+import { CAPTURE_PACKAGE_PATH, readPackageBody, receiveCapturePackage } from './capture-inbox.mjs';
 import { resolveInside } from './paths.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
@@ -728,18 +729,37 @@ function rejectIfRemoteWrite(res, allowMutations) {
  *   1. `Sec-Fetch-Site` 存在且不是 same-origin / none → 拒(cross-site、same-site 都拒);
  *   2. 没有该头但有 `Origin`,且 Origin 的 host 与本次请求的 Host 不同 → 拒。
  *
- * ⚠️ **要放行别的可信来源(下一个 change 的浏览器扩展经回环投递采集包,
- * 来源是 `chrome-extension://<id>`,按上面两条会被一刀拒掉)时,
- * 只在这个函数里加一条分支** —— 不要去改各个接口,那样迟早漏掉一个。
- * 扩展实际带哪些头由那个 change 实测后定,这里不猜。
+ * ## 扩展来源(实测过,不是猜的)
+ * 装真实扩展跑一次投递,打到 `127.0.0.1` 的请求带的是:
+ * `Origin: chrome-extension://<id>`、**`Sec-Fetch-Site: none`**、`Sec-Fetch-Mode: cors`,
+ * 而且**没有预检**(`host_permissions` 让它不走网页那套 CORS)。
+ *
+ * `none` 这个值很要命:它会从上面第 1 条直接放行,第 2 条又因为该头存在而被跳过 ——
+ * 也就是说**任何一个已装的扩展本来能打通全部写接口**。所以这里把扩展来源单独拎出来先判:
+ * 只有采集包接收端(`/capture-package`)放行,其余一律拒。
+ *
+ * 头里没有能区分「我们这个扩展」和「别的扩展」的东西,放行只认协议。
+ * 接受这个代价:扩展要用户自己装,而这条路的写入面只有 `visualization/references/<slug>/`,
+ * 包还得先过契约 C 的校验 —— 比把它对所有网页敞开小得多。
  *
  * 只读接口(扫描、读文件、SSE)不过这道闸:它们不改本机状态,
  * 而只读分享(`--host`)场景本来就要能跨机器访问。
  *
+ * @param {{ allowExtensionOrigin?: boolean }} [opts] 只有 `/capture-package` 传 true
  * @returns {boolean} true = 已经回了 403，调用方直接 return
  */
-function rejectIfForeignOrigin(req, res) {
+function rejectIfForeignOrigin(req, res, { allowExtensionOrigin = false } = {}) {
   const site = req.headers['sec-fetch-site'];
+  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
+  // chrome-extension: / moz-extension: / safari-web-extension: 都以 -extension: 收尾
+  if (/^[a-z][a-z0-9+.-]*-extension:$/i.test(origin.slice(0, origin.indexOf(':') + 1))) {
+    if (allowExtensionOrigin) return false;
+    json(res, 403, {
+      error: `这个请求来自浏览器扩展（${origin}）。看板只在采集包接收端接受扩展投递，`
+        + '其它操作请在看板自己的页面上做。',
+    });
+    return true;
+  }
   if (site && site !== 'same-origin' && site !== 'none') {
     json(res, 403, {
       error: `这个请求来自其它站点（Sec-Fetch-Site: ${site}），看板不接受跨站的写操作。`
@@ -762,6 +782,46 @@ function rejectIfForeignOrigin(req, res) {
     }
   }
   return false;
+}
+
+/**
+ * `POST /capture-package` —— annotation-collect 扩展的投递落点(契约 D)。
+ *
+ * 不在 `/api/` 下面,也不带 `projectId`:**路径与端口是扩展硬编码的默认目标**,
+ * 自造一个前缀等于让每个用户装完扩展第一件事是去改配置。
+ * 投进哪个工作空间因此得这边定 —— 取登记表里的活动工作空间,
+ * 并把落点写进 `location` 让用户一眼看见投到哪了(投错了重投即可)。
+ *
+ * 三道闸的顺序是有讲究的:先非环回禁写、再来源判定、最后才读请求体 ——
+ * 一个该被拒的请求不应该先把几 MB 的包读进内存。
+ */
+async function handleCapturePackage(req, res, { allowMutations = true } = {}) {
+  if (req.method !== 'POST') {
+    return json(res, 405, { error: '采集包接收端只收 POST。' });
+  }
+  if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+  // 这是**唯一**放行扩展来源的路径；其它写接口照旧拒扩展
+  if (rejectIfForeignOrigin(req, res, { allowExtensionOrigin: true })) return undefined;
+
+  const { projects, activeProjectId } = readProjects();
+  // 与前端 useWorkspace 同一条兜底链：活动工作空间 → 第一个
+  const project = projects.find((p) => p.id === activeProjectId) || projects[0];
+  if (!project) {
+    return json(res, 409, {
+      error: '看板里还没有登记任何工作空间，这个包没有落点。请先在看板上新建或登记一个工作空间再投。',
+    });
+  }
+  const info = inspectWorkspace(project.root);
+  if (!info.ok) {
+    return json(res, 409, {
+      error: `工作空间「${project.name}」的目录现在不可用（${info.reasons.join('、')}），没有接收。`
+        + '请在看板上重连这个工作空间再投一次。',
+    });
+  }
+
+  const body = await readPackageBody(req);
+  const result = receiveCapturePackage(project, body);
+  return json(res, 200, result);
 }
 
 async function handleApi(req, res, url, { allowMutations = true } = {}) {
@@ -1115,6 +1175,9 @@ export function createServer({ devOrigin = '', allowMutations = true } = {}) {
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     try {
+      if (url.pathname === CAPTURE_PACKAGE_PATH) {
+        return await handleCapturePackage(req, res, { allowMutations });
+      }
       if (url.pathname.startsWith('/api/')) {
         return await handleApi(req, res, url, { allowMutations });
       }

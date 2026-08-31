@@ -576,6 +576,154 @@ try {
   if (protoMeta.source !== 'url-capture') die(`原型 meta.json 的 source 不是 url-capture：${protoMeta.source}`);
   ok('原型 URL 导入只写 meta.json（kind:url、target 原样），目录里没有 index.html');
 
+  // ── 7i 采集包接收端：契约校验、越界丢弃、来源放行不外溢 ──────────────────────
+  // 扩展硬编码的投递目标就是 POST /capture-package（不在 /api 下）。
+  // 这一段全部用合成包，不碰任何真实页面。
+  {
+    const EXT_ORIGIN = 'chrome-extension://smokeextensionidsmokeextensionid';
+    // 接收端没有 projectId，它投进登记表里的**活动工作空间** ——
+    // 到这一步活动的已经是后建的那个（7c 建的用户模板工作空间），不是最早那个。
+    // 这里就照它真实的落点断言，顺带把「落点写进 location 让用户看得见」一起验了。
+    const registry = await fetch(`${base}/api/projects`).then((r) => r.json());
+    const target = registry.projects.find((p) => p.id === registry.activeProjectId);
+    if (!target) die('登记表里没有活动工作空间，接收端无从判断落点', JSON.stringify(registry));
+    const refRoot = path.join(target.root, 'visualization', 'references');
+    const listRefs = () => (fs.existsSync(refRoot) ? fs.readdirSync(refRoot).sort().join(',') : '(无)');
+
+    const makePkg = ({ version = 1, files = [], items = [], format = 'annotation-collect.capture-package' } = {}) => {
+      const manifest = {
+        format,
+        version,
+        packageId: 'smoke-batch',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        generator: { name: 'annotation-collect', version: '0.0.0' },
+        site: { origin: 'https://internal.example.test', title: '合成采集页' },
+        items,
+        files: files.map((f) => ({
+          path: f.path, role: f.role, mediaType: 'text/html',
+          byteLength: Buffer.byteLength(String(f.content), 'utf8'),
+        })),
+        redaction: { enabled: true, total: 1, byCategory: [{ category: 'token', count: 1 }], restored: 0 },
+        missingResources: [],
+        notice: '本包经过自动脱敏（模式匹配），必然有漏网。它不构成安全保证，分发前请自己看一遍。',
+      };
+      return {
+        package: {
+          manifest,
+          files: [
+            { path: 'manifest.json', mediaType: 'application/json', content: `${JSON.stringify(manifest, null, 2)}\n` },
+            { path: 'summary.md', mediaType: 'text/markdown', content: '# 采集包 · 合成采集页\n\n（合成件）\n' },
+            ...files.map((f) => ({ path: f.path, mediaType: 'text/html', content: f.content })),
+          ],
+        },
+        triggeredAt: '2026-01-01T00:01:00.000Z',
+      };
+    };
+    const deliver = (body, headers = {}) => fetch(`${base}/capture-package`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+
+    // (1) 版本比宿主认的高 → 明确拒绝，且不写盘。
+    // 扩展拿到非 2xx 才会走 refused-by-host 并**保留批次**；这里要是收下了，用户的批次就被清空了。
+    const before = listRefs();
+    const tooNew = await deliver(makePkg({
+      version: 2,
+      files: [{ path: 'payloads/p-1.html', role: 'page-html', content: '<html><title>未来版本</title></html>' }],
+    }));
+    if (tooNew.status < 400 || tooNew.status >= 500) die(`version:2 的包没被拒（${tooNew.status}）`);
+    if (!(await tooNew.json()).error?.includes('v1')) die('拒绝 v2 时没说清宿主只认到哪一版');
+    if (listRefs() !== before) die('拒了 v2 却还是写了盘', `${before} → ${listRefs()}`);
+
+    // (2) 不是采集包的任意 JSON → 拒
+    const notPkg = await deliver({ package: { manifest: { format: 'something-else', version: 1 } } });
+    if (notPkg.status < 400 || notPkg.status >= 500) die(`非采集包的 JSON 没被拒（${notPkg.status}）`);
+
+    // (3) 纯文字批注、一份 HTML 都没有 → 拒，且**绝不自己造 index.html**
+    const notesOnly = await deliver(makePkg({
+      items: [{ id: 'n1', kind: 'note', note: '只写了字', anchor: {}, files: [] }],
+    }));
+    if (notesOnly.status < 400 || notesOnly.status >= 500) die(`纯批注的包没被拒（${notesOnly.status}）`);
+    if (listRefs() !== before) die('纯批注的包被拒了却还是写了盘', `${before} → ${listRefs()}`);
+    ok('接收端：v2 / 非采集包 / 纯批注三种都明确拒绝，一个字节都没落盘');
+
+    // (4) 正常包 + 清单里夹带 ../ 与绝对路径：越界的丢弃，其余照常落
+    const okPkg = makePkg({
+      items: [{ id: 'p1', kind: 'page-snapshot', note: '这一版的形状是对的', anchor: {}, files: ['payloads/p-1.html'] }],
+      files: [
+        { path: 'payloads/p-1.html', role: 'page-html', content: '<html><head><title>合成采集页</title></head><body>正文</body></html>' },
+        { path: 'payloads/p-2.html', role: 'fragment-html', content: '<p>第二个片段</p>' },
+        { path: '../../output/docs/逃逸.html', role: 'fragment-html', content: '<p>不该落盘</p>' },
+      ],
+    });
+    // 来源头用真实实测到的那一组（Origin 是扩展、Sec-Fetch-Site: none、无预检）
+    const delivered = await deliver(okPkg, { origin: EXT_ORIGIN, 'sec-fetch-site': 'none' });
+    if (delivered.status !== 200) die(`合法采集包没被收下（${delivered.status}）`, await delivered.text());
+    const body = await delivered.json();
+    if (body.accepted !== true || !body.location || !body.hostItemId) {
+      die('成功响应不符合契约 D（accepted/location/hostItemId）', JSON.stringify(body));
+    }
+    const landed = path.join(refRoot, body.hostItemId);
+    for (const f of ['index.html', 'manifest.json', 'summary.md', 'meta.json']) {
+      if (!fs.existsSync(path.join(landed, f))) die(`落盘目录里缺 ${f}`, fs.readdirSync(landed).join(','));
+    }
+    if (!fs.existsSync(path.join(landed, 'payloads', 'p-2.html'))) {
+      die('清单里的其余载荷没按相对路径落在同目录');
+    }
+    for (const root of [wsPath, target.root]) {
+      if (fs.existsSync(path.join(root, 'output', 'docs', '逃逸.html'))) {
+        die('清单里夹带的 ../ 路径逃出了条目目录 —— 只读红线被打破');
+      }
+    }
+    if (!String(body.location).includes('没落盘')) die('越界条目被丢弃了却没写进响应说明', body.location);
+    // location 是给人看的落点，必须点名是哪个工作空间 —— 用户就靠它判断有没有投错
+    if (!String(body.location).includes(target.name)) {
+      die('响应的 location 没写明投进了哪个工作空间', body.location);
+    }
+    const inboxMeta = JSON.parse(fs.readFileSync(path.join(landed, 'meta.json'), 'utf8'));
+    if (inboxMeta.source !== 'plugin') die(`meta.json 的 source 不是 plugin：${inboxMeta.source}`);
+    if (inboxMeta.scrubbed !== true) die('meta.json 没如实记下 scrubbed');
+    // 免责声明必须原文照搬 —— 措辞变强等于替对面做了它拒绝做的承诺
+    if (inboxMeta.notice !== okPkg.package.manifest.notice) {
+      die('包自带的免责声明没有原样保留', inboxMeta.notice);
+    }
+    // manifest.json / summary.md 原样落，不改写、不重排、不补字段
+    const rawManifest = okPkg.package.files.find((f) => f.path === 'manifest.json').content;
+    if (fs.readFileSync(path.join(landed, 'manifest.json'), 'utf8') !== rawManifest) {
+      die('manifest.json 没有原样落盘');
+    }
+    ok(`接收端：合法包落在活动工作空间「${target.name}」的 references/${body.hostItemId}/（四件齐全），越界条目被丢弃并写进了说明`);
+
+    // (5) 扫描认得出它，且和别的参考同一形状
+    const inboxScan = await fetch(`${base}/api/projects/${target.id}/scan`).then((r) => r.json());
+    const hit = (inboxScan.references?.items || []).find((i) => i.itemKey === body.hostItemId);
+    if (!hit) die('投进来的包没被参考扫描认出来', JSON.stringify(inboxScan.references));
+    if (hit.source !== 'plugin' || !hit.url) die('投进来的条目缺 source/url', JSON.stringify(hit));
+    ok('投进来的包进了参考清单，source 为 plugin、有可打开的查看器地址');
+
+    // (6) 来源放行**只对这一条路径**：同一组扩展头打其它写接口必须仍被拒。
+    // 实测过：扩展带的是 Sec-Fetch-Site: none —— 那个值本来会从跨站判定里直接漏过去。
+    for (const endpoint of [
+      '/api/projects',
+      '/api/workspaces',
+      `/api/projects/${created.id}/ingest`,
+      `/api/projects/${created.id}/ignore`,
+      `/api/projects/${created.id}/capture`,
+    ]) {
+      const leaked = await fetch(`${base}${endpoint}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', origin: EXT_ORIGIN, 'sec-fetch-site': 'none' },
+        body: JSON.stringify({}),
+      });
+      if (leaked.status !== 403) die(`扩展来源在 ${endpoint} 上没被拒（${leaked.status}）—— 放行外溢了`);
+    }
+    // 普通网页跨站打接收端：照拒
+    const webCross = await deliver(okPkg, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
+    if (webCross.status !== 403) die(`网页跨站投递没被拒（${webCross.status}）`);
+    ok('扩展来源只在 /capture-package 放行，其余五条写接口照旧 403；网页跨站投递也被拒');
+  }
+
   // ── 7h 非环回监听时采集 403，工作空间一个字节都不许多 ────────────────────────
   // --host 是给评审只读分享用的，不能变成局域网里的可执行入口。
   {
@@ -599,12 +747,23 @@ try {
         body: JSON.stringify({ plane: 'reference', url: 'https://example.com/' }),
       });
       if (denied.status !== 403) die(`非环回监听时采集没被拒（${denied.status}，应该是 403）`);
+      // 接收端也在这道闸后面 —— 它是个写接口，不能因为「扩展来源放行」就绕过非环回禁写
+      const inboxDenied = await fetch(`${hostBase}/capture-package`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          origin: 'chrome-extension://smokeextensionidsmokeextensionid',
+          'sec-fetch-site': 'none',
+        },
+        body: JSON.stringify({ package: { manifest: {} } }),
+      });
+      if (inboxDenied.status !== 403) die(`非环回监听时采集包接收端没被拒（${inboxDenied.status}）`);
       // 只读扫描仍要能用，否则只读分享就废了
       const roScan = await fetch(`${hostBase}/api/projects/${created.id}/scan`);
       if (roScan.status !== 200) die(`非环回时只读扫描也被拒了（${roScan.status}）`);
       const listAfter = fs.readdirSync(path.join(visRoot, 'references')).sort().join(',');
       if (listAfter !== listBefore) die('非环回采集被拒了却还是写了盘', `${listBefore} → ${listAfter}`);
-      ok('非环回监听：采集 403、工作空间没被写入，只读扫描照常');
+      ok('非环回监听：采集与采集包接收端都 403、工作空间没被写入，只读扫描照常');
     } finally {
       hostServer.kill();
     }
