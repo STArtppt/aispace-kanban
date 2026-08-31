@@ -58,11 +58,14 @@ function htmlToPlain(html: string): string {
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/<\/(p|div|h[1-6]|li|tr|pre|blockquote)>/gi, '\n')
     .replace(/<[^>]+>/g, '')
-    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'");
+    // React 转义撇号写的是十六进制 &#x27;,不是十进制 &#39; —— 只认十进制的话,
+    // 带撇号的片段(spawn('open', ...))重渲染后就成了字面 &#x27;,对不回渲染文本
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&amp;/g, '&');
 }
 
 function normalize(text: string): string {
