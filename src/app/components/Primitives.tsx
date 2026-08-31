@@ -163,6 +163,45 @@ export async function writeClipboard(text: string): Promise<boolean> {
 }
 
 /**
+ * 面板标题栏上的图标按钮。ghost + size=icon + startist Tooltip，别再用原生 title。
+ */
+export function HeaderIconButton({
+  label,
+  pressed,
+  className,
+  onClick,
+  children,
+}: {
+  label: string;
+  pressed?: boolean;
+  className?: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <TooltipProvider delay={300}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              variant="ghost"
+              size="icon"
+              className={className}
+              aria-label={label}
+              aria-pressed={pressed}
+              onClick={onClick}
+            />
+          }
+        >
+          {children}
+        </TooltipTrigger>
+        <TooltipContent>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/**
  * 列表行上的小图标动作。行本身是 <button>，不能再套 button，触发器用 span。
  * Tooltip 与复制按钮同一套（delay 300 + TooltipContent），别再用原生 title。
  */

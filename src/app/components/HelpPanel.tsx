@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeftToLine, ArrowRightFromLine, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { HeaderIconButton } from '@/components/Primitives';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -68,14 +68,11 @@ export function HelpPanel({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {onToggleExpand ? (
-            <Button
-              variant="ghost"
-              size="icon"
+            <HeaderIconButton
               // 窄屏本就是全屏浮层，展开无意义
               className="hidden min-[900px]:inline-flex"
-              title={expanded ? '向右收起' : '向左展开'}
-              aria-label={expanded ? '向右收起' : '向左展开'}
-              aria-pressed={expanded}
+              label={expanded ? '向右收起' : '向左展开'}
+              pressed={expanded}
               onClick={onToggleExpand}
             >
               {expanded ? (
@@ -83,11 +80,11 @@ export function HelpPanel({
               ) : (
                 <ArrowLeftToLine className="size-4" />
               )}
-            </Button>
+            </HeaderIconButton>
           ) : null}
-          <Button variant="ghost" size="icon" title="关闭" aria-label="关闭" onClick={onClose}>
+          <HeaderIconButton label="关闭" onClick={onClose}>
             <X className="size-4" />
-          </Button>
+          </HeaderIconButton>
         </div>
       </header>
 

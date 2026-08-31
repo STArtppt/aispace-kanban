@@ -9,6 +9,7 @@ import {
   Expand,
   FolderOpen,
   Loader2,
+  Pencil,
   RefreshCw,
   SquareArrowOutUpRight,
   Star,
@@ -17,6 +18,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { HeaderIconButton } from '@/components/Primitives';
 import {
   Select,
   SelectContent,
@@ -29,7 +31,7 @@ import { AnnotationLayer } from '@/components/AnnotationLayer';
 import { AnnotationPanel } from '@/components/AnnotationPanel';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
-import { useAnnotations } from '@/hooks/useAnnotations';
+import { isDocumentChanged, useAnnotations } from '@/hooks/useAnnotations';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
@@ -699,6 +701,20 @@ export function Reader({
   const sourceByteOffset = mode === 'markdown' ? utf8Len(content.slice(0, bodyCharOffset)) : 0;
   const annotateFile = mode === 'markdown' ? contentPath || item.path : '';
   const annotations = useAnnotations(projectId, annotateFile);
+  const canAnnotate = mode === 'markdown';
+  const notesDirty = isDocumentChanged(annotations.seenMtime, item.mtime, annotations.notes.length);
+  // 默认收起：底部常驻面板会切掉预览高度，打开文档时不再那么顺。
+  // 换文档时若有「可能已处理」提示则自动展开，避免漏看。
+  const [annotating, setAnnotating] = useState(false);
+  useEffect(() => {
+    // 只跟 path：用户手动收起后，不要因为 notesDirty 还是 true 又被拉开
+    setAnnotating(isDocumentChanged(annotations.seenMtime, item.mtime, annotations.notes.length));
+  }, [item.path]);
+  const annotateLabel = annotating
+    ? '收起批注'
+    : annotations.notes.length
+      ? `批注（${annotations.notes.length}）`
+      : '批注';
 
   const base = dirOf(mode === 'markdown' && isDir ? manifestPath : item.path);
   // 单文件 HTML（output/docs 下的汇报材料）没有 _manifest.md，校验说明这一栏不该出现
@@ -746,14 +762,11 @@ export function Reader({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {onToggleExpand ? (
-            <Button
-              variant="ghost"
-              size="icon"
+            <HeaderIconButton
               // 窄屏本就是全屏浮层，展开无意义
               className="hidden min-[900px]:inline-flex"
-              title={expanded ? '向右收起' : '向左展开'}
-              aria-label={expanded ? '向右收起' : '向左展开'}
-              aria-pressed={expanded}
+              label={expanded ? '向右收起' : '向左展开'}
+              pressed={expanded}
               onClick={onToggleExpand}
             >
               {expanded ? (
@@ -761,29 +774,40 @@ export function Reader({
               ) : (
                 <ArrowLeftToLine className="size-4" />
               )}
-            </Button>
+            </HeaderIconButton>
           ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            title={pinned ? '取消收藏' : '收藏置顶'}
-            aria-label={pinned ? '取消收藏' : '收藏置顶'}
-            aria-pressed={pinned}
+          {canAnnotate ? (
+            <HeaderIconButton
+              className={annotating ? 'bg-accent' : undefined}
+              label={annotateLabel}
+              pressed={annotating}
+              onClick={() => setAnnotating((v) => !v)}
+            >
+              <Pencil
+                className={cn(
+                  'size-4',
+                  annotating && 'fill-current',
+                  notesDirty && 'text-destructive',
+                )}
+              />
+            </HeaderIconButton>
+          ) : null}
+          <HeaderIconButton
+            label={pinned ? '取消收藏' : '收藏置顶'}
+            pressed={pinned}
             onClick={() => togglePin(item.path)}
           >
             <Star className={cn('size-4', pinned && 'fill-current')} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            title={`在${fileManager}中显示`}
+          </HeaderIconButton>
+          <HeaderIconButton
+            label={`在${fileManager}中显示`}
             onClick={() => void api.reveal(projectId, item.path)}
           >
             <FolderOpen className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" title="关闭" onClick={onClose}>
+          </HeaderIconButton>
+          <HeaderIconButton label="关闭" onClick={onClose}>
             <X className="size-4" />
-          </Button>
+          </HeaderIconButton>
         </div>
       </header>
 
@@ -792,8 +816,7 @@ export function Reader({
         目录 absolute 贴预览右缘：展开/收起时位置固定，不参与 flex 分宽（避免左右摇摆）
       */}
       {mode === 'markdown' ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             <div
               ref={mdScrollRef}
               data-reader-scroll
@@ -820,7 +843,10 @@ export function Reader({
                   <AnnotationLayer
                     notes={annotations.notes}
                     contentKey={body}
-                    onCreate={(input) => annotations.add(input, item.mtime)}
+                    onCreate={(input) => {
+                      annotations.add(input, item.mtime);
+                      setAnnotating(true);
+                    }}
                   >
                     <Markdown
                       key={item.path}
@@ -844,17 +870,18 @@ export function Reader({
             >
               <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
             </div>
-          </div>
-          <AnnotationPanel
-            file={annotateFile}
-            mtime={item.mtime}
-            notes={annotations.notes}
-            seenMtime={annotations.seenMtime}
-            onUpdate={annotations.update}
-            onRemove={annotations.remove}
-            onClear={annotations.clear}
-            onKeep={annotations.keep}
-          />
+            <AnnotationPanel
+              file={annotateFile}
+              mtime={item.mtime}
+              notes={annotations.notes}
+              seenMtime={annotations.seenMtime}
+              open={annotating}
+              onClose={() => setAnnotating(false)}
+              onUpdate={annotations.update}
+              onRemove={annotations.remove}
+              onClear={annotations.clear}
+              onKeep={annotations.keep}
+            />
         </div>
       ) : tablePackage ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
