@@ -309,6 +309,9 @@ export function RowActions({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
+        nativeButton={false}
+        // 渲染的是 span 而非原生 <button>,必须告诉 Base UI,否则它按原生按钮
+        // 校验会报错;false 之后由它自己补齐键盘可达性等非原生按钮行为
         render={
           <span
             role="button"
