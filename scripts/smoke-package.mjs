@@ -350,6 +350,52 @@ try {
   }
   ok('忽略只认 input/raw/，越界路径被挡住');
 
+  // ── 7b2 批注历史：写看板缓存目录，不写工作空间 ──────────────────────────
+  const histFile = 'output/docs/smoke-notes.md';
+  const histNote = {
+    quote: '原文',
+    comment: '改一下',
+    structure: '段落',
+    start: 0,
+    end: 6,
+    number: 1,
+  };
+  const histPosted = await fetch(`${base}/api/projects/${created.id}/note-history`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ file: histFile, notes: [histNote] }),
+  }).then(async (r) => ({ status: r.status, body: await r.json() }));
+  if (histPosted.status !== 200 || !histPosted.body.batches?.length) {
+    die(`归档批注失败：${histPosted.status} ${JSON.stringify(histPosted.body)}`);
+  }
+  const histCache = path.join(fakeHome, '.pmwork', 'dashboard', 'note-history', `${created.id}.json`);
+  if (!fs.existsSync(histCache)) die('批注历史没写到 ~/.pmwork/dashboard/note-history/');
+  if (fs.existsSync(path.join(wsPath, 'note-history'))) {
+    die('批注历史写进了工作空间 —— 只能落看板缓存目录');
+  }
+  const histListed = await fetch(
+    `${base}/api/projects/${created.id}/note-history?file=${encodeURIComponent(histFile)}`,
+  ).then((r) => r.json());
+  if (histListed.batches?.length !== 1 || histListed.batches[0].notes?.[0]?.comment !== '改一下') {
+    die('GET 批注历史对不上刚归档的那一批', JSON.stringify(histListed));
+  }
+  const histEscape = await fetch(`${base}/api/projects/${created.id}/note-history`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ file: '../../../etc/passwd', notes: [histNote] }),
+  });
+  if (histEscape.status !== 403) {
+    die(`批注历史的路径穿越没被挡住（返回 ${histEscape.status}，应该是 403）`);
+  }
+  const histCleared = await fetch(
+    `${base}/api/projects/${created.id}/note-history?file=${encodeURIComponent(histFile)}`,
+    { method: 'DELETE' },
+  ).then(async (r) => ({ status: r.status, body: await r.json() }));
+  if (histCleared.status !== 200 || (histCleared.body.batches || []).length) {
+    die(`清空批注历史失败：${histCleared.status} ${JSON.stringify(histCleared.body)}`);
+  }
+  ok('POST/GET/DELETE /note-history 写看板缓存，越界路径被挡住');
+
   // ── 7c 用户自建模板：丢进 ~/.pmwork/templates 立刻能被扫到，并能拿来新建 ──
   const userTpl = path.join(fakeHome, '.pmwork', 'templates', 'smoke-role');
   fs.mkdirSync(path.join(userTpl, '.claude', 'skills'), { recursive: true });

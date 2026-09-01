@@ -312,9 +312,13 @@ function main() {
     { start: 80, end: 90, quote: '后面', comment: '改后面', structure: '段落' },
   ]);
   assert(prompt.indexOf('改后面') < prompt.indexOf('改前面'), '应按区间倒序，先写后面的批注');
+  assert(prompt.indexOf('### 批注 2') < prompt.indexOf('### 批注 1'), '倒序只改处理顺序，编号仍是页面上的序号');
+  assert(!prompt.includes('### 批注 1\n- 源码区间：UTF-8 字节 80,90'), '后段那条不能被重编成批注 1');
   assert(prompt.includes('output/方案.md'), '要带文件路径');
   assert(prompt.includes('UTF-8 字节 80,90'), '要带源码区间');
-  console.log('  ok  后段批注排在前面');
+  assert(prompt.includes('先按批注意见修改，改完后做好全文口径同步'), '要先改批注、再同步全文口径');
+  assert(!prompt.includes('不要改动未提及的部分'), '不再用“未提及一律不动”这种会卡死关联改动的说法');
+  console.log('  ok  后段批注排在前面，编号与页面一致');
 
   console.log('\n全部通过');
 }

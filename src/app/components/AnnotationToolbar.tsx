@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Copy, Check, List, SquareDashedMousePointer, TextSelect, Trash2, X } from 'lucide-react';
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { HeaderIconButton, writeClipboard } from '@/components/Primitives';
 import { isDocumentChanged, type Annotation } from '@/hooks/useAnnotations';
 import type { AnnotationSession } from '@/hooks/useAnnotationSession';
+import { useNoteHistory } from '@/hooks/useNoteHistory';
 import { buildAnnotationPrompt } from '@/lib/annotationPrompt';
+import { formatRelative } from '@/lib/format';
+import type { NoteHistoryItem } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /** 浮层统一宽度：够放下一条批注，又不至于把正文盖掉半边。 */
@@ -22,6 +24,7 @@ const SURFACE = 'rounded-lg border border-border bg-popover shadow-md';
  * **清单 / 收起**（看和退）。胶囊不出现 = 批注交互整个不存在，正文就是拿来读的。
  */
 export function AnnotationToolbar({
+  projectId,
   file,
   mtime,
   notes,
@@ -29,8 +32,8 @@ export function AnnotationToolbar({
   session,
   onRemove,
   onClear,
-  onKeep,
 }: {
+  projectId: string;
   file: string;
   mtime: string;
   notes: Annotation[];
@@ -38,12 +41,14 @@ export function AnnotationToolbar({
   session: AnnotationSession;
   onRemove: (id: string) => void;
   onClear: () => void;
-  onKeep: (mtime: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [fallback, setFallback] = useState<string | null>(null);
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const changed = isDocumentChanged(seenMtime, mtime, notes.length);
+  const { batches, append, clear } = useNoteHistory(projectId, file);
+  const historyCount = batches.reduce((n, batch) => n + batch.notes.length, 0);
+  const lastArchive = useRef('');
   const { active, mode, setMode, panelOpen, setPanelOpen, toast, say } = session;
 
   useEffect(() => {
@@ -63,6 +68,33 @@ export function AnnotationToolbar({
     setFallback(null);
     setCopied(false);
   }, [active]);
+
+  // 文档一变就把当前这批收进历史、清掉页面标记。不管 AI 改全了没有。
+  useEffect(() => {
+    if (!changed || !notes.length) return;
+    const token = `${file}\0${mtime}\0${notes.map((note) => note.id).join(',')}`;
+    if (lastArchive.current === token) return;
+    lastArchive.current = token;
+    const snapshot: NoteHistoryItem[] = notes.map((note, index) => ({
+      quote: note.quote,
+      comment: note.comment,
+      structure: note.structure,
+      start: note.start,
+      end: note.end,
+      number: index + 1,
+    }));
+    const count = snapshot.length;
+    void (async () => {
+      try {
+        await append(snapshot);
+        onClear();
+        say(`文档已改动，本批 ${count} 条批注已收入历史，页面上的标记已清掉。`);
+      } catch (err) {
+        onClear();
+        say(`文档已改动，标记已清掉。这一批没写进历史：${(err as Error).message}`, 'warn');
+      }
+    })();
+  }, [append, changed, file, mtime, notes, onClear, say]);
 
   if (!active) return null;
 
@@ -89,27 +121,14 @@ export function AnnotationToolbar({
         'min-[900px]:right-[calc(200px+1.5rem)] xl:right-[calc(220px+1.5rem)]',
       )}
     >
-      {changed ? (
-        <Alert className={cn(CARD, 'bg-popover shadow-md')}>
-          <AlertTitle>这篇文档刚被改动过，批注可能已处理</AlertTitle>
-          <AlertDescription>
-            <p className="mb-2">不清空的话会一直留着，以免误伤还没处理的意见。</p>
-            <div className="flex gap-2">
-              <Button type="button" size="sm" onClick={onClear}>
-                清空
-              </Button>
-              <Button type="button" size="sm" variant="outline" onClick={() => onKeep(mtime)}>
-                保留
-              </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
       {panelOpen ? (
-        <div className={cn(CARD, SURFACE, 'max-h-72 min-h-0 overflow-hidden')}>
+        <div className={cn(CARD, SURFACE, 'max-h-96 min-h-0 overflow-hidden')}>
           <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-            <span className="text-sm font-medium">批注清单 · {notes.length} 条</span>
+            <span className="text-sm font-medium">
+              批注清单
+              {notes.length ? ` · 当前 ${notes.length}` : ''}
+              {historyCount ? ` · 历史 ${historyCount}` : ''}
+            </span>
             <Button
               type="button"
               variant="ghost"
@@ -120,7 +139,7 @@ export function AnnotationToolbar({
               关闭
             </Button>
           </div>
-          <ScrollArea className="max-h-[15rem]" viewportClassName="p-3">
+          <ScrollArea className="max-h-[20rem]" viewportClassName="p-3">
             {notes.length ? (
               <ul className="flex flex-col gap-2">
                 {notes.map((note, index) => (
@@ -166,9 +185,54 @@ export function AnnotationToolbar({
               </ul>
             ) : (
               <p className="text-xs text-muted-foreground">
-                还没有批注。点正文里的一块，或切到「选中文字」划一段。
+                {batches.length
+                  ? '当前没有批注。点正文里的一块继续批；下面是已经收入历史的批次。'
+                  : '还没有批注。点正文里的一块，或切到「选中文字」划一段。'}
               </p>
             )}
+            {batches.length ? (
+              <div className={cn(notes.length ? 'mt-3 border-t border-border pt-3' : 'mt-3')}>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium">历史</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 text-xs"
+                    onClick={() => {
+                      void clear().catch((err) =>
+                        say(`历史没清掉：${(err as Error).message}`, 'warn'),
+                      );
+                    }}
+                  >
+                    清空历史
+                  </Button>
+                </div>
+                <ul className="flex flex-col gap-3">
+                  {batches.map((batch) => (
+                    <li key={batch.id} className="flex flex-col gap-2">
+                      <p className="text-xs text-muted-foreground">
+                        {formatRelative(batch.archivedAt)} · {batch.notes.length} 条
+                      </p>
+                      {batch.notes.map((note, index) => (
+                        <div
+                          key={`${batch.id}-${note.number ?? index}`}
+                          className="rounded-lg border border-border bg-muted/40 px-3 py-2"
+                        >
+                          <span className="text-xs font-medium">
+                            {note.number ?? index + 1}. {note.structure}
+                          </span>
+                          <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                            「{note.quote}」
+                          </p>
+                          <p className="mt-1 text-sm">{note.comment}</p>
+                        </div>
+                      ))}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </ScrollArea>
         </div>
       ) : null}
@@ -202,7 +266,7 @@ export function AnnotationToolbar({
         </div>
       ) : null}
 
-      {!notes.length && !panelOpen ? (
+      {!notes.length && !panelOpen && !toast ? (
         <p className={cn(CARD, SURFACE, 'px-3 py-2 text-xs text-muted-foreground')}>
           点正文里的一块就能批注；要精确到某几个字，切到「选中文字」再划。
         </p>

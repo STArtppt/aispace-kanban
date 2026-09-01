@@ -380,6 +380,31 @@ export interface SourceVerification {
   checkedAt: string;
 }
 
+/**
+ * 预览批注归档后的一条。number 是归档当时页面上的编号。
+ * 旧服务没有这套接口（404），调用方要兜住，退回「没有历史」。
+ */
+export interface NoteHistoryItem {
+  quote: string;
+  comment: string;
+  structure: string;
+  start?: number;
+  end?: number;
+  number?: number;
+}
+
+export interface NoteHistoryBatch {
+  id: string;
+  archivedAt: string;
+  notes: NoteHistoryItem[];
+}
+
+export interface NoteHistory {
+  file: string;
+  batches: NoteHistoryBatch[];
+  batch?: NoteHistoryBatch;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -500,5 +525,20 @@ export const api = {
     request<{ ok: boolean; pattern: string; already?: boolean }>(`/api/projects/${id}/ignore`, {
       method: 'POST',
       body: JSON.stringify({ path: targetPath }),
+    }),
+  /**
+   * 预览批注历史。写在 ~/.pmwork/dashboard/note-history/，不碰工作空间。
+   * 旧服务没有这些接口（404），调用方要兜住并当成没有历史。
+   */
+  noteHistory: (id: string, file: string) =>
+    request<NoteHistory>(`/api/projects/${id}/note-history?file=${encodeURIComponent(file)}`),
+  appendNoteHistory: (id: string, file: string, notes: NoteHistoryItem[]) =>
+    request<NoteHistory>(`/api/projects/${id}/note-history`, {
+      method: 'POST',
+      body: JSON.stringify({ file, notes }),
+    }),
+  clearNoteHistory: (id: string, file: string) =>
+    request<NoteHistory>(`/api/projects/${id}/note-history?file=${encodeURIComponent(file)}`, {
+      method: 'DELETE',
     }),
 };

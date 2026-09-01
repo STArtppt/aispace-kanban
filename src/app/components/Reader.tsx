@@ -877,6 +877,7 @@ export function Reader({
               <DocumentToc items={tocItems} scrollContainerRef={mdScrollRef} />
             </div>
             <AnnotationToolbar
+              projectId={projectId}
               file={annotateFile}
               mtime={item.mtime}
               notes={annotations.notes}
@@ -884,7 +885,6 @@ export function Reader({
               session={annotate}
               onRemove={annotations.remove}
               onClear={annotations.clear}
-              onKeep={annotations.keep}
             />
         </div>
       ) : tablePackage ? (

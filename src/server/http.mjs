@@ -25,6 +25,7 @@ import {
 } from './config.mjs';
 import { captureStatus, startCapture } from './capture.mjs';
 import { CAPTURE_PACKAGE_PATH, readPackageBody, receiveCapturePackage } from './capture-inbox.mjs';
+import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-history.mjs';
 import { resolveInside } from './paths.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
@@ -1113,6 +1114,29 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, addIgnore(project, body.path));
+  }
+
+  // 预览批注历史：写看板配置目录，不碰工作空间。file 只当键，仍过 resolveInside 挡穿越。
+  if (head === 'projects' && id && action === 'note-history') {
+    const project = requireProject(id);
+    if (req.method === 'GET' || req.method === 'DELETE') {
+      const file = (url.searchParams.get('file') || '').trim();
+      if (!file) return json(res, 400, { error: '缺少文件路径' });
+      resolveInside(project.root, file);
+      if (req.method === 'GET') return json(res, 200, listNoteHistory(project.id, file));
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      return json(res, 200, clearNoteHistory(project.id, file));
+    }
+    if (req.method === 'POST') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      const body = await readBody(req);
+      const file = typeof body.file === 'string' ? body.file.trim() : '';
+      if (!file) return json(res, 400, { error: '缺少文件路径' });
+      resolveInside(project.root, file);
+      return json(res, 200, appendNoteHistory(project.id, file, body.notes));
+    }
   }
 
   // 贴 URL 采集 / 导入：看板唯一往工作空间写文件的接口。
