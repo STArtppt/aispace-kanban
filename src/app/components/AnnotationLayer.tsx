@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import {
   anchorFromDomSelection,
   anchorFromElement,
+  collectLeavesFromDom,
   domRangeFromBytes,
   SOURCE_RANGE_ATTR,
   SOURCE_TEXT_ATTR,
@@ -150,8 +151,11 @@ export function AnnotationLayer({
     const base = wrap.getBoundingClientRect();
     const nextRects: Highlight[] = [];
     const nextMarkers: Marker[] = [];
+    // 叶子表整份正文只走一遍：每条批注各自去收一次的话，代价是「批注条数 × 全文 DOM」，
+    // 而这个函数还挂在 ResizeObserver 上，会被反复触发
+    const leaves = notes.length ? collectLeavesFromDom(root) : [];
     notes.forEach((note, index) => {
-      const range = domRangeFromBytes(root, note.start, note.end);
+      const range = domRangeFromBytes(root, note.start, note.end, leaves);
       if (!range) return;
       const list = Array.from(range.getClientRects()).filter(
         (rect) => rect.width >= 1 && rect.height >= 1,

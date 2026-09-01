@@ -42,6 +42,7 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 表格 / html 包点「校验原件」报「产物不存在」 | 新布局 `item.path` 是正文目录（`SplittingObject/<名>/` 或 `MergedObject/`），溯源写在同级 `_manifest_<名>.md`；旧 `verifySource` 只在目录里找 `_manifest.md` | `curl` scan 看该条的 `path` vs `manifestPath`；校验应能吃正文目录或摘要文件。前端传 `manifestPath` 兼容旧进程 |
 | 关掉「转换失败」后又因刷新弹回来 | 失败任务还在服务端内存里；`useIngestJob` 挂载时 `GET /ingest` 把 `status: error` 又写成了提示。关掉只清了前端 state | `curl` `/ingest` 仍是 error 但界面不应再显示 Alert；只有这轮点「开始转换」失败才弹。hydrate 路径必须跳过 `setError` |
 | `pnpm test:anchor` 随机压测报「真实锚点错误」，例子里切片带着行内代码的反引号 | 判定器假阳性，不是锚点切错。跨行内代码时反引号把渲染文本切开，原文匹配不上，只能靠切片重渲染；`renderToStaticMarkup` 把撇号写成 `&#x27;`，`htmlToPlain` 只认 `&#39;` 就会对不回。AGENTS.md 的 `spawn('open', ...)` 随机撞上即挂 | 看失败信息里的「重渲染」是否还留着 `&#x27;`；`htmlToPlain` 必须解十六进制数字实体。固定用例「跨行内代码含撇号」就是这道闸 |
+| 切换文档预览卡顿，大文档点开界面僵住数秒（CDP `Runtime.evaluate` 都会超时） | `rehypeSourcePos` 的偏移换算是平方级 —— `charToByte` 每次都 `slice` + 编码整段正文，而盖锚点要对每个元素和每个文本节点各算两次；文档越大越吃不消（377 KB 的产物一次点击卡 4.2 s） | 浏览器里装 `PerformanceObserver({entryTypes:['longtask']})` 再点条目，看单条 longtask 时长；`pnpm test:anchor` 第 5 项「包 span 的渲染开销」就是这道闸，管线耗时跳到秒级即回归。换算一律走 `buildByteIndex` 的前缀表，别再调 `charToByte` |
 
 排不掉,继续:
 

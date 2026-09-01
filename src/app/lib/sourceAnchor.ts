@@ -25,6 +25,42 @@ export function charToByte(source: string, charOffset: number): number {
   return utf8Len(source.slice(0, charOffset));
 }
 
+/**
+ * char offset → UTF-8 byte offset 的前缀表，`table[i]` = `utf8Len(source.slice(0, i))`。
+ *
+ * 盖锚点要对每个元素和每个文本节点各算两次偏移；直接调 charToByte 是「切一遍 + 编码一遍
+ * 整段正文」，节点数 × 文档长度就成了平方级 —— 80 KB 的产物光这一步就是一秒多的同步阻塞，
+ * 切文档时整条主线程僵住。建一次表 O(n)，之后每次换算是一次下标。
+ */
+export function buildByteIndex(source: string): Uint32Array {
+  const table = new Uint32Array(source.length + 1);
+  let bytes = 0;
+  for (let i = 0; i < source.length; i++) {
+    const code = source.charCodeAt(i);
+    if (code < 0x80) {
+      bytes += 1;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff && i + 1 < source.length) {
+      const low = source.charCodeAt(i + 1);
+      if (low >= 0xdc00 && low <= 0xdfff) {
+        // 代理对合起来 4 字节；中间那一格按孤儿代理算(TextEncoder 会替换成 U+FFFD 的 3 字节)，
+        // 这样每一格都严格等于 utf8Len(slice(0, i))
+        table[i + 1] = bytes + 3;
+        table[i + 2] = bytes + 4;
+        bytes += 4;
+        i++;
+        continue;
+      }
+      bytes += 3;
+    } else {
+      bytes += 3;
+    }
+    table[i + 1] = bytes;
+  }
+  return table;
+}
+
 export function sliceUtf8(source: string, start: number, end: number): string {
   return decoder.decode(encoder.encode(source).subarray(start, end));
 }
@@ -141,12 +177,14 @@ export type AnchorFail = {
 
 export type AnchorResult = AnchorOk | AnchorFail;
 
-function rangeFromPosition(node: HastNode, source: string, byteOffset: number): SourceRange | null {
+function rangeFromPosition(node: HastNode, index: Uint32Array, byteOffset: number): SourceRange | null {
   const startOff = node.position?.start?.offset;
   const endOff = node.position?.end?.offset;
   if (startOff == null || endOff == null) return null;
-  const start = byteOffset + charToByte(source, startOff);
-  const end = byteOffset + charToByte(source, endOff);
+  // 位置越界(理论上不该有)时钳到表尾，行为与原先 charToByte 的两头夹取一致
+  const last = index.length - 1;
+  const start = byteOffset + index[Math.max(0, Math.min(startOff, last))];
+  const end = byteOffset + index[Math.max(0, Math.min(endOff, last))];
   if (end < start) return null;
   return { start, end };
 }
@@ -179,8 +217,8 @@ function shouldWrapText(parent: HastNode, child: HastNode): boolean {
   return true;
 }
 
-function wrapText(child: HastNode, file: string, source: string, byteOffset: number): HastNode {
-  const range = rangeFromPosition(child, source, byteOffset);
+function wrapText(child: HastNode, file: string, index: Uint32Array, byteOffset: number): HastNode {
+  const range = rangeFromPosition(child, index, byteOffset);
   const span: HastNode = {
     type: 'element',
     tagName: 'span',
@@ -192,18 +230,18 @@ function wrapText(child: HastNode, file: string, source: string, byteOffset: num
   return span;
 }
 
-function walk(node: HastNode, file: string, source: string, byteOffset: number) {
+function walk(node: HastNode, file: string, index: Uint32Array, byteOffset: number) {
   if (node.type === 'element' && !isTextWrapper(node)) {
-    const range = rangeFromPosition(node, source, byteOffset);
+    const range = rangeFromPosition(node, index, byteOffset);
     if (range) stamp(node, file, range);
   }
   if (!node.children) return;
   const next: HastNode[] = [];
   for (const child of node.children) {
     if (shouldWrapText(node, child)) {
-      next.push(wrapText(child, file, source, byteOffset));
+      next.push(wrapText(child, file, index, byteOffset));
     } else {
-      walk(child, file, source, byteOffset);
+      walk(child, file, index, byteOffset);
       next.push(child);
     }
   }
@@ -217,7 +255,8 @@ export function rehypeSourcePos(options: SourcePosOptions) {
   const byteOffset = options.byteOffset ?? 0;
   return (tree: HastNode) => {
     if (!file) return;
-    walk(tree, file, source, byteOffset);
+    // 前缀表跟着这一次调用建，不跨文档缓存：source 变了表就作废
+    walk(tree, file, buildByteIndex(source), byteOffset);
   };
 }
 
@@ -268,7 +307,8 @@ export function byteToCharOffset(text: string, range: SourceRange, bytePos: numb
     const cp = text.codePointAt(i);
     if (cp == null) break;
     const ch = String.fromCodePoint(cp);
-    const size = utf8Len(ch);
+    // 单字符宽度直接按码点算；这里每字符起一次 TextEncoder 太贵，且这条循环在画高亮时按叶子重复走
+    const size = cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4;
     if (bytes + size > rel) return i;
     bytes += size;
     i += ch.length;
@@ -543,9 +583,18 @@ export function anchorFromDomSelection(root: Element, selection: Selection | nul
   return anchorFromLeaves(leaves, startChar, endChar, quote);
 }
 
-/** 把一条批注的字节区间还原成 DOM Range，用来画高亮。 */
-export function domRangeFromBytes(root: Element, start: number, end: number): Range | null {
-  const leaves = collectLeavesFromDom(root);
+/**
+ * 把一条批注的字节区间还原成 DOM Range，用来画高亮。
+ *
+ * `leaves` 可以由调用方预先算好复用：一次 collectLeavesFromDom 要走遍正文所有文本节点、
+ * 还要逐个向上收 ancestors，按批注条数重复调就是「条数 × 全文 DOM」。
+ */
+export function domRangeFromBytes(
+  root: Element,
+  start: number,
+  end: number,
+  leaves: TextLeaf[] = collectLeavesFromDom(root),
+): Range | null {
   let startNode: Text | null = null;
   let startOffset = 0;
   let endNode: Text | null = null;
