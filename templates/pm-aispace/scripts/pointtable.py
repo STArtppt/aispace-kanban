@@ -322,6 +322,8 @@ def looks_like_point_table(path: Path) -> bool:
     光看扩展名不够：`input/raw/` 下的普通 xlsx（指标体系、层级对应表）也是表格，
     误判会让它们既进不了点表主表、又被 ingest.py 让走，两边都漏。
     判据是表头必须同时有「描述」和「地址/点号」两类列——这是点表区别于一般报表的特征。
+    「点号」必须是表头原词：HEADER_ALIAS 把「序号」也映射成点号，几乎每张中文表都有序号，
+    配上「测点名称」就会把指标-测点映射表误判成点表，ingest.py 让路后两边都漏。
     """
     try:
         sheets = ([(s.name, s.rows) for s in read_xls(path)] if path.suffix.lower() == ".xls"
@@ -331,8 +333,9 @@ def looks_like_point_table(path: Path) -> bool:
     for _, rows in sheets:
         if not rows:
             continue
-        mapped = {HEADER_ALIAS.get(h.strip(), "") for h in rows[0]}
-        if "测点描述" in mapped and mapped & {"测点地址", "点号"}:
+        headers = [h.strip() for h in rows[0]]
+        mapped = {HEADER_ALIAS.get(h, "") for h in headers}
+        if "测点描述" in mapped and ("测点地址" in mapped or "点号" in headers):
             return True
     return False
 
