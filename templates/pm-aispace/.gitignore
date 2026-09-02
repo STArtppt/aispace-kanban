@@ -31,6 +31,7 @@ visualization/prototypes/**/.cache/
 # Office 编辑时产生的锁文件
 ~$*
 .~lock.*
+.~*
 
 # skill-creator 跑评测产生的工作区
 *-workspace/
