@@ -31,11 +31,13 @@ import { AnnotationLayer } from '@/components/AnnotationLayer';
 import { AnnotationToolbar } from '@/components/AnnotationToolbar';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
+import { PreviewSearch } from '@/components/PreviewSearch';
 import { useAnnotationSession } from '@/hooks/useAnnotationSession';
 import { isDocumentChanged, useAnnotations } from '@/hooks/useAnnotations';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
+import { createSearchJumper, type SearchJumper } from '@/lib/blockIndex';
 import { utf8Len } from '@/lib/sourceAnchor';
 import {
   api,
@@ -732,6 +734,25 @@ export function Reader({
     setHtmlTab('preview');
   }, [item.path]);
 
+  // 预览窗内检索：开合与关键词归 PreviewSearch 自己;高亮控制器活得比检索条久,
+  // 选中结果后条子就关了,两秒的闪烁还得有人管到头。内容一变用 key 把条子卸掉,
+  // 上一份文档的结果不能留在屏幕上。
+  const jumperRef = useRef<SearchJumper | null>(null);
+  const jumper = jumperRef.current ?? (jumperRef.current = createSearchJumper());
+  // 纯文本的 <pre>、共享滚动区、表格包「数据」页：搜索索引用它们定位正文根
+  const textPreRef = useRef<HTMLPreElement>(null);
+  const plainScrollRef = useRef<HTMLDivElement>(null);
+  const tableSearchRef = useRef<HTMLDivElement>(null);
+  const searchResetKey = `${item.path}:${item.mtime}:${tableTab}:${htmlTab}:${reconvertedAt}`;
+
+  // 换文件、表格包/HTML 原型切 tab、重转后正文重读（mtime 变）：清掉可能还在走的高亮
+  useEffect(() => {
+    jumper.clear();
+  }, [item.path, item.mtime, tableTab, htmlTab, reconvertedAt, jumper]);
+
+  // 预览窗卸载时收掉可能还在走的高亮定时器与 class
+  useEffect(() => () => jumper.clear(), [jumper]);
+
   // markdown / 表格摘要目录：放在滚动区外；条目来自渲染后 DOM，与锚点严格一致
   const mdScrollRef = useRef<HTMLDivElement>(null);
   const [tocState, setTocState] = useState<{ path: string; items: TocItem[] }>({
@@ -747,6 +768,43 @@ export function Reader({
     mode === 'markdown' || (mode === 'table' && isDir && multiSheet && tableTab === 'summary');
   const tocItems = showDocToc && tocState.path === item.path ? tocState.items : [];
   const tablePackage = mode === 'table' && isDir && multiSheet;
+
+  // 搜索按钮只在"此刻有文字可搜"时出现。表格「数据」页和单份 csv/tsv 也给入口,
+  // 但只搜已经画出来的这一页,不把整张表拉进浏览器。HTML 预览页在隔离 iframe
+  // 里读不到、图片/图库/原始格式/读取中失败一律不给假入口。
+  const searchingTable =
+    mode === 'table' && (!tablePackage || tableTab === 'data');
+  const canSearch =
+    (mode === 'markdown' && !loading && !error && Boolean(body)) ||
+    (tablePackage && tableTab === 'summary' && !manifestLoading && !manifestError && Boolean(body)) ||
+    searchingTable ||
+    (mode === 'html' && isDir && hasManifest && htmlTab === 'manifest' && !manifestLoading && !manifestError && Boolean(body)) ||
+    (mode === 'text' && !loading && !error && Boolean(content));
+
+  // 正文根：markdown / 表格摘要取 .markdown-body，纯文本取 <pre>，
+  // 表格数据页取那张 <table>（按行分块），HTML 校验说明取 .markdown-body
+  const getSearchRoot = () => {
+    if (mode === 'text') return textPreRef.current;
+    if (searchingTable) {
+      return (
+        tableSearchRef.current?.querySelector('table') ??
+        plainScrollRef.current?.querySelector('table') ??
+        null
+      );
+    }
+    if (mode === 'html') {
+      return plainScrollRef.current?.querySelector<HTMLElement>('.markdown-body') ?? null;
+    }
+    return mdScrollRef.current?.querySelector<HTMLElement>('.markdown-body') ?? null;
+  };
+  const searchBox = canSearch ? (
+    <PreviewSearch
+      key={searchResetKey}
+      getBlocksRoot={getSearchRoot}
+      jumper={jumper}
+      emptyHint={searchingTable ? '表格只搜当前这一页，不是整张表。' : undefined}
+    />
+  ) : null;
 
   return (
     <aside
@@ -819,6 +877,7 @@ export function Reader({
       */}
       {mode === 'markdown' ? (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+            {searchBox}
             <div
               ref={mdScrollRef}
               data-reader-scroll
@@ -901,6 +960,11 @@ export function Reader({
             </Tabs>
           </div>
 
+          <div
+            ref={tableSearchRef}
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+          >
+          {searchBox}
           {tableTab === 'summary' ? (
             <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
               <div
@@ -916,15 +980,15 @@ export function Reader({
                 {manifestContent && !manifestError ? (
                   <div className="mx-auto w-full max-w-[76ch]">
                     <SourceBar
-                  key={item.path}
-                  meta={meta}
-                  sourceState={sourceState}
-                  projectId={projectId}
-                  path={verifyPath}
-                  canIngest={canIngest}
-                  ingest={ingest}
-                  onReconverted={onReconverted}
-                />
+                      key={item.path}
+                      meta={meta}
+                      sourceState={sourceState}
+                      projectId={projectId}
+                      path={verifyPath}
+                      canIngest={canIngest}
+                      ingest={ingest}
+                      onReconverted={onReconverted}
+                    />
                     {sqlitePath ? (
                       <p className="mb-4 rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-[11px] text-muted-foreground">
                         SQL 库：{sqlitePath}
@@ -960,15 +1024,27 @@ export function Reader({
               <TableReader projectId={projectId} item={item} sheets={sheets} />
             </ScrollArea>
           )}
+          </div>
         </div>
       ) : (
+        <div ref={plainScrollRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        {searchBox}
         <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
           {mode === 'text' ? (
             <>
               {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {content && !error ? (
-                <pre className="font-mono text-xs leading-6 whitespace-pre-wrap">{content}</pre>
+                <pre ref={textPreRef} className="font-mono text-xs leading-6 whitespace-pre-wrap">
+                    {content.split('\n').map((line, index, lines) => (
+                      // 按行包一层块级 span：纯文本才有"块"可索引、可跳转、可高亮。
+                      // 换行符留在 span 里当真实文本，折行与复制行为不变（preview-search 决策 2）；
+                      // 末行只在原文以换行结尾时才补 '\n'，不往复制结果里添原文没有的换行
+                      <span key={index} className="block">
+                        {index < lines.length - 1 || content.endsWith('\n') ? `${line}\n` : line}
+                      </span>
+                    ))}
+                </pre>
               ) : null}
             </>
           ) : null}
@@ -996,15 +1072,15 @@ export function Reader({
           {mode === 'html' ? (
             <div className="flex min-h-[min(70vh,640px)] flex-col gap-3">
               <SourceBar
-                  key={item.path}
-                  meta={meta}
-                  sourceState={sourceState}
-                  projectId={projectId}
-                  path={verifyPath}
-                  canIngest={canIngest}
-                  ingest={ingest}
-                  onReconverted={onReconverted}
-                />
+                key={item.path}
+                meta={meta}
+                sourceState={sourceState}
+                projectId={projectId}
+                path={verifyPath}
+                canIngest={canIngest}
+                ingest={ingest}
+                onReconverted={onReconverted}
+              />
               <Tabs
                 value={htmlTab}
                 onValueChange={(v) => setHtmlTab(v === 'manifest' ? 'manifest' : 'preview')}
@@ -1089,6 +1165,7 @@ export function Reader({
             </div>
           ) : null}
         </ScrollArea>
+        </div>
       )}
     </aside>
   );
