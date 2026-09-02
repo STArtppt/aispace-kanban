@@ -86,13 +86,15 @@ aispace-kanban/
 │   │   ├── capture.mjs     #   ★ 唯一的工作空间写入收口:贴 URL 采集 → visualization/ 之下
 │   │   ├── paths.mjs       #   ★ resolveInside 的唯一实现(不变量 2 的载体)
 │   │   └── platform.mjs    #   ★ 三平台差异只写在这:开浏览器 / 定位文件 / 找 python
-│   └── app/                # 平面 3 · 前端 SPA(TS,`@/` 指向这里)
-│       ├── App.tsx         #   外壳:侧栏 + 四视图路由 + 主题
-│       ├── components/     #   业务面板(*Panel.tsx)、阅读器、通用小件
-│       │   └── ui/         #   @startist/* vendored 快照(shadcn add 生成)
-│       ├── hooks/          #   useProjects / useScan(含 SSE 订阅)
-│       ├── lib/api.ts      #   ★ 前后端契约:接口封装 + 全部响应类型
-│       └── styles/globals.css  # ★ 设计令牌唯一源头
+│   ├── app/                # 平面 3 · 前端 SPA(TS,`@/` 指向这里)
+│   │   ├── App.tsx         #   外壳:侧栏 + 四视图路由 + 主题
+│   │   ├── components/     #   业务面板(*Panel.tsx)、阅读器、通用小件
+│   │   │   └── ui/         #   @startist/* vendored 快照(shadcn add 生成)
+│   │   ├── hooks/          #   useProjects / useScan(含 SSE 订阅)
+│   │   ├── lib/api.ts      #   ★ 前后端契约:接口封装 + 全部响应类型
+│   │   └── styles/globals.css  # ★ 设计令牌唯一源头
+│   └── shared/             # 平面 2 与 3 共用的**纯函数**(.mjs + JSDoc)
+│       └── textMatch.mjs   #   归一 + 分词:整表检索在服务端判定、片段加粗在前端,口径必须同源
 ├── scripts/                # 平面外 · 仓库工具
 │   ├── build-npm-package.mjs  #   组 npm 包(pnpm build:npm),产出 npm-package/
 │   └── smoke-package.mjs      #   ★ 装包冒烟(pnpm smoke:npm),CI 三平台跑的就是它
@@ -131,9 +133,18 @@ aispace-kanban/
 | 命令行参数 / 进程生命周期 / 启动输出 | `bin/cli.mjs` |
 | 读磁盘、算数据、给 JSON、伺服文件 | `src/server/**` |
 | 渲染、交互、状态 | `src/app/**` |
+| 服务端与前端**必须给出同一个答案**的纯计算 | `src/shared/**` |
 
 **跨平面的唯一契约是 `src/app/lib/api.ts`** —— 服务端产出的 JSON 形状必须与它的 type 一致。
 改一侧就必须改另一侧,见 [`dashboard-feature-flow`](.claude/skills/dashboard-feature-flow/SKILL.md)。
+
+**`src/shared/` 的边界很窄:只放两侧共用的纯函数** —— 不碰 DOM、不碰 Node API、零依赖,
+`.mjs` 写、JSDoc 注类型(`tsconfig` 开了 `allowJs`、不开 `checkJs`)。
+它存在的唯一理由是"两边算出不同答案就是 bug 且没有类型检查拦得住"
+(如整表检索的关键词分词:服务端判定命中、前端负责加粗)。
+带 IO 的东西一律留在各自平面;往这里加文件前先问一句"两边真的必须同源吗"。
+**新增文件记得同步 `scripts/build-npm-package.mjs` 的拷贝清单**,否则装包的人一起手就是
+`ERR_MODULE_NOT_FOUND`。
 
 ---
 

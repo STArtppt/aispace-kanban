@@ -7,73 +7,15 @@
  *
  * 匹配模型:查询按中英分词后,每个词在块文本里**子串命中**即可,
  * 各词允许乱序、不连续地分布;命中词数多的排前,同分看密集度,再看出现位置。
+ *
+ * 归一与分词本身住在 `src/shared/textMatch.mjs`,与服务端的整表扫描共用同一份 ——
+ * 两侧切词不一致会让「服务端判定命中、前端一个词都加不了粗」无声发生。
  */
+import { normalize, queryTokens, tokenize } from '../../shared/textMatch.mjs';
 
-/**
- * 归一:全角 ASCII 区(U+FF01–U+FF5E)折回半角、全角空格折半角、英文折小写。
- * 逐 UTF-16 码元处理,长度严格不变 —— 归一化文本里的下标才能直接当原文下标用,
- * 片段切分靠这一点把命中位置切回原文。非 ASCII 字符(含 CJK)一律原样保留。
- */
-export function normalize(text: string): string {
-  let out = '';
-  for (let i = 0; i < text.length; i++) {
-    let code = text.charCodeAt(i);
-    if (code === 0x3000) {
-      code = 0x20;
-    } else if (code >= 0xff01 && code <= 0xff5e) {
-      code -= 0xfee0;
-    }
-    if (code >= 0x41 && code <= 0x5a) code += 32;
-    out += String.fromCharCode(code);
-  }
-  return out;
-}
+// 原地导出:调用方(PreviewSearch / blockIndex 的使用者)照旧从这里拿,不必知道内核搬了家
+export { normalize, queryTokens, tokenize };
 
-function isCjkCode(code: number): boolean {
-  return (
-    (code >= 0x3040 && code <= 0x30ff) || // 平假名 + 片假名
-    (code >= 0x3400 && code <= 0x4dbf) || // CJK 扩展 A
-    (code >= 0x4e00 && code <= 0x9fff) || // CJK 统一表意文字
-    (code >= 0xac00 && code <= 0xd7af) || // 谚文
-    (code >= 0xf900 && code <= 0xfaff) // CJK 兼容表意文字
-  );
-}
-
-function isAlnumCode(code: number): boolean {
-  return (
-    (code >= 0x30 && code <= 0x39) || // 0-9
-    (code >= 0x41 && code <= 0x5a) || // A-Z(归一后其实到不了,兜一手)
-    (code >= 0x61 && code <= 0x7a) // a-z
-  );
-}
-
-/**
- * 分词:连续 CJK 一段、连续字母数字一段,其余一律作分隔。
- * 输入先过 normalize,查询与语料走同一套切法才能对上(全角的「ｔａｓｋｉｄ」
- * 归一成 "taskid" 后才会被切成同一个词)。
- */
-export function tokenize(text: string): string[] {
-  const normalized = normalize(text);
-  const tokens: string[] = [];
-  let current = '';
-  let currentKind: 'cjk' | 'alnum' | null = null;
-  const flush = () => {
-    if (current) tokens.push(current);
-    current = '';
-    currentKind = null;
-  };
-  for (let i = 0; i < normalized.length; i++) {
-    const code = normalized.charCodeAt(i);
-    const kind = isCjkCode(code) ? 'cjk' : isAlnumCode(code) ? 'alnum' : null;
-    if (kind === null || kind !== currentKind) flush();
-    if (kind !== null) {
-      currentKind = kind;
-      current += normalized[i];
-    }
-  }
-  flush();
-  return tokens;
-}
 
 /** 结果片段里的一小段;matched = 这是命中词,渲染时加粗 */
 export interface SnippetPart {
@@ -204,7 +146,7 @@ export function searchBlocks(
   query: string,
   limit = SEARCH_RESULT_LIMIT,
 ): SearchResult {
-  const tokens = [...new Set(tokenize(query))].filter((token) => token.length > 0);
+  const tokens = queryTokens(query);
   if (!tokens.length) return { hits: [], total: 0, truncated: false };
   const scored: { index: number; score: number; span: number; first: number }[] = [];
   for (let i = 0; i < blocks.length; i++) {

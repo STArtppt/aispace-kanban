@@ -147,6 +147,36 @@ export interface TablePage {
   mtime: string;
 }
 
+/** /api/projects/:id/table-search 的一条命中 */
+export interface TableSearchHit {
+  /** 数据行序号，从 0 起，**不含表头** —— 前端拿它算页码并定位 <tr> */
+  row: number;
+  /** 该行的原始文本。服务端不解析 CSV，前端自己按单行解析成单元格 */
+  text: string;
+}
+
+/**
+ * /api/projects/:id/table-search 整表检索的结果。
+ * 匹配口径是「一行里出现全部关键词」，结果按行号先后排 —— 与预览窗内 markdown 那套
+ * 模糊排序不是一回事，界面上要说清楚（见 openspec 的 table-full-scan-search）。
+ */
+export interface TableSearchResult {
+  path: string;
+  rows: TableSearchHit[];
+  /** 实际扫过的数据行数 */
+  scannedRows: number;
+  /** 命中数到了上限，rows 只有前若干条 */
+  truncated: boolean;
+  /** 超出时间预算、文件没扫完。界面 **必须如实说**，不能显示成「没找到」 */
+  partial: boolean;
+  /** 客户端断开导致的提前收尾；正常拿到响应时不会为 true，缺了当 false */
+  aborted?: boolean;
+  /** 总数据行数。没扫完且服务端手上没有行数缓存时不给，缺了就别显示总数 */
+  totalRows?: number;
+  size: number;
+  mtime: string;
+}
+
 export interface PrototypeItem {
   itemKey: string;
   title: string;
@@ -491,6 +521,20 @@ export interface NoteHistory {
   batch?: NoteHistoryBatch;
 }
 
+/**
+ * 请求失败时抛的错误。`status` 是 HTTP 状态码 —— 调用方靠它区分
+ * 「老服务进程没有这个接口」(404，可以降级) 与「真的出错了」(500 / 其它，必须如实报)。
+ * 只带 message 的老写法照旧能用（catch 里读 `.message`）。
+ */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -501,9 +545,9 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     // 前端已经构建到新版、接口服务还是老进程时会撞上这个。直接把原因写进提示，
     // 不然「未知接口」看着像路由写错了，实际只是没重启 serve。
     if (res.status === 404 && typeof detail.error === 'string' && detail.error.startsWith('未知接口')) {
-      throw new Error(`${detail.error}（接口服务的进程可能比前端旧，重启 serve 再试）`);
+      throw new ApiError(`${detail.error}（接口服务的进程可能比前端旧，重启 serve 再试）`, res.status);
     }
-    throw new Error(detail.error || `请求失败（${res.status}）`);
+    throw new ApiError(detail.error || `请求失败（${res.status}）`, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -560,6 +604,27 @@ export const api = {
       limit: String(limit),
     });
     return request<TablePage>(`/api/projects/${id}/table?${q}`);
+  },
+  /**
+   * 整表检索：服务端流式扫一遍这张表，挑出「一行里出现全部关键词」的行，按行号先后给回。
+   * 只读、不落索引；命中够了或超时就停，`truncated` / `partial` 说明它停在哪。
+   *
+   * **老服务没有这个接口（404），调用方要自己兜住** —— 退回只搜当前已经画出来的这一页，
+   * 并把「只搜了这一页」说给用户听。其它错误不要降级，如实报。
+   * `signal` 用来在用户改词 / 关检索条 / 换文件时掐掉上一次扫描。
+   */
+  tableSearch: (
+    id: string,
+    path: string,
+    q: string,
+    opts?: { limit?: number; signal?: AbortSignal },
+  ) => {
+    const params = new URLSearchParams({ path, q });
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    return request<TableSearchResult>(
+      `/api/projects/${id}/table-search?${params}`,
+      opts?.signal ? { signal: opts.signal } : undefined,
+    );
   },
   /**
    * 重算原件 sha256 跟产物记的比对；大文件要算几秒，只在用户点「校验原件」时调。

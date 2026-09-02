@@ -27,6 +27,7 @@ import { captureStatus, startCapture } from './capture.mjs';
 import { CAPTURE_PACKAGE_PATH, readPackageBody, receiveCapturePackage } from './capture-inbox.mjs';
 import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-history.mjs';
 import { resolveInside } from './paths.mjs';
+import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
 import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
@@ -170,6 +171,100 @@ async function readCsvPage(abs, { offset = 0, limit = 50 } = {}) {
     totalRows: finalTotal,
     offset,
     limit,
+    size: stats.size,
+    mtime: stats.mtime.toISOString(),
+  };
+}
+
+/**
+ * 整表检索的默认上限与时间预算。
+ * 200 条对「找到那一行」已经够用；5s 是本机读几十 MB 的宽裕上界。
+ * 两个数都拍得偏保守 —— 超了就如实说「没扫完」，**绝不谎称已经搜遍整张表**，
+ * 那种假阴性比没有搜索更坏。
+ */
+const TABLE_SCAN_LIMIT = 200;
+const TABLE_SCAN_MAX_LIMIT = 500;
+const TABLE_SCAN_BUDGET_MS = 5000;
+/** 每隔这么多行看一次时钟与客户端是否还在。Date.now() 不贵，但没必要每行都问 */
+const TABLE_SCAN_CHECK_EVERY = 2000;
+
+/**
+ * 整表流式检索：逐行读，判定「这一行是否包含全部关键词」，攒够 limit 或超时就停。
+ *
+ * 与 readCsvPage 并列，用的是同一套 readline 流 —— 分页接口存在的理由就是
+ * 「整表进不了 JSON」，检索同样不把整张表读进内存，更不落任何索引文件（只读红线）。
+ * 判定在**整行原始文本**上做，服务端不解析 CSV：片段切分与加粗留给前端，
+ * 两边的口径靠共用的 textMatch 内核保证一致。
+ *
+ * @param {string} abs 表格绝对路径（调用方已过 resolveInside）
+ * @param {{ tokens: string[], limit?: number, budgetMs?: number, isAborted?: () => boolean }} opts
+ */
+async function scanCsv(abs, { tokens, limit = TABLE_SCAN_LIMIT, budgetMs = TABLE_SCAN_BUDGET_MS, isAborted = () => false }) {
+  const stats = fs.statSync(abs);
+  const cacheKey = `${abs}\0${stats.mtimeMs}`;
+  const cachedTotal = tableRowCountCache.get(cacheKey);
+
+  const stream = fs.createReadStream(abs, { encoding: 'utf8' });
+  const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  const deadline = Date.now() + budgetMs;
+
+  const rows = [];
+  let seenHeader = false;
+  let scannedRows = 0;
+  let truncated = false;
+  let partial = false;
+  let aborted = false;
+
+  for await (const raw of rl) {
+    const line = seenHeader ? raw : raw.replace(/^\uFEFF/, '');
+    if (!line.trim()) continue;
+    // 表头不算数据行，也不作为命中返回
+    if (!seenHeader) {
+      seenHeader = true;
+      continue;
+    }
+    if (matchesAllTokens(line, tokens)) rows.push({ row: scannedRows, text: line });
+    scannedRows += 1;
+    if (rows.length >= limit) {
+      truncated = true;
+      rl.close();
+      break;
+    }
+    if (scannedRows % TABLE_SCAN_CHECK_EVERY === 0) {
+      // 客户端走了（改词、关检索条、换文件）就立刻停，别把整个文件读完再丢弃结果
+      if (isAborted()) {
+        aborted = true;
+        rl.close();
+        break;
+      }
+      if (Date.now() > deadline) {
+        partial = true;
+        rl.close();
+        break;
+      }
+    }
+  }
+  // rl.close() 不会销毁底层流，显式收掉文件句柄
+  stream.destroy();
+
+  const scannedAll = !truncated && !partial && !aborted;
+  // 扫完了就顺手把行数喂给 /table 共用的那份缓存（key 同为 路径 + mtime）
+  if (scannedAll && cachedTotal === undefined) {
+    tableRowCountCache.set(cacheKey, scannedRows);
+    if (tableRowCountCache.size > 64) {
+      const first = tableRowCountCache.keys().next().value;
+      tableRowCountCache.delete(first);
+    }
+  }
+
+  return {
+    rows,
+    scannedRows,
+    truncated,
+    partial,
+    aborted,
+    // 没扫完时行数只能靠缓存；缓存也没有就不给 —— 前端据此不显示总数，不瞎猜
+    totalRows: scannedAll ? scannedRows : cachedTotal,
     size: stats.size,
     mtime: stats.mtime.toISOString(),
   };
@@ -1226,6 +1321,47 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
     const page = await readCsvPage(abs, { offset, limit });
     return json(res, 200, { path: relPath, ...page });
+  }
+
+  // 整表检索：不分页地扫一遍，挑出「包含全部关键词」的行。流式、只读、不落索引；
+  // 命中够了或超时就停，并如实标出是截断还是没扫完（见 openspec table-full-scan-search）
+  if (head === 'projects' && id && action === 'table-search') {
+    const project = requireProject(id);
+    const relPath = url.searchParams.get('path') || '';
+    const abs = resolveInside(project.root, relPath);
+    if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return json(res, 404, { error: '文件不存在' });
+    const ext = path.extname(abs).toLowerCase();
+    if (ext !== '.csv' && ext !== '.tsv') {
+      return json(res, 400, { error: '只支持预览 .csv / .tsv 表格' });
+    }
+    const tokens = queryTokens(url.searchParams.get('q') || '');
+    const limit = Math.min(
+      TABLE_SCAN_MAX_LIMIT,
+      Math.max(1, Number(url.searchParams.get('limit')) || TABLE_SCAN_LIMIT),
+    );
+    const stats = fs.statSync(abs);
+    // 纯空白 / 纯标点切不出关键词：直接给空结果，不为它白扫一遍大文件
+    if (!tokens.length) {
+      return json(res, 200, {
+        path: relPath,
+        rows: [],
+        scannedRows: 0,
+        truncated: false,
+        partial: false,
+        aborted: false,
+        totalRows: tableRowCountCache.get(`${abs}\0${stats.mtimeMs}`),
+        size: stats.size,
+        mtime: stats.mtime.toISOString(),
+      });
+    }
+    let closed = false;
+    req.on('close', () => {
+      closed = true;
+    });
+    const result = await scanCsv(abs, { tokens, limit, isAborted: () => closed });
+    // 客户端已经走了，socket 上写什么都没人收
+    if (closed) return res.end();
+    return json(res, 200, { path: relPath, ...result });
   }
 
   // 按需校验溯源：重算原件的 sha256 跟产物记的比。扫描只看 mtime（快但会误报），

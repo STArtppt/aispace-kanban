@@ -2,7 +2,7 @@
 /**
  * 组装可发布的 npm 包，产出在 npm-package/ 暂存目录：
  *
- *   bin/cli.mjs + src/server/ + dist/ + templates/ + 精简 package.json + README.md
+ *   bin/cli.mjs + src/server/ + src/shared/ + dist/ + templates/ + 精简 package.json + README.md
  *
  * 为什么不直接把仓库根发出去：
  *   - 根 package.json 的 dependencies 里大半是**前端**依赖（react / papaparse …），
@@ -90,10 +90,14 @@ function renameGitignores(dir) {
   }
 }
 renameGitignores(path.join(OUT, 'templates'));
-fs.cpSync(path.join(ROOT, 'src', 'server'), path.join(OUT, 'src', 'server'), {
-  recursive: true,
-  filter: copyFilter,
-});
+// src/shared 是前端与服务端共用的纯函数内核（归一分词）。服务端 import 它，
+// 漏拷这一份，npm 装出来的服务一起手就是 ERR_MODULE_NOT_FOUND。
+for (const dir of ['server', 'shared']) {
+  fs.cpSync(path.join(ROOT, 'src', dir), path.join(OUT, 'src', dir), {
+    recursive: true,
+    filter: copyFilter,
+  });
+}
 fs.mkdirSync(path.join(OUT, 'bin'), { recursive: true });
 fs.copyFileSync(path.join(ROOT, 'bin', 'cli.mjs'), path.join(OUT, 'bin', 'cli.mjs'));
 fs.chmodSync(path.join(OUT, 'bin', 'cli.mjs'), 0o755);

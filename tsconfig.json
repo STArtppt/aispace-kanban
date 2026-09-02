@@ -6,6 +6,9 @@
     "module": "ESNext",
     "skipLibCheck": true,
     "moduleResolution": "bundler",
+    // src/shared/*.mjs 是前端与服务端共用的纯函数内核（JSDoc 注类型）。
+    // 只开 allowJs 不开 checkJs：让 tsc 从 JSDoc 推类型，但不去检查无类型的 .mjs 本身。
+    "allowJs": true,
     "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,

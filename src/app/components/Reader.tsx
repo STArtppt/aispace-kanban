@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import Papa from 'papaparse';
 import {
   ArrowLeftToLine,
@@ -31,16 +31,22 @@ import { AnnotationLayer } from '@/components/AnnotationLayer';
 import { AnnotationToolbar } from '@/components/AnnotationToolbar';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
-import { PreviewSearch } from '@/components/PreviewSearch';
+import {
+  PreviewSearch,
+  type PreviewSearchOutcome,
+  type PreviewSearchSource,
+} from '@/components/PreviewSearch';
 import { useAnnotationSession } from '@/hooks/useAnnotationSession';
 import { isDocumentChanged, useAnnotations } from '@/hooks/useAnnotations';
 import { useFileManagerName } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
-import { createSearchJumper, type SearchJumper } from '@/lib/blockIndex';
+import { collectBlocks, createSearchJumper, type SearchJumper } from '@/lib/blockIndex';
+import { queryTokens, searchBlocks, toSnippetParts } from '@/lib/fuzzySearch';
 import { utf8Len } from '@/lib/sourceAnchor';
 import {
   api,
+  ApiError,
   type AssetGroup,
   type ConvertedItem,
   type FileItem,
@@ -51,6 +57,20 @@ import { cn } from '@/lib/utils';
 
 /** 表格预览每页行数（不含表头）；大点表只拉一页，避免整文件进内存 */
 const TABLE_PAGE_SIZE = 50;
+
+/**
+ * 整表检索命中行的**展示文本**：服务端给回的是原始 CSV 行（判定也在原始行上做），
+ * 这里解析成单元格再用空格拼 —— 与 blockIndex 里表格按行分块的拼法一致，
+ * 于是同一行在「本地搜当前页」和「整表搜」两条路径下看起来是同一段文字。
+ */
+function csvRowText(line: string): string {
+  const cells = Papa.parse<string[]>(line, { skipEmptyLines: true }).data[0];
+  if (!cells?.length) return line;
+  return cells
+    .map((cell) => (cell || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join(' ');
+}
 
 /** 只做展示用的 frontmatter 拆分，和服务端那份保持一致的宽松规则。 */
 function splitFrontmatter(text: string): { meta: [string, string][]; body: string; bodyCharOffset: number } {
@@ -315,7 +335,8 @@ function CsvGrid({
           <tbody>
             {body.length ? (
               body.map((row, i) => (
-                <tr key={i} className="hover:bg-accent/50">
+                // data-row-index 是**绝对行号**（不含表头）：整表检索命中后靠它找到这一行
+                <tr key={i} data-row-index={page * pageSize + i} className="hover:bg-accent/50">
                   {head.map((_, j) => (
                     <td key={j} className="border-b border-border px-3 py-2 align-top whitespace-pre-wrap">
                       {row[j] ?? ''}
@@ -376,8 +397,28 @@ function CsvGrid({
   );
 }
 
+/**
+ * 表格的命令式句柄：整表检索命中一行后，由外部驱动「翻到那一页并定位到那一行」。
+ * 只暴露这一件事 —— 分页仍是表格自己的状态，提到 Reader 会跟 sheet 切换、路径变化纠缠。
+ */
+export interface CsvTableHandle {
+  /** expectMtime 是检索那一刻表格的 mtime；对不上说明表变了，不跳转、提示重搜 */
+  jumpToRow: (row: number, expectMtime?: string) => void;
+}
+
 /** 走 /table 分页接口；大点表也不会再撞「文件太大」。 */
-function PaginatedCsvTable({ projectId, path }: { projectId: string; path: string }) {
+function PaginatedCsvTable({
+  projectId,
+  path,
+  jumper,
+  ref,
+}: {
+  projectId: string;
+  path: string;
+  /** 命中行的滚动与临时高亮控制器；不传就只翻页不高亮 */
+  jumper?: SearchJumper;
+  ref?: Ref<CsvTableHandle>;
+}) {
   const [page, setPage] = useState(0);
   const [head, setHead] = useState<string[]>([]);
   const [body, setBody] = useState<string[][]>([]);
@@ -385,10 +426,58 @@ function PaginatedCsvTable({ projectId, path }: { projectId: string; path: strin
   const [size, setSize] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const rootRef = useRef<HTMLDivElement>(null);
+  // 命中行不在当前页时先记下来，等那一页的数据到位再定位
+  const pendingRowRef = useRef<{ row: number; expectMtime?: string } | null>(null);
+  // 最近一次成功拉到的这一页对应的文件 mtime，用来识破「检索之后表格被重转了」
+  const mtimeRef = useRef('');
+  const [stale, setStale] = useState(false);
 
   useEffect(() => {
     setPage(0);
+    pendingRowRef.current = null;
+    setStale(false);
   }, [path]);
+
+  const focusRow = useCallback(
+    (row: number) => {
+      const el = rootRef.current?.querySelector<HTMLElement>(`tr[data-row-index="${row}"]`);
+      // 找不到就静默返回：不滚动、不高亮、不报错（与预览窗内检索的降级一致）
+      if (el) jumper?.jump(el);
+    },
+    [jumper],
+  );
+
+  /** 目标页已经在手上了：先验表格有没有变，再决定是定位还是提示重搜 */
+  const resolvePending = useCallback(() => {
+    const pending = pendingRowRef.current;
+    if (!pending) return;
+    pendingRowRef.current = null;
+    // 表格在检索之后被重新转换过：这个行号可能已经不指向那条记录，宁可让人重搜，
+    // 也不要滚过去高亮一行**看着像但其实不是**的数据
+    if (pending.expectMtime && mtimeRef.current && pending.expectMtime !== mtimeRef.current) {
+      setStale(true);
+      return;
+    }
+    focusRow(pending.row);
+  }, [focusRow]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      jumpToRow(row: number, expectMtime?: string) {
+        const target = Math.floor(row / TABLE_PAGE_SIZE);
+        pendingRowRef.current = { row, expectMtime };
+        setStale(false);
+        if (target === page && !loading) {
+          resolvePending();
+          return;
+        }
+        setPage(target);
+      },
+    }),
+    [page, loading, resolvePending],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -407,6 +496,7 @@ function PaginatedCsvTable({ projectId, path }: { projectId: string; path: strin
         setBody(nextBody);
         setTotalRows(res.totalRows);
         setSize(res.size);
+        mtimeRef.current = res.mtime;
         setLoading(false);
       })
       .catch((err: Error) => {
@@ -416,11 +506,19 @@ function PaginatedCsvTable({ projectId, path }: { projectId: string; path: strin
         setTotalRows(0);
         setError(err.message);
         setLoading(false);
+        // 这一页没读到，就别再等着跳了；错误已经显示在位
+        pendingRowRef.current = null;
       });
     return () => {
       cancelled = true;
     };
   }, [projectId, path, page]);
+
+  // 目标页渲染完成后再定位：翻页是异步的，jumpToRow 当时那一行还不在 DOM 里
+  useEffect(() => {
+    if (loading) return;
+    resolvePending();
+  }, [body, loading, resolvePending]);
 
   if (loading && !head.length) {
     return <p className="text-sm text-muted-foreground">读取表格中…</p>;
@@ -428,8 +526,13 @@ function PaginatedCsvTable({ projectId, path }: { projectId: string; path: strin
   if (error) return <p className="text-sm text-destructive">{error}</p>;
 
   return (
-    <div className="flex flex-col gap-2">
+    <div ref={rootRef} className="flex flex-col gap-2">
       {loading ? <p className="text-xs text-muted-foreground">翻页加载中…</p> : null}
+      {stale ? (
+        <p className="text-xs text-destructive">
+          这张表在检索之后有改动，行号可能已经不指向那一行了 —— 请重新检索。
+        </p>
+      ) : null}
       <CsvGrid
         head={head}
         body={body}
@@ -530,29 +633,62 @@ function useFileContent(projectId: string, path: string | null, refreshKey: stri
   return { content: displayContent, loading, error: aligned ? error : '' };
 }
 
+/**
+ * 表格区给外部的句柄：整表检索要知道「现在看的是哪张表」，命中后要能「跳到第几行」。
+ * 多表包里 active 是 TableReader 自己的状态，检索条在 Reader 里，靠这个句柄问它。
+ */
+export interface TableReaderHandle {
+  activePath: () => string;
+  jumpToRow: (row: number, expectMtime?: string) => void;
+}
+
 /** 多 sheet（xlsx 拆目录 / 点表分册）或单 csv/tsv；一律走分页接口。 */
 function TableReader({
   projectId,
   item,
   sheets,
+  jumper,
+  onActivePathChange,
+  ref,
 }: {
   projectId: string;
   item: FileItem;
   sheets: { path: string; name: string; size?: number }[];
+  /** 命中行的滚动与临时高亮控制器 */
+  jumper?: SearchJumper;
+  /** 当前选中的表变了就说一声：上层据此重置检索条（换表 = 换了内容对象） */
+  onActivePathChange?: (path: string) => void;
+  ref?: Ref<TableReaderHandle>;
 }) {
   const multi = sheets.length > 1;
   const firstPath = sheets[0]?.path || item.path;
   const [active, setActive] = useState(firstPath);
+  const tableRef = useRef<CsvTableHandle>(null);
 
   useEffect(() => {
     setActive(firstPath);
   }, [item.path, firstPath]);
 
+  const currentPath = multi ? active : firstPath;
+  useEffect(() => {
+    onActivePathChange?.(currentPath);
+  }, [currentPath, onActivePathChange]);
+
   // 必须在 early return 之前：单 sheet / 多 sheet 切换时 TableReader 会复用同一实例
   const byPath = useMemo(() => new Map(sheets.map((s) => [s.path, s])), [sheets]);
 
+  // 同上，必须在 early return 之前
+  useImperativeHandle(
+    ref,
+    () => ({
+      activePath: () => currentPath,
+      jumpToRow: (row, expectMtime) => tableRef.current?.jumpToRow(row, expectMtime),
+    }),
+    [currentPath],
+  );
+
   if (!multi) {
-    return <PaginatedCsvTable projectId={projectId} path={firstPath} />;
+    return <PaginatedCsvTable ref={tableRef} projectId={projectId} path={firstPath} jumper={jumper} />;
   }
 
   const activeSheet = byPath.get(active);
@@ -597,7 +733,13 @@ function TableReader({
           此表较大（{formatBytes(activeSheet.size)}），下方仅分页预览；完整检索请用摘要里的 SQL 示例。
         </p>
       ) : null}
-      <PaginatedCsvTable key={active} projectId={projectId} path={active} />
+      <PaginatedCsvTable
+        key={active}
+        ref={tableRef}
+        projectId={projectId}
+        path={active}
+        jumper={jumper}
+      />
     </div>
   );
 }
@@ -739,11 +881,15 @@ export function Reader({
   // 上一份文档的结果不能留在屏幕上。
   const jumperRef = useRef<SearchJumper | null>(null);
   const jumper = jumperRef.current ?? (jumperRef.current = createSearchJumper());
+  // 表格区的句柄：整表检索要问它"现在看的是哪张表"，命中后让它翻页并定位到那一行
+  const tableHandleRef = useRef<TableReaderHandle | null>(null);
+  // 多表包里切换数据表也是"换了内容对象"：进 searchResetKey，把检索条连同结果一起重置
+  const [activeTablePath, setActiveTablePath] = useState('');
   // 纯文本的 <pre>、共享滚动区、表格包「数据」页：搜索索引用它们定位正文根
   const textPreRef = useRef<HTMLPreElement>(null);
   const plainScrollRef = useRef<HTMLDivElement>(null);
   const tableSearchRef = useRef<HTMLDivElement>(null);
-  const searchResetKey = `${item.path}:${item.mtime}:${tableTab}:${htmlTab}:${reconvertedAt}`;
+  const searchResetKey = `${item.path}:${item.mtime}:${tableTab}:${htmlTab}:${reconvertedAt}:${activeTablePath}`;
 
   // 换文件、表格包/HTML 原型切 tab、重转后正文重读（mtime 变）：清掉可能还在走的高亮
   useEffect(() => {
@@ -769,8 +915,8 @@ export function Reader({
   const tocItems = showDocToc && tocState.path === item.path ? tocState.items : [];
   const tablePackage = mode === 'table' && isDir && multiSheet;
 
-  // 搜索按钮只在"此刻有文字可搜"时出现。表格「数据」页和单份 csv/tsv 也给入口,
-  // 但只搜已经画出来的这一页,不把整张表拉进浏览器。HTML 预览页在隔离 iframe
+  // 搜索按钮只在"此刻有文字可搜"时出现。表格「数据」页和单份 csv/tsv 搜的是**整张表**
+  // (服务端流式扫描,浏览器里仍然只有当前这一页);HTML 预览页在隔离 iframe
   // 里读不到、图片/图库/原始格式/读取中失败一律不给假入口。
   const searchingTable =
     mode === 'table' && (!tablePackage || tableTab === 'data');
@@ -797,12 +943,73 @@ export function Reader({
     }
     return mdScrollRef.current?.querySelector<HTMLElement>('.markdown-body') ?? null;
   };
+  // 整表检索：数据页 / 单份 csv 的关键词交给服务端流式扫一遍这张表，
+  // 命中回来带行号，选中后翻到那一页再滚过去高亮（见 openspec table-full-scan-search）
+  const tableSearchSource: PreviewSearchSource = useCallback(
+    async (queryText, signal) => {
+      const tokens = queryTokens(queryText);
+      const targetPath = tableHandleRef.current?.activePath() ?? item.path;
+      try {
+        const res = await api.tableSearch(projectId, targetPath, queryText, { signal });
+        const hits = res.rows.map((row) => ({
+          key: String(row.row),
+          // 行号按人的习惯从 1 起数，与表格底部「第 x–y 行」的口径一致
+          label: `第 ${(row.row + 1).toLocaleString('zh-CN')} 行`,
+          parts: toSnippetParts(csvRowText(row.text), tokens),
+          pick: () => tableHandleRef.current?.jumpToRow(row.row, res.mtime),
+        }));
+        const scanned = res.scannedRows.toLocaleString('zh-CN');
+        return {
+          hits,
+          total: hits.length,
+          truncated: res.truncated,
+          // 没扫完就不能说"整表" —— 扫到哪儿说到哪儿
+          summary: res.partial
+            ? `扫到第 ${scanned} 行，命中 ${hits.length} 处`
+            : res.truncated
+              ? `整表命中超过 ${hits.length} 处`
+              : `整表 ${hits.length} 处命中`,
+          notice: res.partial
+            ? `这张表太大，只扫到第 ${scanned} 行就到了单次检索的时间上限，后面还没扫。`
+            : undefined,
+          // 空态措辞要点破两件事：搜的是整张表，以及匹配要求是"一行里出现全部关键词"
+          emptyHint: res.partial
+            ? `只扫到第 ${scanned} 行就到了时间上限，后面还没扫 —— 不代表整张表里没有。换个更短的关键词再试。`
+            : `整张表${res.totalRows ? `（共 ${res.totalRows.toLocaleString('zh-CN')} 行）` : ''}都扫过了，没有哪一行同时出现全部关键词。搜索只覆盖当前这张表。`,
+        } satisfies PreviewSearchOutcome;
+      } catch (err) {
+        // 只有"老服务没这条路由"才降级。500 / 断网如实报错 ——
+        // 悄悄退回只搜一页，会让人以为整张表里真的没有
+        if (err instanceof ApiError && err.status === 404) {
+          const blocks = collectBlocks(getSearchRoot());
+          const { hits, total, truncated } = searchBlocks(blocks, queryText);
+          return {
+            total,
+            truncated,
+            summary: `当前这一页 ${total} 处命中`,
+            notice: '接口服务的进程比前端旧，这次只搜了当前这一页；重启 serve 后可搜整张表。',
+            emptyHint:
+              '这次只搜了当前这一页，不是整张表 —— 接口服务的进程比前端旧，重启 serve 后可搜整张表。',
+            hits: hits.map((hit) => ({
+              key: String(hit.index),
+              parts: hit.parts,
+              pick: () => jumper.jump(blocks[hit.index]?.el),
+            })),
+          } satisfies PreviewSearchOutcome;
+        }
+        throw err;
+      }
+    },
+    // getSearchRoot 没进依赖：它每次渲染都是新函数，但读的全是 ref，行为不随渲染变
+    [projectId, item.path, jumper],
+  );
+
   const searchBox = canSearch ? (
     <PreviewSearch
       key={searchResetKey}
       getBlocksRoot={getSearchRoot}
       jumper={jumper}
-      emptyHint={searchingTable ? '表格只搜当前这一页，不是整张表。' : undefined}
+      source={searchingTable ? tableSearchSource : undefined}
     />
   ) : null;
 
@@ -1021,7 +1228,14 @@ export function Reader({
             </div>
           ) : (
             <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
-              <TableReader projectId={projectId} item={item} sheets={sheets} />
+              <TableReader
+                ref={tableHandleRef}
+                projectId={projectId}
+                item={item}
+                sheets={sheets}
+                jumper={jumper}
+                onActivePathChange={setActiveTablePath}
+              />
             </ScrollArea>
           )}
           </div>
@@ -1051,9 +1265,12 @@ export function Reader({
 
           {mode === 'table' ? (
             <TableReader
+              ref={tableHandleRef}
               projectId={projectId}
               item={item}
               sheets={multiSheet ? sheets : [{ path: item.path, name: item.name, size: item.size }]}
+              jumper={jumper}
+              onActivePathChange={setActiveTablePath}
             />
           ) : null}
 
