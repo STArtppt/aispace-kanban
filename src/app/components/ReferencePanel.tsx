@@ -1,5 +1,5 @@
 import { CaptureBar } from '@/components/CaptureBar';
-import { EmptyState, SectionTitle } from '@/components/Primitives';
+import { EmptyState } from '@/components/Primitives';
 import { ShowcaseCard, ShowcaseGrid } from '@/components/ShowcaseCard';
 import type { CaptureControl } from '@/hooks/useCaptureJob';
 import type { References } from '@/lib/api';
@@ -26,13 +26,10 @@ export function ReferencePanel({
 }) {
   if (!references) {
     return (
-      <div className="flex flex-col gap-4">
-        <SectionTitle>参考</SectionTitle>
-        <EmptyState
-          title="当前看板服务还没有参考能力"
-          hint="重启看板服务（pnpm serve / pnpm dev）后即可看到 visualization/references/ 里的参考"
-        />
-      </div>
+      <EmptyState
+        title="当前看板服务还没有参考能力"
+        hint="重启看板服务（pnpm serve / pnpm dev）后即可看到 visualization/references/ 里的参考"
+      />
     );
   }
 
@@ -40,12 +37,9 @@ export function ReferencePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <SectionTitle count={items.length}>参考</SectionTitle>
-        {updatedAt ? (
-          <span className="text-xs text-muted-foreground">最近更新 {formatRelative(updatedAt)}</span>
-        ) : null}
-      </div>
+      {updatedAt ? (
+        <p className="text-xs text-muted-foreground">最近更新 {formatRelative(updatedAt)}</p>
+      ) : null}
 
       <CaptureBar
         plane="reference"

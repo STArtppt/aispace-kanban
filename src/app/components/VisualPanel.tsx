@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { PanelTitle } from '@/components/Primitives';
 import { PrototypePanel } from '@/components/PrototypePanel';
 import { ReferencePanel } from '@/components/ReferencePanel';
 import { useCaptureJob } from '@/hooks/useCaptureJob';
@@ -38,22 +39,44 @@ export function VisualPanel({ scan }: { scan: Scan }) {
     }
   };
 
+  const referenceCount = scan.references?.items.length;
+  const prototypeCount = scan.prototypes.items.length;
+
   return (
-    <Tabs
-      value={tab}
-      onValueChange={(value) => select(value === 'prototype' ? 'prototype' : 'reference')}
-      className="gap-4"
-    >
-      <TabsList variant="line">
-        <TabsTrigger value="reference">参考</TabsTrigger>
-        <TabsTrigger value="prototype">原型</TabsTrigger>
-      </TabsList>
-      <TabsContent value="reference">
-        <ReferencePanel references={scan.references} capture={capture} />
-      </TabsContent>
-      <TabsContent value="prototype">
-        <PrototypePanel prototypes={scan.prototypes} capture={capture} />
-      </TabsContent>
-    </Tabs>
+    <section className="flex min-w-0 flex-col gap-2">
+      <div className="flex min-h-8 min-w-0 items-center">
+        <PanelTitle>视觉内容</PanelTitle>
+      </div>
+      <Tabs
+        value={tab}
+        onValueChange={(value) => select(value === 'prototype' ? 'prototype' : 'reference')}
+        className="gap-4"
+      >
+        <TabsList variant="line">
+          <TabsTrigger value="reference" className="px-2">
+            <span className="truncate">参考</span>
+            {typeof referenceCount === 'number' && referenceCount > 0 ? (
+              <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                {referenceCount}
+              </span>
+            ) : null}
+          </TabsTrigger>
+          <TabsTrigger value="prototype" className="px-2">
+            <span className="truncate">原型</span>
+            {prototypeCount > 0 ? (
+              <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                {prototypeCount}
+              </span>
+            ) : null}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="reference">
+          <ReferencePanel references={scan.references} capture={capture} />
+        </TabsContent>
+        <TabsContent value="prototype">
+          <PrototypePanel prototypes={scan.prototypes} capture={capture} />
+        </TabsContent>
+      </Tabs>
+    </section>
   );
 }

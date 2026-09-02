@@ -15,7 +15,8 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { EmptyState, Row, RowActions, Stat, TruncatedHint, writeClipboard } from '@/components/Primitives';
+import { EmptyState, PanelTitle, Row, RowActions, Stat, TruncatedHint, writeClipboard } from '@/components/Primitives';
+import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { usePins } from '@/hooks/usePins';
 import { api, type FileItem, type Scan } from '@/lib/api';
@@ -54,6 +55,8 @@ type SortKey = keyof typeof SORTS;
 const OUTPUT_SORT_KEY = 'aispace-kanban:output-sort';
 /** 当前停在哪一组：产出多了以后不想每次进来都从头翻 */
 const OUTPUT_TAB_KEY = 'aispace-kanban:output-tab';
+/** 列表 / 树形是整个「产出文档」视图共用的偏好，三组一起切 */
+const OUTPUT_VIEW_KEY = 'aispace-kanban:output-view';
 
 function readOutputSort(): SortKey {
   const raw = localStorage.getItem(OUTPUT_SORT_KEY);
@@ -115,8 +118,15 @@ function annotationLabel(item: FileItem): string {
   return ` · ${parts.join('、')}`;
 }
 
+/** 产出在树里的位置：剥掉 output/<组>/，剩下的目录结构就是整理方式 */
+function outputTreePath(item: FileItem, dir: GroupKey): string {
+  const prefix = `output/${dir}/`;
+  return item.path.startsWith(prefix) ? item.path.slice(prefix.length) : item.name;
+}
+
 function OutputRow({
   item,
+  indent,
   pinned,
   absPath,
   onTogglePin,
@@ -126,6 +136,8 @@ function OutputRow({
   onOpen,
 }: {
   item: FileItem;
+  /** 树形视图里的层级；列表视图不传 */
+  indent?: number;
   pinned: boolean;
   /** 拼好的取绝对路径函数，「复制绝对路径」用 */
   absPath: (relPath: string) => string;
@@ -136,7 +148,7 @@ function OutputRow({
   onOpen: (item: FileItem) => void;
 }) {
   return (
-    <Row onClick={() => onOpen(item)} active={openPath === item.path}>
+    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
       <KindIcon item={item} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2">
@@ -198,6 +210,7 @@ function OutputGroup({
   files,
   total,
   searching,
+  viewMode,
   pins,
   absPath,
   onTogglePin,
@@ -214,6 +227,7 @@ function OutputGroup({
   /** 过滤前的总数，用来区分「这组本来就空」和「没搜到」 */
   total: number;
   searching: boolean;
+  viewMode: ViewMode;
   pins: Set<string>;
   /** 拼好的取绝对路径函数，「复制绝对路径」用 */
   absPath: (relPath: string) => string;
@@ -228,7 +242,35 @@ function OutputGroup({
       <TruncatedHint
         text={searching ? (files.length ? `匹配 ${files.length} 项` : `没有匹配的${title}`) : hint}
       />
-      {files.length ? (
+      {files.length && viewMode === 'tree' ? (
+        <FileTree
+          items={files}
+          treePathOf={(item) => outputTreePath(item, dir)}
+          keyOf={(item) => item.path}
+          expandAll={searching}
+          renderDirActions={(dirKey) => (
+            <DirActions
+              projectId={projectId}
+              fileManager={fileManager}
+              dirPath={`output/${dir}/${dirKey}`}
+              absPath={absPath}
+            />
+          )}
+          renderFile={(item, indent) => (
+            <OutputRow
+              item={item}
+              indent={indent}
+              pinned={pins.has(item.path)}
+              absPath={absPath}
+              onTogglePin={onTogglePin}
+              projectId={projectId}
+              fileManager={fileManager}
+              openPath={openPath}
+              onOpen={onOpen}
+            />
+          )}
+        />
+      ) : files.length ? (
         <div className="overflow-hidden rounded-lg border border-border">
           {files.map((item) => (
             <OutputRow
@@ -277,6 +319,7 @@ export function OutputPanel({
   const marks = output.stats.annotations ?? 0;
   const wordsHint = formatWords(output.stats.words);
   const [sortKey, setSortKey] = useState<SortKey>(readOutputSort);
+  const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(OUTPUT_VIEW_KEY));
   const [query, setQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   // 没存过偏好时停在第一组有东西的，省得一进来就看空态
@@ -291,6 +334,10 @@ export function OutputPanel({
   useEffect(() => {
     localStorage.setItem(OUTPUT_TAB_KEY, tab);
   }, [tab]);
+
+  useEffect(() => {
+    localStorage.setItem(OUTPUT_VIEW_KEY, viewMode);
+  }, [viewMode]);
 
   // 三组一起算：搜索时每个标签上挂的是「这组有几条命中」，
   // 才知道要找的东西是不是躺在另一个标签里。
@@ -341,30 +388,13 @@ export function OutputPanel({
         />
       </div>
 
-      <Tabs
-        value={tab}
-        onValueChange={(value) => {
-          if (GROUPS.some((group) => group.key === value)) setTab(value as GroupKey);
-        }}
-        className="gap-4"
-      >
-        {/*
-          标签条与工具栏共用一条下边框，视觉上是同一行。
-          开着预览时看板只有 28rem，搜索框一展开就挤不下三个标签 ——
-          让标签条自己横向滚（超出的标签划一下就出来），不换行，行高始终一致。
-        */}
-        <div className="flex min-w-0 items-center gap-3 border-b border-border">
-          <TabsList variant="line" className="min-w-0 flex-1 border-b-0">
-            {groups.map(({ key, title, files, total }) => (
-              <TabsTrigger key={key} value={key} className="px-2">
-                <span className="truncate">{title}</span>
-                <span className="shrink-0 text-xs font-normal text-muted-foreground">
-                  {searching ? files.length : total}
-                </span>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-          <div className="flex shrink-0 items-center gap-2 pb-1">
+      <section className="flex min-w-0 flex-col gap-2">
+        <div className="flex min-h-8 min-w-0 items-center justify-between gap-3">
+          <div className="min-w-0 shrink">
+            <PanelTitle>产出列表</PanelTitle>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <ViewModeToggle mode={viewMode} onChange={setViewMode} label="产出清单" />
             <Select
               value={sortKey}
               onValueChange={(value) => {
@@ -410,26 +440,46 @@ export function OutputPanel({
           </div>
         </div>
 
-        {groups.map(({ key, title, hint, files, total }) => (
-          <TabsContent key={key} value={key}>
-            <OutputGroup
-              title={title}
-              hint={hint}
-              dir={key}
-              files={files}
-              total={total}
-              searching={searching}
-              pins={pins}
-              absPath={absPath}
-              onTogglePin={togglePin}
-              projectId={projectId}
-              fileManager={fileManager}
-              openPath={openPath}
-              onOpen={onOpen}
-            />
-          </TabsContent>
-        ))}
-      </Tabs>
+        <Tabs
+          value={tab}
+          onValueChange={(value) => {
+            if (GROUPS.some((group) => group.key === value)) setTab(value as GroupKey);
+          }}
+          className="gap-4"
+        >
+          <TabsList variant="line">
+            {groups.map(({ key, title, files, total }) => (
+              <TabsTrigger key={key} value={key} className="px-2">
+                <span className="truncate">{title}</span>
+                <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                  {searching ? files.length : total}
+                </span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          {groups.map(({ key, title, hint, files, total }) => (
+            <TabsContent key={key} value={key}>
+              <OutputGroup
+                title={title}
+                hint={hint}
+                dir={key}
+                files={files}
+                total={total}
+                searching={searching}
+                viewMode={viewMode}
+                pins={pins}
+                absPath={absPath}
+                onTogglePin={togglePin}
+                projectId={projectId}
+                fileManager={fileManager}
+                openPath={openPath}
+                onOpen={onOpen}
+              />
+            </TabsContent>
+          ))}
+        </Tabs>
+      </section>
     </div>
   );
 }

@@ -54,6 +54,13 @@ export function SectionTitle({ children, count }: { children: ReactNode; count?:
   );
 }
 
+/** 清单区大标题。字体、字号跟顶栏项目名称一致。 */
+export function PanelTitle({ children }: { children: ReactNode }) {
+  return (
+    <h2 className="font-display truncate text-lg leading-tight sm:text-xl">{children}</h2>
+  );
+}
+
 export function EmptyState({ title, hint }: { title: string; hint?: string }) {
   return (
     <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center">

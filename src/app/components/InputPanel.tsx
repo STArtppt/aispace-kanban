@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Search, Star, StarOff, Table, X } from 'lucide-react';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AssetGalleryStack } from '@/components/AssetGalleryStack';
 import { ImageLightbox } from '@/components/ImageLightbox';
 import {
@@ -11,7 +12,7 @@ import {
   ListPager,
   Row,
   RowActions,
-  SectionTitle,
+  PanelTitle,
   Stat,
   TruncatedHint,
   writeClipboard,
@@ -70,6 +71,14 @@ function matchConverted(item: ConvertedItem, query: string): boolean {
     .filter(Boolean)
     .join('\n')
     .toLowerCase();
+  return q.split(/\s+/).every((part) => hay.includes(part));
+}
+
+/** 待转换区搜索：文件名 / 相对 raw/ 的路径 */
+function matchPending(item: FileItem, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  const hay = [item.name, item.path, pendingLabel(item)].join('\n').toLowerCase();
   return q.split(/\s+/).every((part) => hay.includes(part));
 }
 
@@ -323,6 +332,8 @@ function PendingRow({
 function PendingList({
   items,
   viewMode,
+  query,
+  sortKey,
   projectId,
   absPath,
   openPath,
@@ -336,6 +347,8 @@ function PendingList({
 }: {
   items: FileItem[];
   viewMode: ViewMode;
+  query: string;
+  sortKey: SortKey;
   projectId: string;
   /** 拼好的取绝对路径函数，「复制绝对路径」用 */
   absPath: (relPath: string) => string;
@@ -349,14 +362,23 @@ function PendingList({
   onIgnore: (targetPath: string) => void;
 }) {
   const { pins, togglePin } = usePins(projectId);
-  const ordered = useMemo(
-    () => [...items].sort((a, b) => Number(pins.has(b.path)) - Number(pins.has(a.path))),
-    [items, pins],
-  );
+  const ordered = useMemo(() => {
+    const list = items.filter((item) => matchPending(item, query));
+    return list.sort((a, b) => {
+      const pin = Number(pins.has(b.path)) - Number(pins.has(a.path));
+      if (pin) return pin;
+      if (sortKey === 'name') {
+        return pendingLabel(a).localeCompare(pendingLabel(b), 'zh');
+      }
+      const cmp = (a.mtime || '').localeCompare(b.mtime || '');
+      return sortKey === 'mtimeAsc' ? cmp : -cmp;
+    });
+  }, [items, query, sortKey, pins]);
+  const searching = query.trim().length > 0;
   const { page, setPage } = useListPage(
     ordered.length,
     LIST_PAGE_SIZE,
-    `${ordered.length}\0${[...pins].join('\0')}`,
+    `${query}\0${sortKey}\0${ordered.length}\0${[...pins].join('\0')}`,
   );
   const pageItems = ordered.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
   const fileManager = useFileManagerName();
@@ -375,69 +397,86 @@ function PendingList({
     onIgnore,
   };
 
+  if (!ordered.length) {
+    return searching ? (
+      <EmptyState title="没有匹配的原始资料" hint="试试更短的关键词，或清空搜索" />
+    ) : null;
+  }
+
+  const matchHint = searching ? (
+    <p className="text-xs text-muted-foreground">匹配 {ordered.length} 项</p>
+  ) : null;
+
   // 树形视图不分页：目录折起来就够收敛了，再切页反而找不到东西
   if (viewMode === 'tree') {
     return (
-      <FileTree
-        items={ordered}
-        treePathOf={pendingLabel}
-        keyOf={(item) => item.path}
-        renderFile={(item, indent) => (
-          <PendingRow
-            item={item}
-            indent={indent}
-            pinned={pins.has(item.path)}
-            ignoring={ignoringPath === item.path}
-            {...rowProps}
-          />
-        )}
-        renderDirActions={(dirKey) => {
-          const dirPath = `input/raw/${dirKey}`;
-          const extra: RowAction[] = [
-            ...(canIngest
-              ? [
-                  {
-                    label: '转这一整个目录',
-                    icon: FileOutput,
-                    disabled: ingestRunning,
-                    onSelect: () => onIngest(dirPath),
-                  },
-                ]
-              : []),
-            {
-              label: '忽略此目录',
-              icon: EyeOff,
-              disabled: Boolean(ignoringPath),
-              onSelect: () => onIgnore(dirPath),
-            },
-          ];
-          return (
-            <DirActions
-              projectId={projectId}
-              fileManager={fileManager}
-              dirPath={dirPath}
-              absPath={absPath}
-              extra={extra}
-              busy={(ingestRunning && ingestingPath === dirPath) || ignoringPath === dirPath}
+      <div className="flex flex-col gap-2">
+        {matchHint}
+        <FileTree
+          items={ordered}
+          treePathOf={pendingLabel}
+          keyOf={(item) => item.path}
+          expandAll={searching}
+          renderFile={(item, indent) => (
+            <PendingRow
+              item={item}
+              indent={indent}
+              pinned={pins.has(item.path)}
+              ignoring={ignoringPath === item.path}
+              {...rowProps}
             />
-          );
-        }}
-      />
+          )}
+          renderDirActions={(dirKey) => {
+            const dirPath = `input/raw/${dirKey}`;
+            const extra: RowAction[] = [
+              ...(canIngest
+                ? [
+                    {
+                      label: '转这一整个目录',
+                      icon: FileOutput,
+                      disabled: ingestRunning,
+                      onSelect: () => onIngest(dirPath),
+                    },
+                  ]
+                : []),
+              {
+                label: '忽略此目录',
+                icon: EyeOff,
+                disabled: Boolean(ignoringPath),
+                onSelect: () => onIgnore(dirPath),
+              },
+            ];
+            return (
+              <DirActions
+                projectId={projectId}
+                fileManager={fileManager}
+                dirPath={dirPath}
+                absPath={absPath}
+                extra={extra}
+                busy={(ingestRunning && ingestingPath === dirPath) || ignoringPath === dirPath}
+              />
+            );
+          }}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-border">
-      {pageItems.map((item) => (
-        <PendingRow
-          key={item.path}
-          item={item}
-          pinned={pins.has(item.path)}
-          ignoring={ignoringPath === item.path}
-          {...rowProps}
-        />
-      ))}
-      <ListPager page={page} pageSize={LIST_PAGE_SIZE} total={ordered.length} onPageChange={setPage} />
+    <div className="flex flex-col gap-2">
+      {matchHint}
+      <div className="overflow-hidden rounded-lg border border-border">
+        {pageItems.map((item) => (
+          <PendingRow
+            key={item.path}
+            item={item}
+            pinned={pins.has(item.path)}
+            ignoring={ignoringPath === item.path}
+            {...rowProps}
+          />
+        ))}
+        <ListPager page={page} pageSize={LIST_PAGE_SIZE} total={ordered.length} onPageChange={setPage} />
+      </div>
     </div>
   );
 }
@@ -461,10 +500,25 @@ type SortKey = keyof typeof SORTS;
 const CONVERTED_SORT_KEY = 'aispace-kanban:converted-sort';
 /** 列表 / 树形是整个「输入资料」视图共用的偏好，待转换和转换产物一起切 */
 const INPUT_VIEW_KEY = 'aispace-kanban:input-view';
+/** 当前停在哪一类资料：默认转换产物，资料多了以后不想每次进来都先滚过待转换 */
+const INPUT_TAB_KEY = 'aispace-kanban:input-tab';
+
+const INPUT_TABS = [
+  { key: 'pending' as const, title: '原始资料' },
+  { key: 'converted' as const, title: '转换产物' },
+  { key: 'assets' as const, title: '图片资料' },
+];
+
+type InputTab = (typeof INPUT_TABS)[number]['key'];
 
 function readConvertedSort(): SortKey {
   const raw = localStorage.getItem(CONVERTED_SORT_KEY);
   return raw === 'name' || raw === 'mtimeAsc' || raw === 'mtimeDesc' ? raw : 'name';
+}
+
+function readInputTab(): InputTab {
+  const raw = localStorage.getItem(INPUT_TAB_KEY);
+  return raw === 'pending' || raw === 'converted' || raw === 'assets' ? raw : 'converted';
 }
 
 /** 图标选择器：正方形触发器，藏掉默认文案和下拉箭头 */
@@ -475,7 +529,9 @@ function ConvertedList({
   items,
   hasOutputs,
   viewMode,
-  viewToggle,
+  query,
+  activeFilter,
+  sortKey,
   projectId,
   absPath,
   openPath,
@@ -488,8 +544,9 @@ function ConvertedList({
   items: ConvertedItem[];
   hasOutputs: boolean;
   viewMode: ViewMode;
-  /** 视图开关只挂在本视图的第一个清单上；不是第一个时不传 */
-  viewToggle?: ReactNode;
+  query: string;
+  activeFilter: ConvertedFilter;
+  sortKey: SortKey;
   projectId: string;
   /** 拼好的取绝对路径函数，「复制绝对路径」用 */
   absPath: (relPath: string) => string;
@@ -502,25 +559,8 @@ function ConvertedList({
 }) {
   const fileManager = useFileManagerName();
   const { pins, togglePin } = usePins(projectId);
-  const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [filter, setFilter] = useState<ConvertedFilter>('all');
-  const [sortKey, setSortKey] = useState<SortKey>(readConvertedSort);
-
-  useEffect(() => {
-    localStorage.setItem(CONVERTED_SORT_KEY, sortKey);
-  }, [sortKey]);
-  // 没产出、或旧服务没给 referencedBy：筛「未被引用」没意义，那一档就不出
-  const canFilterUnreferenced = hasOutputs && items.some((item) => Array.isArray(item.referencedBy));
   // 一份都没动过时不给这一档：清单里筛出来必然是空的
   const staleCount = items.filter((item) => item.sourceState === 'stale').length;
-  const canFilterStale = staleCount > 0;
-  const filterOptions: ConvertedFilter[] = [
-    'all',
-    ...(canFilterUnreferenced ? (['unreferenced'] as const) : []),
-    ...(canFilterStale ? (['stale'] as const) : []),
-  ];
-  const activeFilter = filterOptions.includes(filter) ? filter : 'all';
   const filtered = useMemo(() => {
     const list = items.filter((item) => {
       if (activeFilter === 'unreferenced' && item.referencedBy?.length !== 0) return false;
@@ -545,7 +585,6 @@ function ConvertedList({
   );
   const pageItems = filtered.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
   const searching = query.trim().length > 0;
-  const searchExpanded = searchOpen || searching;
   const hasAnySource = useMemo(() => items.some((item) => item.source), [items]);
   const treePathOf = useCallback(
     (item: ConvertedItem) => convertedTreePath(item, hasAnySource),
@@ -554,94 +593,13 @@ function ConvertedList({
 
   return (
     <div className="flex flex-col gap-2">
-      {/* 标题左、排序+筛选+搜索右：同一行，避免再占一整行高度 */}
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <div className="min-w-0 shrink">
-          <SectionTitle count={items.length}>转换产物</SectionTitle>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {viewToggle}
-          <Select
-            value={sortKey}
-            onValueChange={(value) => {
-              if (value === 'name' || value === 'mtimeAsc' || value === 'mtimeDesc') {
-                setSortKey(value);
-              }
-            }}
-          >
-            <SelectTrigger
-              className={ICON_SELECT_TRIGGER}
-              aria-label="排序转换产物"
-              title="排序"
-            >
-              <ArrowUpDown
-                className={cn(
-                  'size-3.5',
-                  sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
-                )}
-              />
-            </SelectTrigger>
-            <SelectContent align="end" className="min-w-36 w-max">
-              <SelectItem value="name">{SORTS.name}</SelectItem>
-              <SelectItem value="mtimeAsc">{SORTS.mtimeAsc}</SelectItem>
-              <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
-            </SelectContent>
-          </Select>
-          {filterOptions.length > 1 ? (
-            <Select
-              value={activeFilter}
-              onValueChange={(value) => {
-                if (filterOptions.includes(value as ConvertedFilter)) {
-                  setFilter(value as ConvertedFilter);
-                }
-              }}
-            >
-              <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="筛选转换产物" title="筛选">
-                <ListFilter
-                  className={cn(
-                    'size-3.5',
-                    activeFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
-                  )}
-                />
-              </SelectTrigger>
-              <SelectContent align="end" className="min-w-36 w-max">
-                {filterOptions.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {CONVERTED_FILTERS[option]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          ) : null}
-          <div
-            className={cn(
-              'relative h-8 transition-[width] duration-200 ease-out',
-              searchExpanded ? 'w-[12rem] sm:w-[14rem]' : 'w-8',
-            )}
-          >
-            <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
-              <Search className="size-3.5" />
-            </span>
-            <Input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onFocus={() => setSearchOpen(true)}
-              onBlur={() => setSearchOpen(false)}
-              placeholder={searchExpanded ? '按名称搜索…' : ''}
-              className={cn('h-8 text-xs', searchExpanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
-              aria-label="搜索转换产物"
-              title="搜索"
-            />
-          </div>
-        </div>
-      </div>
       {/* 原件动过的产物「已经转过」，所以不会回到待转换列表 —— 不说这句，人会在那边一直找不到它 */}
       {staleCount ? (
         <p className="text-xs text-muted-foreground">
           有 <span className="text-destructive">{staleCount} 份原件在转换后动过</span>
           ，产物可能已经不对。它们已经有产物，不会回到待转换列表；右上角筛选可以只看这些。
           {canIngest
-            ? '行内「更多」点「重新转换」只重转那一份，上面的「开始转换」会把动过的一起重跑。'
+            ? '行内「更多」点「重新转换」只重转那一份；「原始资料」里的「开始转换」会把动过的一起重跑。'
             : '在工作空间里重跑一次 scripts/ingest.py 即可，只有动过的会重转。'}
         </p>
       ) : null}
@@ -719,7 +677,16 @@ function ConvertedList({
         />
       ) : activeFilter === 'stale' ? (
         <EmptyState title="没有原件动过的产物" hint="每份产物都还对得上转换时的原件" />
-      ) : null}
+      ) : (
+        <EmptyState
+          title="还没有转换产物"
+          hint={
+            canIngest
+              ? '把资料放进 input/raw/，再到「原始资料」点「开始转换」'
+              : '把资料放进 input/raw/，然后在工作空间里跑 scripts/ingest.py'
+          }
+        />
+      )}
     </div>
   );
 }
@@ -855,6 +822,11 @@ export function InputPanel({
   // 旧服务进程没有 assetGroups：退回平铺网格
   const galleries = input.assetGroups || [];
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(INPUT_VIEW_KEY));
+  const [tab, setTab] = useState<InputTab>(readInputTab);
+  const [query, setQuery] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [filter, setFilter] = useState<ConvertedFilter>('all');
+  const [sortKey, setSortKey] = useState<SortKey>(readConvertedSort);
   // 「复制绝对路径」要工作空间在磁盘上的位置，scan.project.root 里带着；拿不到时 absolutePath 自己退回相对路径
   const sep = usePathSeparator();
   const absPath = useCallback(
@@ -880,14 +852,40 @@ export function InputPanel({
   useEffect(() => {
     setIgnoreError('');
     setIgnoringPath('');
+    setQuery('');
+    setSearchOpen(false);
+    setFilter('all');
   }, [projectId]);
 
   useEffect(() => {
     localStorage.setItem(INPUT_VIEW_KEY, viewMode);
   }, [viewMode]);
 
-  // 待转换清单为空时它只剩一个空态，开关就落到下一个清单「转换产物」上
-  const viewToggle = <ViewModeToggle mode={viewMode} onChange={setViewMode} label="资料清单" />;
+  useEffect(() => {
+    localStorage.setItem(INPUT_TAB_KEY, tab);
+  }, [tab]);
+
+  useEffect(() => {
+    localStorage.setItem(CONVERTED_SORT_KEY, sortKey);
+  }, [sortKey]);
+
+  // 没产出、或旧服务没给 referencedBy：筛「未被引用」没意义，那一档就不出
+  const canFilterUnreferenced =
+    hasOutputs && input.converted.some((item) => Array.isArray(item.referencedBy));
+  const canFilterStale = input.converted.some((item) => item.sourceState === 'stale');
+  const filterOptions: ConvertedFilter[] = [
+    'all',
+    ...(canFilterUnreferenced ? (['unreferenced'] as const) : []),
+    ...(canFilterStale ? (['stale'] as const) : []),
+  ];
+  const activeFilter = filterOptions.includes(filter) ? filter : 'all';
+  const searching = query.trim().length > 0;
+  const searchExpanded = searchOpen || searching;
+  const tabCounts: Record<InputTab, number> = {
+    pending: input.pending.length,
+    converted: input.converted.length,
+    assets: input.assets.length,
+  };
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -933,127 +931,217 @@ export function InputPanel({
       </div>
 
       <section className="flex min-w-0 flex-col gap-2">
-        {/* 视图开关只挂在本视图的第一个清单上，切一次两个清单一起变 */}
-        <div className="flex min-w-0 items-center justify-between gap-3">
+        <div className="flex min-h-8 min-w-0 items-center justify-between gap-3">
           <div className="min-w-0 shrink">
-            <SectionTitle count={input.pending.length}>待转换的原始资料</SectionTitle>
+            <PanelTitle>输入列表</PanelTitle>
           </div>
-          {input.pending.length ? viewToggle : null}
+          {/* 图片资料用不到这些按钮，但要占着高度，否则标题行一矮 tab 会往上跳 */}
+          <div
+            className={cn(
+              'flex shrink-0 items-center gap-2',
+              tab === 'assets' && 'invisible pointer-events-none',
+            )}
+            aria-hidden={tab === 'assets'}
+          >
+              <ViewModeToggle mode={viewMode} onChange={setViewMode} label="资料清单" />
+              <Select
+                value={sortKey}
+                onValueChange={(value) => {
+                  if (value === 'name' || value === 'mtimeAsc' || value === 'mtimeDesc') {
+                    setSortKey(value);
+                  }
+                }}
+              >
+                <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="排序输入资料" title="排序">
+                  <ArrowUpDown
+                    className={cn(
+                      'size-3.5',
+                      sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
+                    )}
+                  />
+                </SelectTrigger>
+                <SelectContent align="end" className="min-w-36 w-max">
+                  <SelectItem value="name">{SORTS.name}</SelectItem>
+                  <SelectItem value="mtimeAsc">{SORTS.mtimeAsc}</SelectItem>
+                  <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
+                </SelectContent>
+              </Select>
+              {tab === 'converted' && filterOptions.length > 1 ? (
+                <Select
+                  value={activeFilter}
+                  onValueChange={(value) => {
+                    if (filterOptions.includes(value as ConvertedFilter)) {
+                      setFilter(value as ConvertedFilter);
+                    }
+                  }}
+                >
+                  <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="筛选转换产物" title="筛选">
+                    <ListFilter
+                      className={cn(
+                        'size-3.5',
+                        activeFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
+                      )}
+                    />
+                  </SelectTrigger>
+                  <SelectContent align="end" className="min-w-36 w-max">
+                    {filterOptions.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {CONVERTED_FILTERS[option]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : null}
+              <div
+                className={cn(
+                  'relative h-8 transition-[width] duration-200 ease-out',
+                  searchExpanded ? 'w-[12rem] sm:w-[14rem]' : 'w-8',
+                )}
+              >
+                <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
+                  <Search className="size-3.5" />
+                </span>
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onFocus={() => setSearchOpen(true)}
+                  onBlur={() => setSearchOpen(false)}
+                  placeholder={searchExpanded ? '按名称搜索…' : ''}
+                  className={cn('h-8 text-xs', searchExpanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
+                  aria-label="搜索输入资料"
+                  title="搜索"
+                />
+              </div>
+          </div>
         </div>
-        {/* 看板变窄或预览展开时这行会顶破布局，所以单行截断，完整说明进 tooltip */}
-        <TruncatedHint text={pendingIntroText(input.pending.length, input.stats.ignored || 0, canIngest)}>
-          {input.pending.length
-            ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
-            : '原始资料放进 input/raw/ 后会出现在这里。'}
-          {input.stats.ignored ? (
-            <>
-              另有 {input.stats.ignored} 份按
-              <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-                input/.ingestignore
-              </code>
-              忽略，不算待转换。
-            </>
-          ) : null}
-          {input.pending.length
-            ? '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在。'
-            : null}
-          {canIngest ? (
-            '点「开始转换」会一次处理全部；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
-          ) : (
-            <>
-              在工作空间里跑一次
-              <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
-                python3 scripts/ingest.py
-              </code>
-              即可。
-            </>
-          )}
-        </TruncatedHint>
-        {canIngest ? (
-          <IngestControls
-            job={ingest.job}
-            running={ingest.running}
-            error={ingest.error}
-            onStart={() => void ingest.start()}
-            onDismissError={ingest.dismissError}
-          />
-        ) : null}
-        {ignoreError ? (
-          <p className="whitespace-pre-wrap text-xs text-destructive">{ignoreError}</p>
-        ) : null}
-        {input.pending.length ? (
-          <PendingList
-            items={input.pending}
-            viewMode={viewMode}
-            projectId={projectId}
-            absPath={absPath}
-            openPath={openPath}
-            onOpen={onOpen}
-            canIngest={canIngest}
-            ingestRunning={ingest.running}
-            ingestingPath={ingest.job?.path || ''}
-            onIngest={(filePath) => void ingest.start(filePath)}
-            ignoringPath={ignoringPath}
-            onIgnore={(targetPath) => void ignore(targetPath)}
-          />
-        ) : (
-          <EmptyState title="暂无待转换文件" />
-        )}
-      </section>
 
-      <section className="flex flex-col gap-2">
-        {input.converted.length ? (
-          <ConvertedList
-            items={input.converted}
-            hasOutputs={hasOutputs}
-            viewMode={viewMode}
-            viewToggle={input.pending.length ? undefined : viewToggle}
-            projectId={projectId}
-            absPath={absPath}
-            openPath={openPath}
-            onOpen={onOpen}
-            canIngest={canIngest}
-            ingestRunning={ingest.running}
-            ingestingPath={ingest.job?.path || ''}
-            onIngest={(filePath) => void ingest.start(filePath)}
-          />
-        ) : (
-          <>
-            <SectionTitle count={0}>转换产物</SectionTitle>
-            <EmptyState
-              title="还没有转换产物"
-              hint={
-                canIngest
-                  ? '把资料放进 input/raw/，再点「开始转换」'
-                  : '把资料放进 input/raw/，然后在工作空间里跑 scripts/ingest.py'
-              }
-            />
-          </>
-        )}
-      </section>
+        {/* 非当前 tab 不挂载：资料多时三个清单一起画会卡，切走就把 DOM 卸掉 */}
+        <Tabs
+          value={tab}
+          onValueChange={(value) => {
+            if (value === 'pending' || value === 'converted' || value === 'assets') setTab(value);
+          }}
+          className="gap-4"
+        >
+          <TabsList variant="line">
+            {INPUT_TABS.map(({ key, title }) => (
+              <TabsTrigger key={key} value={key} className="px-2">
+                <span className="truncate">{title}</span>
+                <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                  {tabCounts[key]}
+                </span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
 
-      {input.assets.length ? (
-        <section className="flex flex-col gap-3">
-          <div className="flex flex-col gap-1">
-            <SectionTitle count={input.assets.length}>图片资料</SectionTitle>
-            {galleries.length ? (
-              <p className="text-xs text-muted-foreground">
-                每份文档抽出的图算一摞，直接放进 input/raw/ 的图归到「未分类」。点开在右侧看缩略图。
-              </p>
+          <TabsContent value="pending" className="flex min-w-0 flex-col gap-2">
+            {/* 看板变窄或预览展开时这行会顶破布局，所以单行截断，完整说明进 tooltip */}
+            <TruncatedHint text={pendingIntroText(input.pending.length, input.stats.ignored || 0, canIngest)}>
+              {input.pending.length
+                ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
+                : '原始资料放进 input/raw/ 后会出现在这里。'}
+              {input.stats.ignored ? (
+                <>
+                  另有 {input.stats.ignored} 份按
+                  <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+                    input/.ingestignore
+                  </code>
+                  忽略，不算待转换。
+                </>
+              ) : null}
+              {input.pending.length
+                ? '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在。'
+                : null}
+              {canIngest ? (
+                '点「开始转换」会一次处理全部；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
+              ) : (
+                <>
+                  在工作空间里跑一次
+                  <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+                    python3 scripts/ingest.py
+                  </code>
+                  即可。
+                </>
+              )}
+            </TruncatedHint>
+            {canIngest ? (
+              <IngestControls
+                job={ingest.job}
+                running={ingest.running}
+                error={ingest.error}
+                onStart={() => void ingest.start()}
+                onDismissError={ingest.dismissError}
+              />
             ) : null}
-          </div>
-          {galleries.length ? (
-            <AssetGalleryStack
-              groups={galleries}
+            {ignoreError ? (
+              <p className="whitespace-pre-wrap text-xs text-destructive">{ignoreError}</p>
+            ) : null}
+            {input.pending.length ? (
+              <PendingList
+                items={input.pending}
+                viewMode={viewMode}
+                query={query}
+                sortKey={sortKey}
+                projectId={projectId}
+                absPath={absPath}
+                openPath={openPath}
+                onOpen={onOpen}
+                canIngest={canIngest}
+                ingestRunning={ingest.running}
+                ingestingPath={ingest.job?.path || ''}
+                onIngest={(filePath) => void ingest.start(filePath)}
+                ignoringPath={ignoringPath}
+                onIgnore={(targetPath) => void ignore(targetPath)}
+              />
+            ) : (
+              <EmptyState title="暂无待转换文件" />
+            )}
+          </TabsContent>
+
+          <TabsContent value="converted">
+            <ConvertedList
+              items={input.converted}
+              hasOutputs={hasOutputs}
+              viewMode={viewMode}
+              query={query}
+              activeFilter={activeFilter}
+              sortKey={sortKey}
               projectId={projectId}
+              absPath={absPath}
               openPath={openPath}
               onOpen={onOpen}
+              canIngest={canIngest}
+              ingestRunning={ingest.running}
+              ingestingPath={ingest.job?.path || ''}
+              onIngest={(filePath) => void ingest.start(filePath)}
             />
-          ) : (
-            <AssetGrid items={input.assets} projectId={projectId} />
-          )}
-        </section>
-      ) : null}
+          </TabsContent>
+
+          <TabsContent value="assets" className="flex flex-col gap-3">
+            {input.assets.length ? (
+              <>
+                {galleries.length ? (
+                  <p className="text-xs text-muted-foreground">
+                    每份文档抽出的图算一摞，直接放进 input/raw/ 的图归到「未分类」。点开在右侧看缩略图。
+                  </p>
+                ) : null}
+                {galleries.length ? (
+                  <AssetGalleryStack
+                    groups={galleries}
+                    projectId={projectId}
+                    openPath={openPath}
+                    onOpen={onOpen}
+                  />
+                ) : (
+                  <AssetGrid items={input.assets} projectId={projectId} />
+                )}
+              </>
+            ) : (
+              <EmptyState title="还没有图片资料" hint="转换文档时抽出的图，或直接放进 input/raw/ 的图片，会出现在这里" />
+            )}
+          </TabsContent>
+        </Tabs>
+      </section>
 
       {input.indexPath ? (
         <section className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
