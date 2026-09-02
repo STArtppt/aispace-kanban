@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, AppWindow, ArrowUpDown, Copy, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Search, Star, StarOff, Table, X } from 'lucide-react';
+import { AlertTriangle, AppWindow, ArrowUpDown, Copy, Database, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Star, StarOff, Table, X } from 'lucide-react';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { ExpandableSearch } from '@/components/ExpandableSearch';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AssetGalleryStack } from '@/components/AssetGalleryStack';
@@ -19,9 +19,17 @@ import {
 } from '@/components/Primitives';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
-import { type IngestControl } from '@/hooks/useIngestJob';
+import { useSourceIngestJob, type IngestControl, type SourceIngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
-import { api, type ConvertedItem, type FileItem, type IngestJob, type Scan } from '@/lib/api';
+import {
+  api,
+  type ConvertedItem,
+  type DatabaseSource,
+  type DatabaseSourceItem,
+  type FileItem,
+  type IngestJob,
+  type Scan,
+} from '@/lib/api';
 import { absolutePath, formatBytes, formatRelative, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -506,9 +514,30 @@ const INPUT_TABS = [
   { key: 'pending' as const, title: '原始资料' },
   { key: 'converted' as const, title: '转换产物' },
   { key: 'assets' as const, title: '图片资料' },
+  // 数据库源排在三个已有 tab **之后**，而且只有真配过数据源才出现（见 showSources）
+  { key: 'sources' as const, title: '数据库源' },
 ];
 
 type InputTab = (typeof INPUT_TABS)[number]['key'];
+
+const INPUT_TAB_KEYS: readonly string[] = INPUT_TABS.map((tab) => tab.key);
+
+function isInputTab(value: string): value is InputTab {
+  return INPUT_TAB_KEYS.includes(value);
+}
+
+/**
+ * schema 快照多久算旧。写死一个默认值，先看用起来什么感觉 ——
+ * 库结构不是天天改，一个月没采过才值得提醒一次。
+ */
+const SNAPSHOT_STALE_DAYS = 30;
+
+function snapshotIsStale(iso?: string): boolean {
+  if (!iso) return false;
+  const at = new Date(iso).getTime();
+  if (Number.isNaN(at)) return false;
+  return Date.now() - at > SNAPSHOT_STALE_DAYS * 24 * 60 * 60 * 1000;
+}
 
 function readConvertedSort(): SortKey {
   const raw = localStorage.getItem(CONVERTED_SORT_KEY);
@@ -516,8 +545,8 @@ function readConvertedSort(): SortKey {
 }
 
 function readInputTab(): InputTab {
-  const raw = localStorage.getItem(INPUT_TAB_KEY);
-  return raw === 'pending' || raw === 'converted' || raw === 'assets' ? raw : 'converted';
+  const raw = localStorage.getItem(INPUT_TAB_KEY) || '';
+  return isInputTab(raw) ? raw : 'converted';
 }
 
 /** 图标选择器：正方形触发器，藏掉默认文案和下拉箭头 */
@@ -798,6 +827,197 @@ function AssetGrid({ items, projectId }: { items: FileItem[]; projectId: string 
   );
 }
 
+/** 一个数据源的状态说明。'ok' 之外的都要人处理，所以都走 orange。 */
+function sourceStateNote(source: DatabaseSource): string {
+  if (source.state === 'ok') return '';
+  return source.stateReason
+    || (source.state === 'unsupported' ? '暂不支持这个引擎'
+      : source.state === 'orphan' ? '只剩产物，没有配置' : '配置读不出来');
+}
+
+/** 数据源下面挂的一份产物：schema 快照或查询结果。点了在右侧预览。 */
+function SourceItemRow({
+  item,
+  openPath,
+  onOpen,
+}: {
+  item: DatabaseSourceItem | FileItem;
+  openPath: string;
+  onOpen: (item: FileItem) => void;
+}) {
+  const sheets = (item as DatabaseSourceItem).sheets || [];
+  const tables = (item as DatabaseSourceItem).tables || [];
+  // 查询产物点开直接看结果表；schema 快照点开看摘要本身
+  const target = sheets.length ? sheets[0] : item;
+  const detail = [
+    sheets.length ? `结果表 ${sheets[0].name}` : '',
+    tables.length ? `${tables.length} 张表的明细` : '',
+    item.mtime ? formatRelative(item.mtime) : '',
+  ].filter(Boolean).join(' · ');
+  return (
+    <Row indent={1} onClick={() => onOpen(target)} active={openPath === target.path}>
+      <KindIcon item={item as { reader: string; isDir?: boolean }} />
+      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+        <span className="truncate text-sm">{item.title || item.name}</span>
+        {detail ? (
+          <span className="truncate text-xs text-muted-foreground">{detail}</span>
+        ) : null}
+      </div>
+    </Row>
+  );
+}
+
+/**
+ * 「数据库源」tab 的正文：一个源一段，下面挂它的 schema 快照与查询产物。
+ *
+ * 这里**没有写 SQL 的地方**，只有「刷新 schema」—— 看板是只读看板，不是 SQL 客户端。
+ * 按需查询由 AI 在终端里跑 `python3 scripts/db_ingest.py query …` 发起，
+ * 产物写盘后由 SSE 推回来，自己出现在这个清单里。
+ */
+function DatabaseSourceList({
+  sources,
+  openPath,
+  onOpen,
+  canIngest,
+  control,
+}: {
+  sources: DatabaseSource[];
+  openPath: string;
+  onOpen: (item: FileItem) => void;
+  /** 工作空间里有 scripts/db_ingest.py 才给按钮；没有就只显示清单 */
+  canIngest: boolean;
+  control: SourceIngestControl;
+}) {
+  const runningSource = control.running ? control.job?.source || '' : '';
+  return (
+    <div className="flex flex-col gap-3">
+      <TruncatedHint
+        text={
+          '数据库不同步到本地，只按需取：schema 快照是 KB 级摘要，查询结果才落成 csv。'
+          + '这些产物不进「转换产物」清单 —— 数据库和文件是两条来源。'
+          + (canIngest
+            ? '点「刷新 schema」重采一次结构；按需查询在终端里跑 python3 scripts/db_ingest.py query。'
+            : '这个工作空间没有 scripts/db_ingest.py，从模板里拷一份过来才能在看板上采集。')
+        }
+      >
+        数据库不同步到本地，只按需取：schema 快照是 KB 级摘要，查询结果才落成 csv。
+      </TruncatedHint>
+
+      {control.error ? (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>采集失败</AlertTitle>
+          <AlertDescription className="max-h-72 overflow-auto whitespace-pre-wrap">
+            {control.error}
+          </AlertDescription>
+          <AlertAction>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6"
+              aria-label="关闭"
+              onClick={control.dismissError}
+            >
+              <X className="size-3.5" />
+            </Button>
+          </AlertAction>
+        </Alert>
+      ) : null}
+
+      {sources.map((source) => {
+        const note = sourceStateNote(source);
+        const stale = snapshotIsStale(source.snapshotAt);
+        const running = runningSource === source.key;
+        // 上一轮采这个源失败了：跟「配置读不出来」一样是要人处理的事，一并走 orange
+        const failed = !running
+          && control.job?.source === source.key
+          && control.job.status === 'error';
+        const meta = [
+          source.engine,
+          source.database,
+          source.schemas?.length ? source.schemas.join(' / ') : '',
+        ].filter(Boolean).join(' · ');
+        return (
+          <section key={source.key} className="flex flex-col gap-1">
+            <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border px-3 py-2">
+              <Database className="size-4 shrink-0 text-muted-foreground" />
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm">{source.name}</span>
+                  {note ? (
+                    <span className="shrink-0 text-xs text-destructive">{note}</span>
+                  ) : null}
+                </div>
+                <span className="truncate text-xs text-muted-foreground">
+                  {/* 原因已经在上一行标出来了，这里别再说一遍 */}
+                  {meta || (source.configPath ?? '')}
+                  {source.snapshotAt ? (
+                    <>
+                      {' · 结构采于 '}
+                      <span className={cn(stale && 'text-destructive')}>
+                        {formatRelative(source.snapshotAt)}
+                        {stale ? `（超过 ${SNAPSHOT_STALE_DAYS} 天，可能已经对不上了）` : ''}
+                      </span>
+                    </>
+                  ) : source.state === 'ok' ? ' · 还没采过结构' : ''}
+                  {failed ? (
+                    <span className="text-destructive">
+                      {' · 上次采集失败：'}
+                      {control.job?.message || ''}
+                    </span>
+                  ) : null}
+                </span>
+              </div>
+              {canIngest && source.state !== 'unreadable' && source.state !== 'orphan' ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  disabled={control.running}
+                  onClick={() => void control.start(source.key)}
+                >
+                  {running ? (
+                    <>
+                      <Loader2 className="size-3.5 animate-spin" />
+                      采集中…
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="size-3.5" />
+                      刷新 schema
+                    </>
+                  )}
+                </Button>
+              ) : null}
+            </div>
+            {running ? (
+              <p className="px-3 text-xs text-muted-foreground">
+                {control.job?.message || '正在采集…'}
+              </p>
+            ) : null}
+            {source.items.length ? (
+              source.items.map((item) => (
+                <SourceItemRow
+                  key={item.path}
+                  item={item}
+                  openPath={openPath}
+                  onOpen={onOpen}
+                />
+              ))
+            ) : (
+              <p className="px-3 py-1 text-xs text-muted-foreground">
+                {source.state === 'ok'
+                  ? '还没有产物。点「刷新 schema」采一次结构，之后 AI 就能照着它写查询。'
+                  : '没有产物。'}
+              </p>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
+
 export function InputPanel({
   scan,
   projectId,
@@ -820,10 +1040,16 @@ export function InputPanel({
   const [ignoreError, setIgnoreError] = useState('');
   // 旧服务进程没有 assetGroups：退回平铺网格
   const galleries = input.assetGroups || [];
+  /**
+   * 「数据库源」tab 的唯一判据。没配过、目录是空的、旧服务进程压根不给这个字段 ——
+   * 三种情况都是 sources 缺省，走同一条代码路径：不渲染这个 tab，其余三个照旧。
+   */
+  const sources = input.sources || [];
+  const showSources = sources.length > 0;
+  const sourceIngest = useSourceIngestJob(projectId, showSources && input.canIngestSources);
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(INPUT_VIEW_KEY));
   const [tab, setTab] = useState<InputTab>(readInputTab);
   const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
   const [filter, setFilter] = useState<ConvertedFilter>('all');
   const [sortKey, setSortKey] = useState<SortKey>(readConvertedSort);
   // 「复制绝对路径」要工作空间在磁盘上的位置，scan.project.root 里带着；拿不到时 absolutePath 自己退回相对路径
@@ -852,7 +1078,6 @@ export function InputPanel({
     setIgnoreError('');
     setIgnoringPath('');
     setQuery('');
-    setSearchOpen(false);
     setFilter('all');
   }, [projectId]);
 
@@ -878,13 +1103,19 @@ export function InputPanel({
     ...(canFilterStale ? (['stale'] as const) : []),
   ];
   const activeFilter = filterOptions.includes(filter) ? filter : 'all';
-  const searching = query.trim().length > 0;
-  const searchExpanded = searchOpen || searching;
   const tabCounts: Record<InputTab, number> = {
     pending: input.pending.length,
     converted: input.converted.length,
     assets: input.assets.length,
+    sources: sources.length,
   };
+  const visibleTabs = INPUT_TABS.filter((item) => item.key !== 'sources' || showSources);
+  /**
+   * localStorage 里记着的可能是「数据库源」，而这个工作空间根本没有数据源
+   * （换了工作空间、或者源配置被删了）—— 那时退回默认 tab，不能渲染一个不存在的 tab。
+   * 只改这里显示用的值，不动记着的偏好：源再配回来时还停在数据库源上。
+   */
+  const activeTab: InputTab = tab === 'sources' && !showSources ? 'converted' : tab;
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -897,9 +1128,9 @@ export function InputPanel({
           <div
             className={cn(
               'flex shrink-0 items-center gap-2',
-              tab === 'assets' && 'invisible pointer-events-none',
+              (activeTab === 'assets' || activeTab === 'sources') && 'invisible pointer-events-none',
             )}
-            aria-hidden={tab === 'assets'}
+            aria-hidden={activeTab === 'assets' || activeTab === 'sources'}
           >
               <ViewModeToggle mode={viewMode} onChange={setViewMode} label="资料清单" />
               <Select
@@ -924,7 +1155,7 @@ export function InputPanel({
                   <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
                 </SelectContent>
               </Select>
-              {tab === 'converted' && filterOptions.length > 1 ? (
+              {activeTab === 'converted' && filterOptions.length > 1 ? (
                 <Select
                   value={activeFilter}
                   onValueChange={(value) => {
@@ -950,39 +1181,26 @@ export function InputPanel({
                   </SelectContent>
                 </Select>
               ) : null}
-              <div
-                className={cn(
-                  'relative h-8 transition-[width] duration-200 ease-out',
-                  searchExpanded ? 'w-[12rem] sm:w-[14rem]' : 'w-8',
-                )}
-              >
-                <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
-                  <Search className="size-3.5" />
-                </span>
-                <Input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  onFocus={() => setSearchOpen(true)}
-                  onBlur={() => setSearchOpen(false)}
-                  placeholder={searchExpanded ? '按名称搜索…' : ''}
-                  className={cn('h-8 text-xs', searchExpanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
-                  aria-label="搜索输入资料"
-                  title="搜索"
-                />
-              </div>
+              <ExpandableSearch
+                key={projectId}
+                value={query}
+                onChange={setQuery}
+                expandedClassName="w-[12rem] sm:w-[14rem]"
+                aria-label="搜索输入资料"
+              />
           </div>
         </div>
 
         {/* 非当前 tab 不挂载：资料多时三个清单一起画会卡，切走就把 DOM 卸掉 */}
         <Tabs
-          value={tab}
+          value={activeTab}
           onValueChange={(value) => {
-            if (value === 'pending' || value === 'converted' || value === 'assets') setTab(value);
+            if (isInputTab(value)) setTab(value);
           }}
           className="gap-4"
         >
           <TabsList variant="line">
-            {INPUT_TABS.map(({ key, title }) => (
+            {visibleTabs.map(({ key, title }) => (
               <TabsTrigger key={key} value={key} className="px-2">
                 <span className="truncate">{title}</span>
                 <span className="shrink-0 text-xs font-normal text-muted-foreground">
@@ -1098,6 +1316,18 @@ export function InputPanel({
               <EmptyState title="还没有图片资料" hint="转换文档时抽出的图，或直接放进 input/raw/ 的图片，会出现在这里" />
             )}
           </TabsContent>
+
+          {showSources ? (
+            <TabsContent value="sources">
+              <DatabaseSourceList
+                sources={sources}
+                openPath={openPath}
+                onOpen={onOpen}
+                canIngest={Boolean(input.canIngestSources)}
+                control={sourceIngest}
+              />
+            </TabsContent>
+          ) : null}
         </Tabs>
       </section>
 

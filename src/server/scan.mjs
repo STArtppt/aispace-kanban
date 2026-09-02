@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import YAML from 'yaml';
 import { countAnnotations, linkReferences } from './citations.mjs';
 import { countWords, parseFrontmatter } from './frontmatter.mjs';
 import { readMeta } from './meta.mjs';
@@ -22,6 +23,15 @@ const UNSORTED_ASSETS = '未分类';
  * 一源多产物的正文收进 SplittingObject/<名>/，整目录合并的收进 MergedObject/。
  */
 const PAYLOAD_DIRS = new Set(['SplittingObject', 'MergedObject']);
+/**
+ * 数据库产物的保留目录（相对 input/converted/）。工作空间的 scripts/db_ingest.py 往这儿写，
+ * 扫描按这个**路径前缀**分流：它下面的东西不进「已转换」清单，改挂到对应的数据源下。
+ * 数据库和文件是两条来源，混在一个清单里会让「已转换」的语义糊掉。
+ * 改这个名字要同步 templates/pm-aispace/scripts/db_ingest.py 的 SOURCES_OUT。
+ */
+const SOURCES_DIR_NAME = '_sources';
+/** 本轮支持的引擎。别的引擎不是错误，只是「暂不支持」——照样列出来，让用户看得见 */
+const SUPPORTED_ENGINES = new Set(['postgresql', 'mysql']);
 /** 镜像目录里的产物入口文件名 */
 const MANIFEST_RE = /^_manifest_(.+)\.md$/;
 
@@ -240,7 +250,7 @@ function describeConverted(root, abs) {
  * 本身不是产物，要走进去；SplittingObject/ MergedObject/ 是正文容器，跳过不进
  * （它们的内容已经挂在旁边那份 manifest 的 sheets 上了）。
  */
-function collectConverted(root, dir, out) {
+function collectConverted(root, dir, out, convertedRoot = dir) {
   if (!fs.existsSync(dir)) return;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (SKIP.has(entry.name) || entry.name.startsWith('.')) continue;
@@ -250,12 +260,14 @@ function collectConverted(root, dir, out) {
       continue;
     }
     if (PAYLOAD_DIRS.has(entry.name)) continue;
+    // 数据库产物走「数据库源」那条线（scanSources），不进「已转换」清单，计数也不含它们
+    if (dir === convertedRoot && entry.name === SOURCES_DIR_NAME) continue;
     // 旧布局的目录型产物：目录里直接躺着 _manifest.md，整个目录算一份产物
     if (fs.existsSync(path.join(abs, '_manifest.md'))) {
       out.push(describeConverted(root, abs));
       continue;
     }
-    collectConverted(root, abs, out);
+    collectConverted(root, abs, out, convertedRoot);
   }
 }
 
@@ -477,6 +489,181 @@ export async function verifySource(root, relPath) {
   };
 }
 
+/**
+ * 一份数据库产物 = 一个 `_manifest_<名>.md`（摘要）+ 可能有的正文。两种形态：
+ *
+ *  - schema 快照：表多时正文是 `SplittingObject/<表>.md`，走 frontmatter 的 `payload:`；
+ *  - 查询产物：正文是同级的 `<查询名>.csv`。
+ *
+ * csv 挂到它那份摘要的 `sheets` 上（与目录型产物同构），**不再单独列一行** ——
+ * 一份查询产物在界面上就该是一行，不是「摘要 + 结果」两行。
+ */
+function collectSourceProducts(root, dir) {
+  if (!fs.existsSync(dir)) return [];
+  const entries = fs.readdirSync(dir, { withFileTypes: true })
+    .filter((e) => !SKIP.has(e.name) && !e.name.startsWith('.'));
+  const manifests = entries.filter((e) => e.isFile() && MANIFEST_RE.test(e.name));
+  // 已经被某份摘要认领的正文文件，不再单独成条
+  const claimed = new Set();
+  const items = [];
+  for (const entry of manifests) {
+    const abs = path.join(dir, entry.name);
+    const item = describeConverted(root, abs);
+    const label = entry.name.match(MANIFEST_RE)[1];
+    const sheets = entries
+      .filter((e) => e.isFile() && /\.(csv|tsv)$/i.test(e.name)
+        && e.name.replace(/\.(csv|tsv)$/i, '') === label)
+      .map((e) => {
+        claimed.add(e.name);
+        const sheetAbs = path.join(dir, e.name);
+        return {
+          path: rel(root, sheetAbs),
+          name: e.name,
+          ext: path.extname(e.name).toLowerCase(),
+          reader: 'table',
+          title: label,
+          ...stat(sheetAbs),
+        };
+      });
+    if (sheets.length) {
+      item.sheets = sheets;
+      item.reader = 'table';
+    } else if (item.isDir) {
+      // 拆分了的 schema 快照：单表明细是 SplittingObject/<表>.md，列出来好让界面点开
+      item.tables = listFiles(path.join(root, item.path), { recursive: false })
+        .filter((f) => f.toLowerCase().endsWith('.md'))
+        .sort((a, b) => a.localeCompare(b, 'zh'))
+        .map((f) => ({
+          path: rel(root, f),
+          name: path.basename(f),
+          ext: '.md',
+          reader: 'markdown',
+          title: path.basename(f, '.md'),
+          ...stat(f),
+        }));
+    }
+    items.push(item);
+  }
+  // 摘要没认领的散装文件（手工放进来的、或者产物写了一半）仍然列出来，不悄悄吞掉
+  for (const entry of entries) {
+    if (!entry.isFile() || MANIFEST_RE.test(entry.name) || claimed.has(entry.name)) continue;
+    items.push(describeConverted(root, path.join(dir, entry.name)));
+  }
+  return items.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+}
+
+/**
+ * 读一份 input/sources/<名>.yaml。**只读连接的形状** —— 口令不在里面，
+ * 看板也绝不读工作空间的 `.env`（读它的是工作空间自己的 scripts/db_ingest.py）。
+ *
+ * 这里用 `yaml` 包解析，比 db_ingest.py 那个只认平铺写法的迷你解析器宽松：
+ * 极端情况下会出现「看板认得、脚本读不出来」，那时采集任务的日志里会说清楚，
+ * 不必在两处各维护一套语法。
+ */
+function readSourceConfig(abs) {
+  const data = YAML.parse(readTextSafe(abs));
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('这份配置不是一组 key: value');
+  }
+  const engineRaw = String(data.engine ?? '').trim().toLowerCase();
+  const engine = engineRaw === 'postgres' || engineRaw === 'pg' ? 'postgresql' : engineRaw;
+  const schemas = Array.isArray(data.schemas)
+    ? data.schemas.map((s) => String(s)).filter(Boolean)
+    : (data.schemas ? [String(data.schemas)] : []);
+  return {
+    name: String(data.name ?? '').trim(),
+    engine,
+    database: String(data.database ?? '').trim(),
+    schemas,
+  };
+}
+
+/**
+ * input/sources/*.yaml → 数据源清单，每个源挂着它在 input/converted/_sources/ 下的产物。
+ *
+ * 返回 null = 「这个工作空间没有数据源这回事」，调用方据此**不给** scan 里的这个字段，
+ * 于是前端不渲染那个 tab —— 没配、目录空、旧服务进程三种情况走同一条代码路径。
+ *
+ * 单份 yaml 读不出来只降级成一个「配置读不出来」的条目（照 config.mjs 的 readProjects 风格），
+ * 不影响其它源、不让整次扫描失败：坏的那份得让用户看得见，而不是整块消失。
+ */
+function scanSources(root) {
+  const configDir = path.join(root, 'input', 'sources');
+  const outDir = path.join(root, 'input', 'converted', SOURCES_DIR_NAME);
+  const files = fs.existsSync(configDir)
+    ? fs.readdirSync(configDir, { withFileTypes: true })
+      .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.yaml') && !e.name.startsWith('.'))
+      .map((e) => e.name)
+      .sort((a, b) => a.localeCompare(b, 'zh'))
+    : [];
+  const productDirs = fs.existsSync(outDir)
+    ? fs.readdirSync(outDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !SKIP.has(e.name) && !e.name.startsWith('.'))
+      .map((e) => e.name)
+    : [];
+  // 两边都空 = 这个工作空间跟数据库没关系，字段整个缺省
+  if (!files.length && !productDirs.length) return null;
+
+  const used = new Set();
+  const sources = [];
+  for (const file of files) {
+    const key = file.replace(/\.yaml$/i, '');
+    const item = { key, name: key, configPath: rel(root, path.join(configDir, file)), state: 'ok' };
+    let config = null;
+    try {
+      config = readSourceConfig(path.join(configDir, file));
+    } catch (err) {
+      item.state = 'unreadable';
+      // yaml 的报错是多行的（还画了个箭头指位置），界面上一行放不下 —— 只留第一行；
+      // 行尾那个冒号是用来引出后面几行的，单独留着没有下文
+      item.stateReason = `配置读不出来：${String(err.message).split('\n')[0].trim().replace(/[:：]$/, '')}`;
+    }
+    if (config) {
+      item.name = config.name || key;
+      item.engine = config.engine;
+      item.database = config.database;
+      if (config.schemas.length) item.schemas = config.schemas;
+      if (!SUPPORTED_ENGINES.has(config.engine)) {
+        item.state = 'unsupported';
+        item.stateReason = config.engine
+          ? `暂不支持这个引擎：${config.engine}。本轮只做 PostgreSQL 和 MySQL。`
+          : '这份配置没写 engine，不知道是什么库。本轮只做 PostgreSQL 和 MySQL。';
+      } else if (!config.database) {
+        item.state = 'unreadable';
+        item.stateReason = '配置里缺 database，不知道要连哪个库。';
+      }
+    }
+    const dir = path.join(outDir, key);
+    if (fs.existsSync(dir)) {
+      used.add(key);
+      item.productDir = rel(root, dir);
+      item.items = collectSourceProducts(root, dir);
+      // 快照采于何时：schema 快照那份摘要的 frontmatter 里记着
+      const snapshot = item.items.find((it) => it.name === key);
+      if (snapshot?.convertedAt) item.snapshotAt = snapshot.convertedAt;
+    } else {
+      item.items = [];
+    }
+    sources.push(item);
+  }
+
+  // converted/_sources/ 下有产物、却没有对应 yaml 的目录：仍然挂出来。
+  // 它们不该消失 —— 要么是源配置被删了，要么是 input/raw/ 下真有个叫 _sources 的目录
+  // 碰巧撞了这个保留名。两种情况都比「悄悄不见」好。
+  for (const name of productDirs.sort((a, b) => a.localeCompare(b, 'zh'))) {
+    if (used.has(name)) continue;
+    sources.push({
+      key: name,
+      name,
+      state: 'orphan',
+      stateReason: 'input/sources/ 下没有这个源的配置，只剩产物。删了配置就会这样。',
+      productDir: rel(root, path.join(outDir, name)),
+      items: collectSourceProducts(root, path.join(outDir, name)),
+    });
+  }
+  return sources;
+}
+
 function scanInput(root) {
   const inputDir = path.join(root, 'input');
   const isIgnored = makeIgnoreMatcher(readIgnorePatterns(root));
@@ -530,6 +717,8 @@ function scanInput(root) {
   const indexPath = path.join(inputDir, 'INDEX.md');
   // 模板工作空间才有 scripts/ingest.py；自己 mkdir 的只有目录约定，不能在看板里触发转换
   const canIngest = fs.existsSync(path.join(root, 'scripts', 'ingest.py'));
+  // 数据源：没配过就是 null，整个字段不进 JSON（前端据此不渲染那个 tab）
+  const sources = scanSources(root);
   return {
     raw,
     converted,
@@ -538,6 +727,9 @@ function scanInput(root) {
     pending,
     indexPath: fs.existsSync(indexPath) ? rel(root, indexPath) : '',
     canIngest,
+    ...(sources ? { sources } : {}),
+    // 只有配了数据源才需要知道采集脚本在不在；没配的工作空间连这个字段都不给
+    ...(sources ? { canIngestSources: fs.existsSync(path.join(root, 'scripts', 'db_ingest.py')) } : {}),
     stats: {
       raw: raw.length,
       converted: converted.length,

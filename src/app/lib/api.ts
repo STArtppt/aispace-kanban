@@ -78,6 +78,55 @@ export interface ConvertedItem extends FileItem {
 }
 
 /**
+ * 一个数据源在 input/converted/_sources/<源名>/ 下的一份产物。
+ * 形状与转换产物同构（服务端复用的就是同一个 describeConverted），多两种正文形态：
+ *
+ *  - 查询产物：结果 csv 挂在 `sheets` 上（一份产物一行，不拆成「摘要 + 结果」两行）；
+ *  - 拆分了的 schema 快照：单表明细在 `tables` 里（SplittingObject/<表>.md）。
+ */
+export interface DatabaseSourceItem extends ConvertedItem {
+  /** 拆分了的 schema 快照的单表明细。可选：没拆分、或旧服务进程时缺省 */
+  tables?: FileItem[];
+}
+
+/**
+ * 数据源的状态。'ok' 之外的三种都要在界面上标出来（走 orange），因为它们都要人去处理：
+ *  - 'unsupported' 引擎本轮不支持（只做 PostgreSQL / MySQL）
+ *  - 'unreadable'  这份 yaml 读不出来（语法错、缺 database）
+ *  - 'orphan'      产物还在，但 input/sources/ 下没有对应的配置了
+ */
+export type DatabaseSourceState = 'ok' | 'unsupported' | 'unreadable' | 'orphan';
+
+/**
+ * input/sources/<源名>.yaml 描述的一个数据库源。
+ *
+ * **不含任何凭据** —— yaml 里本来就只写环境变量名，看板也绝不读工作空间的 `.env`
+ * （读它的是工作空间自己的 scripts/db_ingest.py）。这个接口的响应里不会出现
+ * 口令、token 或完整连接串。
+ */
+export interface DatabaseSource {
+  /** 源名，也就是 yaml 的文件名（去掉 .yaml）。触发采集时传的就是它 */
+  key: string;
+  /** 显示名，yaml 里的 `name`；没写就退回源名 */
+  name: string;
+  state: DatabaseSourceState;
+  /** state 不是 'ok' 时的中文原因，直接显示给用户 */
+  stateReason?: string;
+  /** 'postgresql' | 'mysql' | 用户写的任何值（那时 state 是 'unsupported'）。读不出配置时缺省 */
+  engine?: string;
+  database?: string;
+  schemas?: string[];
+  /** 配置文件的工作空间内相对路径。orphan 的源没有配置文件，所以可选 */
+  configPath?: string;
+  /** 产物目录 input/converted/_sources/<源名>。还没采过就缺省 */
+  productDir?: string;
+  /** schema 快照采于何时（快照 frontmatter 里的 converted_at）。没采过就缺省 */
+  snapshotAt?: string;
+  /** 这个源下的产物：schema 快照 + 查询产物。没采过是空数组 */
+  items: DatabaseSourceItem[];
+}
+
+/**
  * input/assets/ 下按首层目录聚成的一个图库：一份文档抽出的图算一堆，
  * 没有归属的图归到「未分类」。path 指向图库所在目录，name 是目录名，
  * title 优先用来源文档的标题。
@@ -218,6 +267,23 @@ export interface Scan {
      * 可选：旧服务进程没有这个字段时退回纯文字提示（改动前的行为）。
      */
     canIngest?: boolean;
+    /**
+     * input/sources/*.yaml 配的数据库源，每个源挂着它在 input/converted/_sources/ 下的产物。
+     *
+     * **可选，而且这个可选就是「数据库源」tab 的唯一判据**：没配过、目录是空的、
+     * 旧服务进程压根不给这个字段 —— 三种情况都是字段缺省，前端一律不渲染那个 tab，
+     * 其余三个 tab 行为与改动前完全一致。不需要为版本错配单写分支。
+     *
+     * 注意 `input/converted/_sources/` 下的产物**不在** `converted` 里，
+     * `stats.converted` 也不含它们：数据库和文件是两条来源，混在一个清单里会让
+     * 「已转换」的语义糊掉。
+     */
+    sources?: DatabaseSource[];
+    /**
+     * 工作空间里有 scripts/db_ingest.py 时为 true，前端才显示「刷新 schema」按钮。
+     * 可选：只有 `sources` 存在时服务端才给这个字段；缺了就只显示清单不给按钮。
+     */
+    canIngestSources?: boolean;
     stats: {
       raw: number;
       converted: number;
@@ -365,6 +431,26 @@ export interface CaptureJob {
 }
 
 /**
+ * POST/GET /api/projects/:id/db-source 的数据源采集任务状态。
+ * 与 IngestJob 同构，但**在服务端是另一把锁**：正在转一份大 PDF 的时候照样能刷 schema。
+ * idle = 这个服务进程里还没采过；running 时前端轮询；done/error 时展示 message。
+ */
+export interface SourceIngestJob {
+  status: IngestStatus;
+  /**
+   * 三态各自的人话。error 时是**脚本自己打的那句中文**（缺哪个环境变量、该装哪个包、
+   * 只读会话为什么设不上）—— 直接显示它，不要自己写「操作失败请重试」。
+   */
+  message: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number | null;
+  log?: string;
+  /** 本轮采的是哪个源（源名）。idle 时为空串 */
+  source?: string;
+}
+
+/**
  * GET /api/projects/:id/verify-source 的结果：重算原件 sha256 跟产物记的比。
  * 'unknown' = 比不了（没记来源 / 没记 sha256 / 来源是目录），reason 里是中文原因，
  * 这种情况不要拿扫描的 mtime 结论冒充哈希结论。
@@ -501,6 +587,21 @@ export const api = {
       ...(targetPath ? { body: JSON.stringify({ path: targetPath }) } : {}),
     }),
   ingestStatus: (id: string) => request<IngestJob>(`/api/projects/${id}/ingest`),
+  /**
+   * 触发工作空间 scripts/db_ingest.py 采一次 schema 快照；立刻返回，进度用
+   * sourceIngestStatus 轮询。落盘由 input/ 的 SSE 捕获，清单自己刷新。
+   *
+   * **看板自己不连数据库** —— 连库整个发生在子进程里，写盘的也是那个脚本。
+   * 界面上没有写 SQL 的地方：L2 查询由 AI 在终端里跑 `db_ingest.py query` 发起。
+   * 老工作空间没有 db_ingest.py 时返回 400，把那句中文原样显示即可；
+   * 旧服务进程没有这个接口（404），request 会带上「重启 serve」的提示。
+   */
+  startSourceIngest: (id: string, source: string) =>
+    request<SourceIngestJob>(`/api/projects/${id}/db-source`, {
+      method: 'POST',
+      body: JSON.stringify({ source }),
+    }),
+  sourceIngestStatus: (id: string) => request<SourceIngestJob>(`/api/projects/${id}/db-source`),
   /**
    * 把 input/raw/ 下的文件或目录写进 input/.ingestignore，不再算待转换。
    * 文件还在磁盘上，只是看板和 ingest.py 一起跳过它。

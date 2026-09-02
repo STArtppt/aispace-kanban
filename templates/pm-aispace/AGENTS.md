@@ -303,6 +303,49 @@ sqlite3 -header -column input/converted/现场数据/SplittingObject/t02_product
 状态码 / 质量位的含义资料里通常没写，原样保留、不做解释，写进待确认清单去问。
 详细做法见 [`skills/pm-field-data`](skills/pm-field-data/SKILL.md)。
 
+## 阶段一之四：数据库作为按需查询的远端资料源
+
+有一大类事实活在**业务系统的数据库**里。把整个库同步到本机要占磁盘、要维护增量，
+生产数据完整落地还有合规问题；挂个数据库 MCP 让 AI 随便查，则是每次结果都直接进上下文，
+几百行就把窗口撑爆，还不留产物 —— 换个会话得从头重查。
+
+所以这里走第三条路：**库是远端资料源，只按需取，取到的东西落成文件**。
+
+```bash
+python3 scripts/db_ingest.py list                    # 列出 input/sources/ 下配好的源
+python3 scripts/db_ingest.py schema 仓库库            # L1：采一次 schema 快照（低频）
+python3 scripts/db_ingest.py query 仓库库 \
+    --name 近30天入库量 --sql "SELECT …"              # L2：跑一条只读查询，结果落 csv
+```
+
+- **L1 schema 快照** `input/converted/_sources/<源名>/_manifest_<源名>.md` ——
+  表清单、列名类型注释、主外键、行数**量级**。KB 级，**这是默认进上下文的唯一一份**。
+  表超过 40 张就退化成表清单，单表明细在 `SplittingObject/<表>.md`，按需读一张。
+- **L2 查询产物** `input/converted/_sources/<源名>/<查询名>.csv` +
+  `_manifest_<查询名>.md`（SQL 原文 / 行数 / sha256）。上下文里只留路径和摘要，正文按需读。
+
+源怎么配、凭据放哪儿、为什么样例行默认不抽，见 [`input/sources/README.md`](input/sources/README.md)。
+
+**写操作由数据库自己拒绝。** 脚本在发任何一条用户语句之前先把会话置为只读
+（PG `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` / MySQL `SET SESSION TRANSACTION READ ONLY`），
+即便配的是 root，INSERT / UPDATE / DELETE 也由服务端打回。设置失败就中止，不降级。
+脚本侧另有一道白名单 + 禁多语句 —— 它不是装饰：实测 psycopg 不带参数时多语句是真会执行的。
+**不要试图绕过它**：要改数据请走业务系统自己的入口。
+
+### 「零 Python 依赖」这次让了一步
+
+`ingest.py` 一路坚持只用标准库 + 外部 CLI（xlsx 直接读 OOXML，.xls 自带 BIFF8 解析），
+换台机器就能跑。连数据库这件事做不到 —— wire protocol 用标准库自己实现不现实。
+
+所以 `db_ingest.py` 的口径是**按需可选**，不是「原则松了」：
+
+- 脚本本身仍然只 import 标准库；驱动是**运行到那一步才 import**，import 失败时报中文、点名装哪个包。
+- **没配数据源的人一行依赖都不多**，也不会跑到那段代码。所谓「零依赖」守的是
+  **开箱即用**，不是「永不 import」—— 这与 MinerU 要 key、anydoc 要二进制是同一个模式。
+- 装不了包的环境（`pip install` 要走审批）还有 `client: cli` 走 psql 那条备选路。
+
+新加别的脚本时请照这条线判断：**默认路径必须零依赖**，可选路径可以有可选依赖。
+
 ## 演示与汇报材料（HTML）
 
 要给客户汇报、评审、演示的材料，如果产出是 HTML，**放 `output/docs/`，和它的 `.md` 源文并排**，

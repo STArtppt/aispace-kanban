@@ -6,13 +6,12 @@ import {
   FolderOpen,
   Image,
   MonitorPlay,
-  Search,
   Star,
   StarOff,
   Table,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
+import { ExpandableSearch } from '@/components/ExpandableSearch';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, PanelTitle, Row, RowActions, TruncatedHint, writeClipboard } from '@/components/Primitives';
@@ -318,7 +317,6 @@ export function OutputPanel({
   const [sortKey, setSortKey] = useState<SortKey>(readOutputSort);
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(OUTPUT_VIEW_KEY));
   const [query, setQuery] = useState('');
-  const [searchOpen, setSearchOpen] = useState(false);
   // 没存过偏好时停在第一组有东西的，省得一进来就看空态
   const [tab, setTab] = useState<GroupKey>(
     () => readOutputTab() || GROUPS.find(({ key }) => output[key].length)?.key || 'analysis',
@@ -358,7 +356,6 @@ export function OutputPanel({
   );
 
   const searching = query.trim().length > 0;
-  const searchExpanded = searchOpen || searching;
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -391,26 +388,13 @@ export function OutputPanel({
                 <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
               </SelectContent>
             </Select>
-            <div
-              className={cn(
-                'relative h-8 transition-[width] duration-200 ease-out',
-                searchExpanded ? 'w-[10rem] sm:w-[12rem]' : 'w-8',
-              )}
-            >
-              <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
-                <Search className="size-3.5" />
-              </span>
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onFocus={() => setSearchOpen(true)}
-                onBlur={() => setSearchOpen(false)}
-                placeholder={searchExpanded ? '按名称搜索…' : ''}
-                className={cn('h-8 text-xs', searchExpanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
-                aria-label="搜索产出文档"
-                title="搜索"
-              />
-            </div>
+            <ExpandableSearch
+              key={projectId}
+              value={query}
+              onChange={setQuery}
+              expandedClassName="w-[10rem] sm:w-[12rem]"
+              aria-label="搜索产出文档"
+            />
           </div>
         </div>
 

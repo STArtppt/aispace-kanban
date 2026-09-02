@@ -48,6 +48,13 @@ const tableRowCountCache = new Map();
 const ingestJobs = new Map();
 const INGEST_LOG_LIMIT = 32 * 1024;
 
+/**
+ * 每个项目至多一个进行中的**数据源采集**任务。与 ingestJobs 并列，**不共用同一把锁** ——
+ * 正在转一份大 PDF 的时候不该连 schema 都刷不了，两件事互不相干。
+ * 形状与 ingestJobs 完全一致，走的也是同一套「立即返回 + 轮询进度」。
+ */
+const sourceJobs = new Map();
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.htm': 'text/html; charset=utf-8',
@@ -491,6 +498,157 @@ function ingestStatus(projectId) {
     exitCode: job.exitCode,
     log: job.log || '',
     path: job.path || '',
+  };
+}
+
+/**
+ * 从 db_ingest.py 的输出里提炼人话。脚本自己打的就是中文，失败时是 `✗ <原因>`，
+ * 所以优先原样用它那一行 —— 缺哪个环境变量、该装哪个包、只读会话为什么设不上，
+ * 脚本比看板清楚得多，别在这儿重写一遍。
+ */
+function summarizeSourceLog(log, exitCode) {
+  const text = (log || '').trim();
+  const lines = text ? text.split(/\r?\n/).filter(Boolean) : [];
+  const tail = lines.slice(-8).join('\n');
+  if (/找不到 python|no such file|not found.*python|python was not found/i.test(text)) {
+    return {
+      message: '找不到 Python 3。采集脚本要靠它跑，请先装 Python 3（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。',
+      log: tail,
+    };
+  }
+  const failLine = [...lines].reverse().find((l) => l.trimStart().startsWith('✗'));
+  if (exitCode === 0) {
+    const okLine = [...lines].reverse().find((l) => l.includes('schema 快照已更新'));
+    return { message: okLine || 'schema 采集完成。', log: tail };
+  }
+  return {
+    message: (failLine || '').replace(/^\s*✗\s*/, '')
+      || (tail ? `采集脚本异常退出（退出码 ${exitCode}）。\n\n${tail}` : `采集脚本异常退出（退出码 ${exitCode}）。`),
+    log: tail,
+  };
+}
+
+/**
+ * 采集的目标只能是 input/sources/ 下真实存在的那份 yaml。
+ * 源名来自请求，所以第一件事是 resolveInside —— 挡 `../` 穿越（红线）。
+ */
+function resolveSourceTarget(root, rawName) {
+  const name = typeof rawName === 'string' ? rawName.trim() : '';
+  if (!name) {
+    const err = new Error('要采哪个数据源？没给源名。');
+    err.statusCode = 400;
+    throw err;
+  }
+  const abs = resolveInside(root, path.join('input', 'sources', `${name}.yaml`));
+  const sourcesRoot = path.resolve(root, 'input', 'sources');
+  if (!abs.startsWith(sourcesRoot + path.sep)) {
+    const err = new Error('只能采 input/sources/ 下配好的数据源');
+    err.statusCode = 400;
+    throw err;
+  }
+  if (!fs.existsSync(abs)) {
+    const err = new Error(`没有这个数据源：${name}。配置要放在 input/sources/${name}.yaml。`);
+    err.statusCode = 404;
+    throw err;
+  }
+  return { abs, name };
+}
+
+/**
+ * 在工作空间里异步跑 `scripts/db_ingest.py schema <源名>`。
+ * 与 startIngest 同构：看板只 spawn，真正写 input/converted/_sources/ 的是工作空间自己的脚本；
+ * 接口立刻返回，进度靠轮询；写盘会被 watchWorkspace 捕获，页面自己刷新。
+ *
+ * **看板自己不连数据库**、不加驱动依赖 —— 连库这件事整个发生在子进程里。
+ */
+async function startSourceIngest(project, sourceName) {
+  const existing = sourceJobs.get(project.id);
+  if (existing?.status === 'running') {
+    const err = new Error(`这个工作空间正在采「${existing.source}」的 schema，等这轮结束后再试。`);
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const target = resolveSourceTarget(project.root, sourceName);
+
+  const script = path.join(project.root, 'scripts', 'db_ingest.py');
+  if (!fs.existsSync(script)) {
+    const err = new Error(
+      '这个工作空间没有 scripts/db_ingest.py，看板没法替你采集。'
+        + '用新版模板新建的工作空间会自带这个脚本；老工作空间可以从模板里拷一份 '
+        + 'scripts/db_ingest.py 过来（它还需要同目录的 envfile.py 和 layout.py）。',
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const py = await findPython();
+  if (!py) {
+    const err = new Error(
+      '找不到 Python 3。采集脚本要靠它跑，请先装 Python 3'
+        + '（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。',
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const [bin, ...prefix] = py;
+  const job = {
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    finishedAt: '',
+    exitCode: null,
+    source: target.name,
+    message: `正在采「${target.name}」的 schema … 库大或网络慢时要等一会儿。`,
+    log: '',
+  };
+  sourceJobs.set(project.id, job);
+
+  const child = spawn(bin, [...prefix, script, 'schema', target.name], { cwd: project.root });
+  child.stdout.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
+  child.stderr.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
+  child.on('error', (err) => {
+    // spawn 异步失败（解释器中途消失等）：不能让未处理的 error 把常驻服务带崩
+    if (job.status !== 'running') return;
+    job.status = 'error';
+    job.finishedAt = new Date().toISOString();
+    job.exitCode = null;
+    job.message = err.code === 'ENOENT'
+      ? '找不到 Python 3。请先装 Python 3（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。'
+      : `启动采集脚本失败：${err.message}`;
+  });
+  child.on('close', (code) => {
+    if (job.status !== 'running') return;
+    const exitCode = code ?? 1;
+    job.exitCode = exitCode;
+    job.finishedAt = new Date().toISOString();
+    const summary = summarizeSourceLog(job.log, exitCode);
+    job.message = summary.message;
+    job.log = summary.log;
+    job.status = exitCode === 0 ? 'done' : 'error';
+  });
+
+  return {
+    status: job.status,
+    startedAt: job.startedAt,
+    message: job.message,
+    source: job.source,
+  };
+}
+
+function sourceIngestStatus(projectId) {
+  const job = sourceJobs.get(projectId);
+  if (!job) {
+    return { status: 'idle', message: '', startedAt: '', finishedAt: '', exitCode: null, log: '', source: '' };
+  }
+  return {
+    status: job.status,
+    message: job.message || '',
+    startedAt: job.startedAt || '',
+    finishedAt: job.finishedAt || '',
+    exitCode: job.exitCode,
+    log: job.log || '',
+    source: job.source || '',
   };
 }
 
@@ -1103,6 +1261,22 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       if (rejectIfForeignOrigin(req, res)) return undefined;
       const body = await readBody(req);
       const started = await startIngest(project, body.path);
+      return json(res, 200, started);
+    }
+  }
+
+  // 触发工作空间自己的 scripts/db_ingest.py：看板只 spawn，自己不连数据库、不加驱动依赖
+  if (head === 'projects' && id && action === 'db-source') {
+    const project = requireProject(id);
+    if (req.method === 'GET') {
+      return json(res, 200, sourceIngestStatus(project.id));
+    }
+    if (req.method === 'POST') {
+      // 会起子进程，与其它同类接口一样：非环回监听时一律 403
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      const body = await readBody(req);
+      const started = await startSourceIngest(project, body.source);
       return json(res, 200, started);
     }
   }

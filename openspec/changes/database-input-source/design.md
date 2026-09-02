@@ -184,11 +184,8 @@ psycopg 走扩展协议,一次 execute 只允许一条),再加脚本侧一道裸
 
 ## Open Questions
 
-1. **只读会话在异常路径下会不会失效** —— 驱动自动重连、连接池复用(本方案不用池,但脚本
-   跑多条查询时会复用同一条连接)之后,`SET SESSION` 还在不在?
-   倾向每次执行前显式确认一次,但先实测再定。
-2. **MySQL 上 DDL 到底能不能绕过只读事务** —— 文档没说死,隐式提交的行为要实测。
-   实测结论决定脚本侧白名单能不能简化。
+1. ~~**只读会话在异常路径下会不会失效**~~ —— **已实测,见下**。
+2. ~~**MySQL 上 DDL 到底能不能绕过只读事务**~~ —— **已实测,见下**。
 3. schema 快照的"过期阈值"是写死一个默认值,还是让 yaml 每个源自己配?
    倾向写死默认 + 允许覆盖,先看用起来什么感觉。
 4. 文件型库(SQLite / DuckDB)本轮不做。将来做的话,它的文件常在工作空间外,
@@ -196,3 +193,37 @@ psycopg 走扩展协议,一次 execute 只允许一条),再加脚本侧一道裸
 
 **已关闭**:凭据存放(定为工作空间 `.env` 明文)、引擎范围(定为 PostgreSQL + MySQL)、
 写操作护栏(定为只读会话 + 脚本侧白名单双层,不依赖只读账号)。
+
+## 实测结论(任务 1.4)
+
+环境:PostgreSQL 18.4 / psycopg 3.3.5,MySQL 9.3.0 / pymysql 2.2.8,对自建的合成小库跑。
+下面每一条都是**跑出来的**,不是从文档抄的。
+
+**① PostgreSQL 的只读会话挡得住可写 CTE** —— 挡得住,而且挡得比预期早:
+`WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x` 报的是
+`cannot execute SELECT in a read-only transaction`,整条语句在规划阶段就被打回。
+UPDATE / CREATE TABLE / TRUNCATE 同样被拒。拿的是**超级用户**,一样拒。
+
+**② MySQL 的只读事务挡得住 DDL** —— 在 9.3.0 上挡得住:CREATE TABLE / TRUNCATE / DROP TABLE
+全都报 `(1792, 'Cannot execute statement in a READ ONLY transaction.')`,
+隐式提交**没有**绕过只读事务。但这只证明了 9.3.0,老版本(5.7 / 8.0)手上没有环境验,
+**所以脚本侧的 DDL 黑名单保留** —— 它现在的职责是给老服务端兜底,外加更早失败、报中文。
+
+**③ 多语句:两个驱动的行为不一样,而且 PG 这边是个真的坑**
+
+- pymysql 默认**不带** `CLIENT_MULTI_STATEMENTS`(实测 `client_flag & MULTI_STATEMENTS == False`),
+  `SELECT 1; DROP TABLE t` 直接是语法错误,进不了服务端。
+- psycopg 3 **不设防**:不带参数的 `execute()` 走简单查询协议,
+  `SELECT 1; CREATE TABLE multi_probe(i int)` **两条都执行了,表真的建出来了**。
+  只有带参数时才走扩展协议,报 `cannot insert multiple commands into a prepared statement`。
+
+所以决策 3.5 里「禁多语句靠驱动的默认行为」这句话**对 psycopg 是错的**。
+第一轮探测里那条 `SELECT 1; DROP TABLE t` 之所以没删掉表,靠的是只读会话拦下了 DROP,
+不是驱动拦下了多语句。**脚本侧的裸分号检查因此是承重的,不是冗余的。**
+
+**④ 只读会话是连接级的,重连即丢失** —— 新开一条没设置过的 PG 连接
+`default_transaction_read_only` 是 `off`;pymysql `ping(reconnect=True)` 之后
+`@@session.transaction_read_only` 从 1 变回 0。
+结论:不能「连上时设一次就假定它一直成立」,**每次执行用户语句前都要重新确认一次会话状态**
+(任务 1.7 按这条实现:读回 `default_transaction_read_only` / `@@session.transaction_read_only`,
+不是 `on` / `1` 就中止)。
