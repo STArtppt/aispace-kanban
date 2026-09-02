@@ -44,6 +44,16 @@ export function OverviewPanel({
 }) {
   const stages = inferStages(scan);
   const { meta } = scan;
+  // 输入/产出页顶部的统计卡并到这里：待转换、存疑、原件动过都是要人处理的
+  const stale = scan.input.stats.stale ?? 0;
+  const todoCount = scan.input.stats.pending + scan.input.stats.warnings + stale;
+  const todoParts: string[] = [];
+  if (scan.input.stats.pending || scan.input.stats.warnings) {
+    todoParts.push(`${scan.input.stats.pending} 份待转换`);
+    todoParts.push(`${scan.input.stats.warnings} 份存疑`);
+  }
+  if (stale) todoParts.push(`${stale} 份原件动过`);
+  const todoHint = todoParts.length ? todoParts.join(' · ') : '资料侧没有待处理项';
 
   // 标题 + 工作空间路径已经常驻在 App 的看板抬头里，这里不再重复一遍
   return (
@@ -57,18 +67,30 @@ export function OverviewPanel({
         {meta.stats ? (
           <Completeness meta={meta} />
         ) : (
-          <Stat label="资料" value={scan.input.stats.converted} hint={`共 ${scan.input.stats.raw} 份原始文件`} />
+          <Stat
+            label="资料"
+            value={scan.input.stats.converted}
+            hint={
+              scan.input.stats.ignored
+                ? `共 ${scan.input.stats.raw} 份原始文件 · ${scan.input.stats.ignored} 份已忽略`
+                : `共 ${scan.input.stats.raw} 份原始文件`
+            }
+          />
         )}
-        <Stat label="产出" value={scan.output.stats.total} hint={formatWords(scan.output.stats.words)} />
+        <Stat
+          label="产出"
+          value={scan.output.stats.total}
+          hint={
+            scan.output.stats.lastUpdated
+              ? `${formatWords(scan.output.stats.words)} · 更新于 ${formatRelative(scan.output.stats.lastUpdated)}`
+              : formatWords(scan.output.stats.words)
+          }
+        />
         <Stat
           label="待办信号"
-          value={scan.input.stats.pending + scan.input.stats.warnings}
-          hint={
-            scan.input.stats.pending || scan.input.stats.warnings
-              ? `${scan.input.stats.pending} 份待转换 · ${scan.input.stats.warnings} 份存疑`
-              : '资料侧没有待处理项'
-          }
-          tone={scan.input.stats.pending + scan.input.stats.warnings ? 'attention' : 'default'}
+          value={todoCount}
+          hint={todoHint}
+          tone={todoCount ? 'attention' : 'default'}
         />
       </div>
 

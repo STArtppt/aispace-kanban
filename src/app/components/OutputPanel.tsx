@@ -15,12 +15,12 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { EmptyState, PanelTitle, Row, RowActions, Stat, TruncatedHint, writeClipboard } from '@/components/Primitives';
+import { EmptyState, PanelTitle, Row, RowActions, TruncatedHint, writeClipboard } from '@/components/Primitives';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { usePins } from '@/hooks/usePins';
 import { api, type FileItem, type Scan } from '@/lib/api';
-import { absolutePath, datePrefix, formatRelative, formatWords, markdownLink } from '@/lib/format';
+import { absolutePath, datePrefix, formatRelative, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 const GROUPS = [
@@ -315,9 +315,6 @@ export function OutputPanel({
   );
   // 预览头部也有同一个收藏按钮，两处共用一份状态
   const { pins, togglePin } = usePins(projectId);
-  // 旧服务进程不返回 annotations，那时候退回只显示字数
-  const marks = output.stats.annotations ?? 0;
-  const wordsHint = formatWords(output.stats.words);
   const [sortKey, setSortKey] = useState<SortKey>(readOutputSort);
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(OUTPUT_VIEW_KEY));
   const [query, setQuery] = useState('');
@@ -365,29 +362,6 @@ export function OutputPanel({
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
-      <div className="grid grid-cols-3 gap-2">
-        <Stat
-          label="产出文件"
-          value={output.stats.total}
-          hint={marks ? `${wordsHint} · ${marks} 处标注` : wordsHint}
-        />
-        <Stat label="分析产物" value={output.stats.analysis} />
-        <Stat
-          label="交付文档"
-          value={output.stats.docs}
-          hint={
-            output.stats.lastUpdated
-              ? `更新于 ${formatRelative(output.stats.lastUpdated)}${
-                  output.stats.decisions ? ` · ${output.stats.decisions} 条决策` : ''
-                }`
-              : output.stats.decisions
-                ? `${output.stats.decisions} 条决策记录`
-                : undefined
-          }
-        />
-      </div>
-
       <section className="flex min-w-0 flex-col gap-2">
         <div className="flex min-h-8 min-w-0 items-center justify-between gap-3">
           <div className="min-w-0 shrink">

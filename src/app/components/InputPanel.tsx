@@ -13,7 +13,6 @@ import {
   Row,
   RowActions,
   PanelTitle,
-  Stat,
   TruncatedHint,
   writeClipboard,
   type RowAction,
@@ -23,7 +22,7 @@ import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { type IngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
 import { api, type ConvertedItem, type FileItem, type IngestJob, type Scan } from '@/lib/api';
-import { absolutePath, formatBytes, formatRelative, formatWords, markdownLink } from '@/lib/format';
+import { absolutePath, formatBytes, formatRelative, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
 /** 待转换 / 转换产物列表一页条数 */
@@ -889,47 +888,6 @@ export function InputPanel({
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
-      {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
-      <div className="grid grid-cols-3 gap-2">
-        <Stat
-          label="原始资料"
-          value={input.stats.raw}
-          // 忽略的仍计入总量，否则「资料总共多少份」会跟磁盘上对不上；
-          // 但要在 hint 里点明，不然人会奇怪为什么待转换比总量少一大截
-          hint={
-            input.stats.ignored
-              ? `${formatBytes(input.stats.bytes)} · ${input.stats.ignored} 份已忽略`
-              : formatBytes(input.stats.bytes)
-          }
-        />
-        <Stat
-          label="已转换"
-          value={input.stats.converted}
-          // 这格宽度只放得下一句，按「要人动手的排前面」取舍（字数概览页也有）：
-          // stale 是产物可能已经不对，orphaned 只是溯源断了、产物本身还好好的
-          hint={
-            input.stats.stale
-              ? `${input.stats.stale} 份原件动过`
-              : input.stats.orphaned
-                ? `${input.stats.orphaned} 份原件已不在`
-                : formatWords(input.stats.words)
-          }
-          tone={input.stats.stale ? 'attention' : 'default'}
-        />
-        <Stat
-          label="待转换"
-          value={input.stats.pending}
-          hint={
-            input.stats.warnings
-              ? `${input.stats.pending ? '还没进入可读状态' : '资料都已入库'} · ${input.stats.warnings} 份存疑`
-              : input.stats.pending
-                ? '还没进入可读状态'
-                : '资料都已入库'
-          }
-          tone={input.stats.pending || input.stats.warnings ? 'attention' : 'default'}
-        />
-      </div>
-
       <section className="flex min-w-0 flex-col gap-2">
         <div className="flex min-h-8 min-w-0 items-center justify-between gap-3">
           <div className="min-w-0 shrink">
