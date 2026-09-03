@@ -20,6 +20,7 @@ import {
   findQuoteRange,
   hastLeaves,
   rehypeSourcePos,
+  rehypeStripTableWhitespace,
   renderedText,
   sliceUtf8,
   type AnchorOk,
@@ -43,7 +44,7 @@ function capturePlugin(box: { tree: HastNode | null }) {
 }
 
 function renderPipeline(source: string, withPos: boolean, box?: { tree: HastNode | null }): string {
-  const rehypePlugins: unknown[] = [rehypeRaw];
+  const rehypePlugins: unknown[] = [rehypeRaw, rehypeStripTableWhitespace];
   if (withPos) {
     rehypePlugins.push([rehypeSourcePos, { file: FILE, source, byteOffset: 0 }]);
   }
@@ -306,7 +307,46 @@ function main() {
     console.log('  ok  未超出可感范围');
   }
 
-  console.log('6. 提示词倒序');
+  console.log('6. 裸 HTML 表：colgroup / thead 里不能留下空白文本节点');
+  const prettyTable = [
+    '<table>',
+    '  <colgroup>',
+    '    <col style="width: 50%" />',
+    '    <col style="width: 50%" />',
+    '  </colgroup>',
+    '  <thead>',
+    '    <tr>',
+    '      <th>甲</th>',
+    '      <th>乙</th>',
+    '    </tr>',
+    '  </thead>',
+    '  <tbody>',
+    '    <tr>',
+    '      <td>1</td>',
+    '      <td>2</td>',
+    '    </tr>',
+    '  </tbody>',
+    '</table>',
+  ].join('\n');
+  const tableBox: { tree: HastNode | null } = { tree: null };
+  renderPipeline(prettyTable, true, tableBox);
+  assert(tableBox.tree, '裸 HTML 表没有生成 HAST');
+  const tableStructure = new Set(['table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup']);
+  const stray: string[] = [];
+  function visitTable(node: HastNode, parentTag: string) {
+    if (node.type === 'text' && tableStructure.has(parentTag) && !/\S/.test(node.value || '')) {
+      stray.push(`<${parentTag}> 里有空白文本 ${JSON.stringify(node.value)}`);
+    }
+    const tag = node.type === 'element' ? node.tagName || '' : parentTag;
+    for (const child of node.children || []) visitTable(child, tag);
+  }
+  visitTable(tableBox.tree, '');
+  assert(stray.length === 0, `表格结构里仍有空白文本节点：\n${stray.join('\n')}`);
+  const tableHtml = renderPipeline(prettyTable, true);
+  assert(tableHtml.includes('<th') && tableHtml.includes('甲'), `表格单元格丢了：${tableHtml}`);
+  console.log('  ok  换行缩进被清掉，单元格还在');
+
+  console.log('7. 提示词倒序');
   const prompt = buildAnnotationPrompt('output/方案.md', [
     { start: 10, end: 20, quote: '前面', comment: '改前面', structure: '段落' },
     { start: 80, end: 90, quote: '后面', comment: '改后面', structure: '段落' },

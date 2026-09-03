@@ -17,7 +17,7 @@ import remarkGfm from 'remark-gfm';
 import { MarkdownCodeBlock } from '@/components/MarkdownCodeBlock';
 import { MermaidBlock } from '@/components/MermaidBlock';
 import { useScrollActivity } from '@/hooks/useScrollActivity';
-import { pickSourceAttrs, rehypeSourcePos } from '@/lib/sourceAnchor';
+import { pickSourceAttrs, rehypeSourcePos, rehypeStripTableWhitespace } from '@/lib/sourceAnchor';
 import { cn } from '@/lib/utils';
 
 export type TocItem = { id: string; text: string; level: number; index: number };
@@ -361,8 +361,16 @@ export function Markdown({
   );
 
   const rehypePlugins: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = useMemo(() => {
-    if (!sourceFile) return [rehypeRaw];
-    return [rehypeRaw, [rehypeSourcePos, { file: sourceFile, source: children, byteOffset: sourceByteOffset }]];
+    // rehype-raw 会把裸 HTML 表里的换行缩进留成文本节点；React 19 不允许
+    // colgroup / table / tr 等结构标签的子节点是空白，开发态会把预览盖成空白。
+    const plugins: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [
+      rehypeRaw,
+      rehypeStripTableWhitespace,
+    ];
+    if (sourceFile) {
+      plugins.push([rehypeSourcePos, { file: sourceFile, source: children, byteOffset: sourceByteOffset }]);
+    }
+    return plugins;
   }, [sourceFile, children, sourceByteOffset]);
 
   return (

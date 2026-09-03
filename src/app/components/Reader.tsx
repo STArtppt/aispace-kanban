@@ -691,6 +691,15 @@ function useFileContent(projectId: string, path: string | null, refreshKey: stri
       .file(projectId, path)
       .then((data) => {
         if (cancelled) return;
+        // 老进程曾把 .json 按 MIME 裸直出，响应是文件自己而不是 { content }。
+        // 当 undefined 会让预览什么都不画，连错误提示都没有。
+        if (typeof data.content !== 'string') {
+          setContent('');
+          setResolvedPath(path);
+          setError('读不到文件正文。如果刚改过接口，重启看板服务再试。');
+          setShowSpinner(false);
+          return;
+        }
         fileContentCache.set(key, data.content);
         setContent(data.content);
         setResolvedPath(path);

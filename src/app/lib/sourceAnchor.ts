@@ -110,6 +110,13 @@ const STRUCTURAL = new Set([
   'html',
 ]);
 
+/**
+ * React 19 不允许这些标签的子节点是文本（含空白）。
+ * 转换产物里的裸 HTML 表常带换行缩进，rehype-raw 会保留成 `"\n"`，
+ * 开发态会当成 hydration 错误把预览盖成空白。
+ */
+const TABLE_STRUCTURE = new Set(['table', 'thead', 'tbody', 'tfoot', 'tr', 'colgroup']);
+
 const INLINE_MARKS = new Set(['em', 'strong', 'del', 's', 'code', 'a', 'img']);
 
 const BLOCK_TAGS = new Set([
@@ -246,6 +253,23 @@ function walk(node: HastNode, file: string, index: Uint32Array, byteOffset: numb
     }
   }
   node.children = next;
+}
+
+function stripTableWhitespace(node: HastNode) {
+  if (!node.children) return;
+  if (node.type === 'element' && TABLE_STRUCTURE.has(node.tagName || '')) {
+    node.children = node.children.filter(
+      (child) => child.type !== 'text' || (child.value != null && /\S/.test(child.value)),
+    );
+  }
+  for (const child of node.children) stripTableWhitespace(child);
+}
+
+/** rehype 插件：清掉表格结构里的空白文本节点。必须接在 rehype-raw 后面。 */
+export function rehypeStripTableWhitespace() {
+  return (tree: HastNode) => {
+    stripTableWhitespace(tree);
+  };
 }
 
 /** rehype 插件：`[rehypeSourcePos, { file, source, byteOffset }]` */

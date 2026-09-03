@@ -289,6 +289,19 @@ try {
   if (traversal.status !== 403) die(`路径穿越没被挡住（返回 ${traversal.status}，应该是 403）`);
   ok('工作空间外的路径被挡住了');
 
+  // json 的 MIME 是 application/json，/file 必须仍包成 { content }，不能把文件
+  // 自己当成接口响应 —— 否则阅读器 data.content 是 undefined，预览空白。
+  const jsonRel = 'output/docs/smoke-probe.json';
+  fs.mkdirSync(path.join(wsPath, 'output', 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(wsPath, jsonRel), `${JSON.stringify({ hello: 'kanban' }, null, 2)}\n`);
+  const jsonFile = await fetch(`${base}/api/projects/${created.id}/file?path=${encodeURIComponent(jsonRel)}`).then(
+    (r) => r.json(),
+  );
+  if (typeof jsonFile.content !== 'string' || !jsonFile.content.includes('"hello"')) {
+    die('JSON 文件接口没有返回 content 包装', JSON.stringify(jsonFile));
+  }
+  ok('JSON 文件走 { content } 包装，不是裸 application/json');
+
   // ── 7xlsx 工作簿分页与检索（解析只在内存，不写工作空间）────────────────────
   if (!installedPkg.dependencies?.xlsx) {
     die(

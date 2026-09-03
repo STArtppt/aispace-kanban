@@ -43,6 +43,8 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 关掉「转换失败」后又因刷新弹回来 | 失败任务还在服务端内存里；`useIngestJob` 挂载时 `GET /ingest` 把 `status: error` 又写成了提示。关掉只清了前端 state | `curl` `/ingest` 仍是 error 但界面不应再显示 Alert；只有这轮点「开始转换」失败才弹。hydrate 路径必须跳过 `setError` |
 | `pnpm test:anchor` 随机压测报「真实锚点错误」，例子里切片带着行内代码的反引号 | 判定器假阳性，不是锚点切错。跨行内代码时反引号把渲染文本切开，原文匹配不上，只能靠切片重渲染；`renderToStaticMarkup` 把撇号写成 `&#x27;`，`htmlToPlain` 只认 `&#39;` 就会对不回。AGENTS.md 的 `spawn('open', ...)` 随机撞上即挂 | 看失败信息里的「重渲染」是否还留着 `&#x27;`；`htmlToPlain` 必须解十六进制数字实体。固定用例「跨行内代码含撇号」就是这道闸 |
 | 切换文档预览卡顿，大文档点开界面僵住数秒（CDP `Runtime.evaluate` 都会超时） | `rehypeSourcePos` 的偏移换算是平方级 —— `charToByte` 每次都 `slice` + 编码整段正文，而盖锚点要对每个元素和每个文本节点各算两次；文档越大越吃不消（377 KB 的产物一次点击卡 4.2 s） | 浏览器里装 `PerformanceObserver({entryTypes:['longtask']})` 再点条目，看单条 longtask 时长；`pnpm test:anchor` 第 5 项「包 span 的渲染开销」就是这道闸，管线耗时跳到秒级即回归。换算一律走 `buildByteIndex` 的前缀表，别再调 `charToByte` |
+| 点开预览空白，控制台 `whitespace text nodes cannot be a child of <colgroup>` / `<table>` / `<tr>` | 转换产物里的裸 HTML 表带换行缩进，`rehype-raw` 保留成文本节点；React 19 当成 hydration 错误，开发态 overlay 把预览盖白 | 打开 converted `.md` 搜 `<colgroup` / `<table`；`Markdown.tsx` 必须在 `rehype-raw` 之后接 `rehypeStripTableWhitespace`（`pnpm test:anchor` 第 6 项就是这道闸）。别删 `rehype-raw`，MinerU / 老 pandoc 产物还要用 |
+| 点开 `.json` 预览空白、没有报错 | `/api/.../file` 按 MIME 把 `application/json` 当二进制直出了；阅读器 `res.json()` 得到的是文件自己，`data.content` 是 `undefined` | `curl` 该接口：必须有字符串字段 `content`，不能是文件根对象。json / map 不能进 `rawStream` |
 
 排不掉,继续:
 

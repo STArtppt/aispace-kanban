@@ -1283,8 +1283,14 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return json(res, 404, { error: '文件不存在' });
     const ext = path.extname(abs).toLowerCase();
     const mime = MIME[ext];
-    // 图片等二进制直出；html/htm 也直出，供 iframe 预览单文件原型（不要包成 JSON）
-    const rawStream = mime && (!mime.startsWith('text') || ext === '.html' || ext === '.htm');
+    // 图片等二进制直出；html/htm 也直出，供 iframe 预览单文件原型（不要包成 JSON）。
+    // json / map 的 MIME 是 application/json，但不能走这条：阅读器要的是 { content }
+    // 包装。否则文件自己的 JSON 被当成接口响应，data.content 是 undefined，预览空白。
+    const rawStream =
+      mime &&
+      ext !== '.json' &&
+      ext !== '.map' &&
+      (!mime.startsWith('text') || ext === '.html' || ext === '.htm');
     if (rawStream) {
       res.writeHead(200, { 'content-type': mime, 'cache-control': 'no-cache' });
       return fs.createReadStream(abs).pipe(res);
