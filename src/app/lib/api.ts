@@ -135,7 +135,7 @@ export interface AssetGroup extends FileItem {
   images: FileItem[];
 }
 
-/** /api/projects/:id/table 分页预览大 CSV，不把整文件塞进 JSON */
+/** /api/projects/:id/table 分页预览大 CSV / 工作簿里的一张 sheet，不把整文件塞进 JSON */
 export interface TablePage {
   path: string;
   headerLine: string;
@@ -145,6 +145,15 @@ export interface TablePage {
   limit: number;
   size: number;
   mtime: string;
+  /**
+   * 工作簿里的全部工作表名（按原有顺序）。
+   * 旧服务进程没有、csv/tsv 没有；缺了就当单表。
+   */
+  sheets?: string[];
+  /**
+   * 本次返回的工作表名。缺了就当单表。
+   */
+  sheet?: string;
 }
 
 /** /api/projects/:id/table-search 的一条命中 */
@@ -175,6 +184,14 @@ export interface TableSearchResult {
   totalRows?: number;
   size: number;
   mtime: string;
+  /**
+   * 工作簿里的全部工作表名。旧服务进程没有、csv/tsv 没有；缺了就当单表。
+   */
+  sheets?: string[];
+  /**
+   * 本次检索的工作表名。缺了就当单表。
+   */
+  sheet?: string;
 }
 
 export interface PrototypeItem {
@@ -594,8 +611,8 @@ export const api = {
     request<{ path: string; size: number; mtime: string; content: string }>(
       `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,
     ),
-  /** 大 CSV/TSV 分页预览（点表主表等），默认每页 50 行 */
-  table: (id: string, path: string, opts?: { offset?: number; limit?: number }) => {
+  /** 大 CSV/TSV / xlsx 分页预览（点表主表等），默认每页 50 行。不传 sheet 时请求形状与改动前完全一致。 */
+  table: (id: string, path: string, opts?: { offset?: number; limit?: number; sheet?: string }) => {
     const offset = opts?.offset ?? 0;
     const limit = opts?.limit ?? 50;
     const q = new URLSearchParams({
@@ -603,6 +620,7 @@ export const api = {
       offset: String(offset),
       limit: String(limit),
     });
+    if (opts?.sheet) q.set('sheet', opts.sheet);
     return request<TablePage>(`/api/projects/${id}/table?${q}`);
   },
   /**
@@ -617,10 +635,11 @@ export const api = {
     id: string,
     path: string,
     q: string,
-    opts?: { limit?: number; signal?: AbortSignal },
+    opts?: { limit?: number; signal?: AbortSignal; sheet?: string },
   ) => {
     const params = new URLSearchParams({ path, q });
     if (opts?.limit) params.set('limit', String(opts.limit));
+    if (opts?.sheet) params.set('sheet', opts.sheet);
     return request<TableSearchResult>(
       `/api/projects/${id}/table-search?${params}`,
       opts?.signal ? { signal: opts.signal } : undefined,

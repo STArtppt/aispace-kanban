@@ -106,11 +106,11 @@ function stat(abs) {
 /** 判断这份产物该怎么读：网页里渲染，还是交给系统打开。 */
 function readerKind(ext) {
   if (ext === '.md' || ext === '.markdown') return 'markdown';
-  if (ext === '.csv' || ext === '.tsv') return 'table';
+  if (ext === '.csv' || ext === '.tsv' || ext === '.xlsx' || ext === '.xlsm') return 'table';
   if (ext === '.html' || ext === '.htm') return 'html';
   if (IMAGE_EXT.has(ext)) return 'image';
   if (TEXT_EXT.has(ext)) return 'text';
-  return 'external'; // docx/pdf/xlsx… 网页不渲染，点开走系统
+  return 'external'; // docx/pdf/xls… 网页不渲染，点开走系统
 }
 
 function readTextSafe(abs, limit = 2 * 1024 * 1024) {

@@ -13,6 +13,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -287,6 +288,120 @@ try {
   const traversal = await fetch(`${base}/api/projects/${created.id}/file?path=${encodeURIComponent('../../../etc/passwd')}`);
   if (traversal.status !== 403) die(`路径穿越没被挡住（返回 ${traversal.status}，应该是 403）`);
   ok('工作空间外的路径被挡住了');
+
+  // ── 7xlsx 工作簿分页与检索（解析只在内存，不写工作空间）────────────────────
+  if (!installedPkg.dependencies?.xlsx) {
+    die(
+      '发布包 dependencies 里没有 xlsx —— 组包脚本没扫到 spreadsheet.mjs 的 import',
+      JSON.stringify(installedPkg.dependencies ?? null),
+    );
+  }
+  const requireFromPkg = createRequire(path.join(installed, 'package.json'));
+  const XLSX = requireFromPkg('xlsx');
+  const xlsxRel = 'output/docs/smoke.xlsx';
+  const xlsxAbs = path.join(wsPath, xlsxRel);
+  fs.mkdirSync(path.dirname(xlsxAbs), { recursive: true });
+  const wb = XLSX.utils.book_new();
+  const summary = XLSX.utils.aoa_to_sheet([
+    ['名称', '备注'],
+    ['alpha', 'hello, world'],
+    ['beta', 'other'],
+  ]);
+  const detail = XLSX.utils.aoa_to_sheet([
+    ['项', '值'],
+    ['合计', 3],
+  ]);
+  detail.B2 = { t: 'n', v: 3, f: '1+2', w: '3' };
+  XLSX.utils.book_append_sheet(wb, summary, '汇总');
+  XLSX.utils.book_append_sheet(wb, detail, '明细');
+  XLSX.writeFile(wb, xlsxAbs);
+  const xlsxMtimeBefore = fs.statSync(xlsxAbs).mtimeMs;
+
+  const tableDefault = await fetch(
+    `${base}/api/projects/${created.id}/table?path=${encodeURIComponent(xlsxRel)}`,
+  ).then(async (r) => ({ status: r.status, body: await r.json() }));
+  if (tableDefault.status !== 200) {
+    die(`/table xlsx 失败：${tableDefault.status}`, JSON.stringify(tableDefault.body));
+  }
+  if (tableDefault.body.sheet !== '汇总') {
+    die(`不带 sheet 应返回第一张表，实际 ${tableDefault.body.sheet}`);
+  }
+  if (!Array.isArray(tableDefault.body.sheets) || tableDefault.body.sheets.join(',') !== '汇总,明细') {
+    die('sheets 对不上', JSON.stringify(tableDefault.body.sheets));
+  }
+  const commaLine = (tableDefault.body.lines || []).find((l) => l.includes('alpha'));
+  if (!commaLine || !commaLine.includes('"hello, world"')) {
+    die('带逗号的单元格没有编成 csv 引号字段', JSON.stringify(tableDefault.body.lines));
+  }
+
+  const tableDetail = await fetch(
+    `${base}/api/projects/${created.id}/table?path=${encodeURIComponent(xlsxRel)}&sheet=${encodeURIComponent('明细')}`,
+  ).then((r) => r.json());
+  if (tableDetail.sheet !== '明细') die(`指定 sheet 没切过去：${tableDetail.sheet}`);
+  const formulaLine = (tableDetail.lines || []).join('\n');
+  if (!formulaLine.includes('3')) {
+    die('公式缓存值没显示成 3', JSON.stringify(tableDetail.lines));
+  }
+
+  const badSheet = await fetch(
+    `${base}/api/projects/${created.id}/table?path=${encodeURIComponent(xlsxRel)}&sheet=${encodeURIComponent('不存在')}`,
+  );
+  const badBody = await badSheet.json();
+  if (badSheet.status !== 400) die(`错误 sheet 名应 400，实际 ${badSheet.status}`);
+  if (!String(badBody.error || '').includes('汇总') || !String(badBody.error || '').includes('明细')) {
+    die('错误 sheet 名的提示没列出可用表', JSON.stringify(badBody));
+  }
+
+  const searchHit = await fetch(
+    `${base}/api/projects/${created.id}/table-search?path=${encodeURIComponent(xlsxRel)}&q=alpha`,
+  ).then((r) => r.json());
+  if (!searchHit.rows?.some((row) => row.row === 0 && row.text === commaLine)) {
+    die('xlsx 检索命中文本应与 /table 那一行相同', JSON.stringify(searchHit));
+  }
+
+  const csvRel = 'output/docs/smoke.csv';
+  fs.writeFileSync(path.join(wsPath, csvRel), 'h1,h2\nv1,v2\n');
+  const csvWithSheet = await fetch(
+    `${base}/api/projects/${created.id}/table?path=${encodeURIComponent(csvRel)}&sheet=${encodeURIComponent('任何值')}`,
+  ).then((r) => r.json());
+  if (csvWithSheet.sheets) die('csv 带 sheet 参数不应返回 sheets', JSON.stringify(csvWithSheet));
+  if (!csvWithSheet.lines?.some((l) => l.includes('v1'))) {
+    die('csv 带 sheet 参数被改坏了', JSON.stringify(csvWithSheet));
+  }
+
+  const tableEscape = await fetch(
+    `${base}/api/projects/${created.id}/table?path=${encodeURIComponent('../../etc/passwd')}`,
+  );
+  if (tableEscape.status !== 403) die(`/table 路径穿越没被挡住（${tableEscape.status}）`);
+  const searchEscape = await fetch(
+    `${base}/api/projects/${created.id}/table-search?path=${encodeURIComponent('../../etc/passwd')}&q=x`,
+  );
+  if (searchEscape.status !== 403) die(`/table-search 路径穿越没被挡住（${searchEscape.status}）`);
+  const notTable = await fetch(
+    `${base}/api/projects/${created.id}/table?path=${encodeURIComponent('project.yaml')}`,
+  );
+  if (notTable.status !== 400) die(`非表格 /table 应 400，实际 ${notTable.status}`);
+  const badXlsxRel = 'output/docs/bad.xlsx';
+  fs.writeFileSync(path.join(wsPath, badXlsxRel), 'not zip');
+  const badXlsx = await fetch(
+    `${base}/api/projects/${created.id}/table?path=${encodeURIComponent(badXlsxRel)}`,
+  ).then(async (r) => ({ status: r.status, body: await r.json() }));
+  if (badXlsx.status !== 400) die(`损坏的 xlsx 应 400，实际 ${badXlsx.status}`, JSON.stringify(badXlsx.body));
+
+  const xlsRel = 'output/docs/smoke.xls';
+  fs.writeFileSync(path.join(wsPath, xlsRel), 'not-a-real-xls');
+  const scanXlsx = await fetch(`${base}/api/projects/${created.id}/scan`).then((r) => r.json());
+  const xlsxItem = (scanXlsx.output?.docs || []).find((f) => f.path === xlsxRel);
+  if (!xlsxItem || xlsxItem.reader !== 'table') {
+    die('扫描没把 xlsx 标成 table', JSON.stringify(xlsxItem));
+  }
+  const xlsItem = (scanXlsx.output?.docs || []).find((f) => f.path === xlsRel);
+  if (!xlsItem || xlsItem.reader !== 'external') {
+    die('扫描不该把 .xls 标成 table', JSON.stringify(xlsItem));
+  }
+
+  if (fs.statSync(xlsxAbs).mtimeMs !== xlsxMtimeBefore) die('解析 xlsx 改了文件 mtime');
+  ok('xlsx /table 与 /table-search 可用，csv 不受 sheet 影响，.xls 仍是 external');
 
   const ingestEscape = await fetch(`${base}/api/projects/${created.id}/ingest`, {
     method: 'POST',

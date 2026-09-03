@@ -30,6 +30,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AnnotationLayer } from '@/components/AnnotationLayer';
 import { AnnotationToolbar } from '@/components/AnnotationToolbar';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
+import { CodeFileView, codePreviewLabel, codePreviewLanguage } from '@/components/CodeFileView';
 import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
 import {
   PreviewSearch,
@@ -111,6 +112,17 @@ function resolveRelative(base: string, url: string) {
 
 function sheetLabel(name: string) {
   return name.replace(/\.(csv|tsv)$/i, '') || name;
+}
+
+function isSpreadsheetPath(p: string): boolean {
+  const lower = p.toLowerCase();
+  return lower.endsWith('.xlsx') || lower.endsWith('.xlsm');
+}
+
+function isSpreadsheetItem(item: FileItem): boolean {
+  const ext = (item.ext || '').toLowerCase();
+  if (ext === '.xlsx' || ext === '.xlsm') return true;
+  return isSpreadsheetPath(item.path);
 }
 
 /** 校验结果的说法：ok/stale 是坐实过的结论，unknown 只说为什么比不了。 */
@@ -404,6 +416,8 @@ function CsvGrid({
 export interface CsvTableHandle {
   /** expectMtime 是检索那一刻表格的 mtime；对不上说明表变了，不跳转、提示重搜 */
   jumpToRow: (row: number, expectMtime?: string) => void;
+  /** 当前工作表名；csv 或缺字段时为 undefined */
+  activeSheet: () => string | undefined;
 }
 
 /** 走 /table 分页接口；大点表也不会再撞「文件太大」。 */
@@ -411,14 +425,18 @@ function PaginatedCsvTable({
   projectId,
   path,
   jumper,
+  onSheetChange,
   ref,
 }: {
   projectId: string;
   path: string;
   /** 命中行的滚动与临时高亮控制器；不传就只翻页不高亮 */
   jumper?: SearchJumper;
+  /** 工作簿当前 sheet 变了就说一声：上层据此重置检索条 */
+  onSheetChange?: (sheet: string | undefined) => void;
   ref?: Ref<CsvTableHandle>;
 }) {
+  const fileManager = useFileManagerName();
   const [page, setPage] = useState(0);
   const [head, setHead] = useState<string[]>([]);
   const [body, setBody] = useState<string[][]>([]);
@@ -432,11 +450,20 @@ function PaginatedCsvTable({
   // 最近一次成功拉到的这一页对应的文件 mtime，用来识破「检索之后表格被重转了」
   const mtimeRef = useRef('');
   const [stale, setStale] = useState(false);
+  // 用户点选的 sheet；未点选时不带 sheet 参数，服务端给第一张
+  const [userSheet, setUserSheet] = useState<string | undefined>();
+  const [workbookSheets, setWorkbookSheets] = useState<string[]>([]);
+  const [activeSheetName, setActiveSheetName] = useState<string | undefined>();
+  const onSheetChangeRef = useRef(onSheetChange);
+  onSheetChangeRef.current = onSheetChange;
 
   useEffect(() => {
     setPage(0);
     pendingRowRef.current = null;
     setStale(false);
+    setUserSheet(undefined);
+    setWorkbookSheets([]);
+    setActiveSheetName(undefined);
   }, [path]);
 
   const focusRow = useCallback(
@@ -475,8 +502,9 @@ function PaginatedCsvTable({
         }
         setPage(target);
       },
+      activeSheet: () => userSheet || activeSheetName,
     }),
-    [page, loading, resolvePending],
+    [page, loading, resolvePending, userSheet, activeSheetName],
   );
 
   useEffect(() => {
@@ -484,7 +512,11 @@ function PaginatedCsvTable({
     setLoading(true);
     setError('');
     api
-      .table(projectId, path, { offset: page * TABLE_PAGE_SIZE, limit: TABLE_PAGE_SIZE })
+      .table(projectId, path, {
+        offset: page * TABLE_PAGE_SIZE,
+        limit: TABLE_PAGE_SIZE,
+        sheet: userSheet,
+      })
       .then((res) => {
         if (cancelled) return;
         const chunk = [res.headerLine, ...res.lines].filter((l) => l != null && l !== '').join('\n');
@@ -497,6 +529,11 @@ function PaginatedCsvTable({
         setTotalRows(res.totalRows);
         setSize(res.size);
         mtimeRef.current = res.mtime;
+        const names = res.sheets?.filter(Boolean) ?? [];
+        setWorkbookSheets(names.length > 1 ? names : []);
+        const current = res.sheet || names[0];
+        setActiveSheetName(current);
+        onSheetChangeRef.current?.(current);
         setLoading(false);
       })
       .catch((err: Error) => {
@@ -504,6 +541,9 @@ function PaginatedCsvTable({
         setHead([]);
         setBody([]);
         setTotalRows(0);
+        setWorkbookSheets([]);
+        setActiveSheetName(undefined);
+        onSheetChangeRef.current?.(undefined);
         setError(err.message);
         setLoading(false);
         // 这一页没读到，就别再等着跳了；错误已经显示在位
@@ -512,7 +552,7 @@ function PaginatedCsvTable({
     return () => {
       cancelled = true;
     };
-  }, [projectId, path, page]);
+  }, [projectId, path, page, userSheet]);
 
   // 目标页渲染完成后再定位：翻页是异步的，jumpToRow 当时那一行还不在 DOM 里
   useEffect(() => {
@@ -520,13 +560,64 @@ function PaginatedCsvTable({
     resolvePending();
   }, [body, loading, resolvePending]);
 
-  if (loading && !head.length) {
+  if (loading && !head.length && !error) {
     return <p className="text-sm text-muted-foreground">读取表格中…</p>;
   }
-  if (error) return <p className="text-sm text-destructive">{error}</p>;
+  if (error) {
+    return (
+      <div className="flex flex-col items-start gap-4">
+        <p className="text-sm text-destructive">{error}</p>
+        {isSpreadsheetPath(path) ? (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => void api.reveal(projectId, path, 'open')}>
+              <SquareArrowOutUpRight className="size-3.5" />
+              用默认程序打开
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => void api.reveal(projectId, path)}>
+              <FolderOpen className="size-3.5" />
+              在{fileManager}中显示
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const showSheetSelect = workbookSheets.length > 1;
+  const sheetValue = userSheet || activeSheetName || '';
 
   return (
-    <div ref={rootRef} className="flex flex-col gap-2">
+    <div ref={rootRef} className="flex flex-col gap-3">
+      {showSheetSelect ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+          <span className="shrink-0 text-xs text-muted-foreground">数据表</span>
+          <Select
+            value={sheetValue}
+            onValueChange={(value) => {
+              if (typeof value === 'string' && value && value !== sheetValue) {
+                setUserSheet(value);
+                setPage(0);
+              }
+            }}
+          >
+            <SelectTrigger
+              className="h-9 min-h-9 w-auto min-w-[12rem] max-w-md flex-1 py-0"
+              aria-label="选择数据表"
+            >
+              <SelectValue>
+                {(value: string | null) => (value ? sheetLabel(value) : null)}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectContent>
+              {workbookSheets.map((name) => (
+                <SelectItem key={name} value={name}>
+                  {sheetLabel(name)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
       {loading ? <p className="text-xs text-muted-foreground">翻页加载中…</p> : null}
       {stale ? (
         <p className="text-xs text-destructive">
@@ -639,6 +730,8 @@ function useFileContent(projectId: string, path: string | null, refreshKey: stri
  */
 export interface TableReaderHandle {
   activePath: () => string;
+  /** 工作簿当前 sheet；csv 或缺字段时为 undefined */
+  activeSheet: () => string | undefined;
   jumpToRow: (row: number, expectMtime?: string) => void;
 }
 
@@ -649,6 +742,7 @@ function TableReader({
   sheets,
   jumper,
   onActivePathChange,
+  onActiveSheetChange,
   ref,
 }: {
   projectId: string;
@@ -658,21 +752,29 @@ function TableReader({
   jumper?: SearchJumper;
   /** 当前选中的表变了就说一声：上层据此重置检索条（换表 = 换了内容对象） */
   onActivePathChange?: (path: string) => void;
+  /** 工作簿切 sheet 也是换了内容对象 */
+  onActiveSheetChange?: (sheet: string | undefined) => void;
   ref?: Ref<TableReaderHandle>;
 }) {
   const multi = sheets.length > 1;
   const firstPath = sheets[0]?.path || item.path;
   const [active, setActive] = useState(firstPath);
+  const [workbookSheet, setWorkbookSheet] = useState<string | undefined>();
   const tableRef = useRef<CsvTableHandle>(null);
 
   useEffect(() => {
     setActive(firstPath);
+    setWorkbookSheet(undefined);
   }, [item.path, firstPath]);
 
   const currentPath = multi ? active : firstPath;
   useEffect(() => {
     onActivePathChange?.(currentPath);
   }, [currentPath, onActivePathChange]);
+
+  useEffect(() => {
+    onActiveSheetChange?.(multi ? undefined : workbookSheet);
+  }, [multi, workbookSheet, onActiveSheetChange]);
 
   // 必须在 early return 之前：单 sheet / 多 sheet 切换时 TableReader 会复用同一实例
   const byPath = useMemo(() => new Map(sheets.map((s) => [s.path, s])), [sheets]);
@@ -682,13 +784,22 @@ function TableReader({
     ref,
     () => ({
       activePath: () => currentPath,
+      activeSheet: () => (multi ? undefined : tableRef.current?.activeSheet() ?? workbookSheet),
       jumpToRow: (row, expectMtime) => tableRef.current?.jumpToRow(row, expectMtime),
     }),
-    [currentPath],
+    [currentPath, multi, workbookSheet],
   );
 
   if (!multi) {
-    return <PaginatedCsvTable ref={tableRef} projectId={projectId} path={firstPath} jumper={jumper} />;
+    return (
+      <PaginatedCsvTable
+        ref={tableRef}
+        projectId={projectId}
+        path={firstPath}
+        jumper={jumper}
+        onSheetChange={setWorkbookSheet}
+      />
+    );
   }
 
   const activeSheet = byPath.get(active);
@@ -885,11 +996,12 @@ export function Reader({
   const tableHandleRef = useRef<TableReaderHandle | null>(null);
   // 多表包里切换数据表也是"换了内容对象"：进 searchResetKey，把检索条连同结果一起重置
   const [activeTablePath, setActiveTablePath] = useState('');
+  const [activeTableSheet, setActiveTableSheet] = useState('');
   // 纯文本的 <pre>、共享滚动区、表格包「数据」页：搜索索引用它们定位正文根
   const textPreRef = useRef<HTMLPreElement>(null);
   const plainScrollRef = useRef<HTMLDivElement>(null);
   const tableSearchRef = useRef<HTMLDivElement>(null);
-  const searchResetKey = `${item.path}:${item.mtime}:${tableTab}:${htmlTab}:${reconvertedAt}:${activeTablePath}`;
+  const searchResetKey = `${item.path}:${item.mtime}:${tableTab}:${htmlTab}:${reconvertedAt}:${activeTablePath}:${activeTableSheet}`;
 
   // 换文件、表格包/HTML 原型切 tab、重转后正文重读（mtime 变）：清掉可能还在走的高亮
   useEffect(() => {
@@ -918,6 +1030,9 @@ export function Reader({
   // 搜索按钮只在"此刻有文字可搜"时出现。表格「数据」页和单份 csv/tsv 搜的是**整张表**
   // (服务端流式扫描,浏览器里仍然只有当前这一页);HTML 预览页在隔离 iframe
   // 里读不到、图片/图库/原始格式/读取中失败一律不给假入口。
+  const codeLang = mode === 'text' ? codePreviewLanguage(item.ext || item.path) : undefined;
+  const codeLabel = codeLang ? codePreviewLabel(item.ext || item.path) || codeLang : '';
+
   const searchingTable =
     mode === 'table' && (!tablePackage || tableTab === 'data');
   const canSearch =
@@ -949,8 +1064,9 @@ export function Reader({
     async (queryText, signal) => {
       const tokens = queryTokens(queryText);
       const targetPath = tableHandleRef.current?.activePath() ?? item.path;
+      const sheet = tableHandleRef.current?.activeSheet();
       try {
-        const res = await api.tableSearch(projectId, targetPath, queryText, { signal });
+        const res = await api.tableSearch(projectId, targetPath, queryText, { signal, sheet });
         const hits = res.rows.map((row) => ({
           key: String(row.row),
           // 行号按人的习惯从 1 起数，与表格底部「第 x–y 行」的口径一致
@@ -1066,6 +1182,14 @@ export function Reader({
           >
             <Star className={cn('size-4', pinned && 'fill-current')} />
           </HeaderIconButton>
+          {mode === 'table' && isSpreadsheetItem(item) ? (
+            <HeaderIconButton
+              label="用默认程序打开"
+              onClick={() => void api.reveal(projectId, item.path, 'open')}
+            >
+              <SquareArrowOutUpRight className="size-4" />
+            </HeaderIconButton>
+          ) : null}
           <HeaderIconButton
             label={`在${fileManager}中显示`}
             onClick={() => void api.reveal(projectId, item.path)}
@@ -1235,6 +1359,7 @@ export function Reader({
                 sheets={sheets}
                 jumper={jumper}
                 onActivePathChange={setActiveTablePath}
+                onActiveSheetChange={(sheet) => setActiveTableSheet(sheet || '')}
               />
             </ScrollArea>
           )}
@@ -1249,7 +1374,15 @@ export function Reader({
               {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {content && !error ? (
-                <pre ref={textPreRef} className="font-mono text-xs leading-6 whitespace-pre-wrap">
+                codeLang ? (
+                  <CodeFileView
+                    code={content}
+                    language={codeLang}
+                    label={codeLabel}
+                    preRef={textPreRef}
+                  />
+                ) : (
+                  <pre ref={textPreRef} className="font-mono text-xs leading-6 whitespace-pre-wrap">
                     {content.split('\n').map((line, index, lines) => (
                       // 按行包一层块级 span：纯文本才有"块"可索引、可跳转、可高亮。
                       // 换行符留在 span 里当真实文本，折行与复制行为不变（preview-search 决策 2）；
@@ -1258,7 +1391,8 @@ export function Reader({
                         {index < lines.length - 1 || content.endsWith('\n') ? `${line}\n` : line}
                       </span>
                     ))}
-                </pre>
+                  </pre>
+                )
               ) : null}
             </>
           ) : null}
@@ -1271,6 +1405,7 @@ export function Reader({
               sheets={multiSheet ? sheets : [{ path: item.path, name: item.name, size: item.size }]}
               jumper={jumper}
               onActivePathChange={setActiveTablePath}
+              onActiveSheetChange={(sheet) => setActiveTableSheet(sheet || '')}
             />
           ) : null}
 

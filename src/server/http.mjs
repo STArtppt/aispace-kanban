@@ -32,6 +32,7 @@ import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
 import { scanWorkspace, verifySource } from './scan.mjs';
+import { readSheetPage, scanSheet } from './spreadsheet.mjs';
 import { resolveAppVersion } from './version.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -1314,11 +1315,17 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const abs = resolveInside(project.root, relPath);
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return json(res, 404, { error: '文件不存在' });
     const ext = path.extname(abs).toLowerCase();
-    if (ext !== '.csv' && ext !== '.tsv') {
-      return json(res, 400, { error: '只支持预览 .csv / .tsv 表格' });
+    if (ext !== '.csv' && ext !== '.tsv' && ext !== '.xlsx' && ext !== '.xlsm') {
+      return json(res, 400, { error: '只支持预览 .csv / .tsv / .xlsx / .xlsm 表格' });
     }
     const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0);
     const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit')) || 50));
+    // csv/tsv 带 sheet 时忽略：路径仍是文件，行为与改动前一致
+    if (ext === '.xlsx' || ext === '.xlsm') {
+      const sheet = url.searchParams.get('sheet') || undefined;
+      const page = readSheetPage(abs, { sheet, offset, limit });
+      return json(res, 200, { path: relPath, ...page });
+    }
     const page = await readCsvPage(abs, { offset, limit });
     return json(res, 200, { path: relPath, ...page });
   }
@@ -1331,8 +1338,8 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const abs = resolveInside(project.root, relPath);
     if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) return json(res, 404, { error: '文件不存在' });
     const ext = path.extname(abs).toLowerCase();
-    if (ext !== '.csv' && ext !== '.tsv') {
-      return json(res, 400, { error: '只支持预览 .csv / .tsv 表格' });
+    if (ext !== '.csv' && ext !== '.tsv' && ext !== '.xlsx' && ext !== '.xlsm') {
+      return json(res, 400, { error: '只支持预览 .csv / .tsv / .xlsx / .xlsm 表格' });
     }
     const tokens = queryTokens(url.searchParams.get('q') || '');
     const limit = Math.min(
@@ -1358,7 +1365,11 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     req.on('close', () => {
       closed = true;
     });
-    const result = await scanCsv(abs, { tokens, limit, isAborted: () => closed });
+    const sheet = ext === '.xlsx' || ext === '.xlsm' ? url.searchParams.get('sheet') || undefined : undefined;
+    const result =
+      ext === '.xlsx' || ext === '.xlsm'
+        ? scanSheet(abs, { sheet, tokens, limit, isAborted: () => closed, budgetMs: TABLE_SCAN_BUDGET_MS })
+        : await scanCsv(abs, { tokens, limit, isAborted: () => closed });
     // 客户端已经走了，socket 上写什么都没人收
     if (closed) return res.end();
     return json(res, 200, { path: relPath, ...result });
