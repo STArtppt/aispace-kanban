@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowUpDown,
+  CodeXml,
   Copy,
   FileText,
   FolderOpen,
@@ -16,6 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/u
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { EmptyState, PanelTitle, Row, RowActions, TruncatedHint, writeClipboard } from '@/components/Primitives';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
+import { codePreviewLanguage } from '@/components/CodeFileView';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { usePins } from '@/hooks/usePins';
 import { api, type FileItem, type Scan } from '@/lib/api';
@@ -79,7 +81,7 @@ function matchOutput(item: FileItem, query: string): boolean {
   return q.split(/\s+/).every((part) => hay.includes(part));
 }
 
-function KindIcon({ item }: { item: { reader: string; ext?: string } }) {
+function KindIcon({ item }: { item: { reader: string; ext?: string; path?: string } }) {
   if (item.reader === 'html') return <MonitorPlay className="size-4 text-muted-foreground" />;
   if (
     item.reader === 'table' ||
@@ -91,6 +93,9 @@ function KindIcon({ item }: { item: { reader: string; ext?: string } }) {
     return <Table className="size-4 text-muted-foreground" />;
   }
   if (item.reader === 'image') return <Image className="size-4 text-muted-foreground" />;
+  if (codePreviewLanguage(item.ext || item.path || '')) {
+    return <CodeXml className="size-4 text-muted-foreground" />;
+  }
   return <FileText className="size-4 text-muted-foreground" />;
 }
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, AppWindow, ArrowUpDown, Copy, Database, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Star, StarOff, Table, X } from 'lucide-react';
+import { AlertTriangle, AppWindow, ArrowUpDown, CodeXml, Copy, Database, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Star, StarOff, Table, X } from 'lucide-react';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ExpandableSearch } from '@/components/ExpandableSearch';
@@ -18,6 +18,7 @@ import {
   type RowAction,
 } from '@/components/Primitives';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
+import { codePreviewLanguage } from '@/components/CodeFileView';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { useSourceIngestJob, type IngestControl, type SourceIngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
@@ -36,10 +37,13 @@ import { cn } from '@/lib/utils';
 /** 待转换 / 转换产物列表一页条数 */
 const LIST_PAGE_SIZE = 12;
 
-function KindIcon({ item }: { item: { reader: string; isDir?: boolean } }) {
+function KindIcon({ item }: { item: { reader: string; isDir?: boolean; ext?: string; path?: string } }) {
   if (item.reader === 'html') return <AppWindow className="size-4 text-muted-foreground" />;
   if (item.isDir || item.reader === 'table') return <Table className="size-4 text-muted-foreground" />;
   if (item.reader === 'image') return <Image className="size-4 text-muted-foreground" />;
+  if (codePreviewLanguage(item.ext || item.path || '')) {
+    return <CodeXml className="size-4 text-muted-foreground" />;
+  }
   return <FileText className="size-4 text-muted-foreground" />;
 }
 
@@ -856,7 +860,7 @@ function SourceItemRow({
   ].filter(Boolean).join(' · ');
   return (
     <Row indent={1} onClick={() => onOpen(target)} active={openPath === target.path}>
-      <KindIcon item={item as { reader: string; isDir?: boolean }} />
+      <KindIcon item={item} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="truncate text-sm">{item.title || item.name}</span>
         {detail ? (
