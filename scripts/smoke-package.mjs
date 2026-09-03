@@ -680,6 +680,11 @@ try {
     };
   };
   const snapshot = capBefore();
+  // references/ 根上本来就躺着模板的 .gitkeep、7d 放的 foo/ 与散装 bar.html ——
+  // 「不留半成品」指的是采集失败后一个字节都不新增，所以拿当前列表当基准，
+  // 不能硬编码一份目录清单（模板骨架一加文件这里就假红）。
+  const refRoot = path.join(visRoot, 'references');
+  const refsBefore = fs.readdirSync(refRoot).sort().join(',');
 
   // 请求体里夹带路径字段：必须被完全忽略，只写服务端自己生成的 slug 目录
   const capStarted = await fetch(`${base}/api/projects/${created.id}/capture`, {
@@ -705,9 +710,8 @@ try {
     if (!String(finished.message).includes('single-file-cli')) {
       die('缺 single-file 的失败说明里没有安装命令', finished.message);
     }
-    const refRoot = path.join(visRoot, 'references');
     const after = fs.readdirSync(refRoot).sort();
-    if (after.join(',') !== ['bar.html', 'foo'].join(',')) {
+    if (after.join(',') !== refsBefore) {
       die('采集失败却在 references/ 下留了东西', after.join(','));
     }
     ok('没装 single-file：采集失败、说明带安装命令、不留半成品目录');
