@@ -34,6 +34,13 @@ const SOURCES_DIR_NAME = '_sources';
 const SUPPORTED_ENGINES = new Set(['postgresql', 'mysql']);
 /** 镜像目录里的产物入口文件名 */
 const MANIFEST_RE = /^_manifest_(.+)\.md$/;
+/**
+ * 拆分了的 schema 快照，表数超过这个数就不下发 `tables` 数组（前端只用长度）。
+ * 与 templates/pm-aispace/scripts/db_ingest.py 的 SPLIT_TABLE_THRESHOLD 同一语义：
+ * 脚本用它决定要不要拆成 SplittingObject/<表>.md；看板用它决定要不要逐条 stat 明细。
+ * 两边各有一份，改阈值时两处一起改。
+ */
+const SPLIT_TABLE_THRESHOLD = 40;
 
 function rel(root, abs) {
   return path.relative(root, abs).split(path.sep).join('/');
@@ -529,18 +536,33 @@ function collectSourceProducts(root, dir) {
       item.sheets = sheets;
       item.reader = 'table';
     } else if (item.isDir) {
-      // 拆分了的 schema 快照：单表明细是 SplittingObject/<表>.md，列出来好让界面点开
-      item.tables = listFiles(path.join(root, item.path), { recursive: false })
-        .filter((f) => f.toLowerCase().endsWith('.md'))
-        .sort((a, b) => a.localeCompare(b, 'zh'))
-        .map((f) => ({
-          path: rel(root, f),
-          name: path.basename(f),
-          ext: '.md',
-          reader: 'markdown',
-          title: path.basename(f, '.md'),
-          ...stat(f),
-        }));
+      // 拆分了的 schema 快照：单表明细是 SplittingObject/<表>.md。
+      // 大库上这份清单能占扫描载荷的 98%，而前端只用它的长度 —— 超过拆分阈值就只发表数，不 stat。
+      const splitDir = path.join(root, item.path);
+      let names = [];
+      try {
+        names = fs.readdirSync(splitDir, { withFileTypes: true })
+          .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.md') && !e.name.startsWith('.'))
+          .map((e) => e.name);
+      } catch {
+        names = [];
+      }
+      item.tableCount = names.length;
+      if (names.length <= SPLIT_TABLE_THRESHOLD) {
+        item.tables = names
+          .sort((a, b) => a.localeCompare(b, 'zh'))
+          .map((name) => {
+            const f = path.join(splitDir, name);
+            return {
+              path: rel(root, f),
+              name,
+              ext: '.md',
+              reader: 'markdown',
+              title: path.basename(name, '.md'),
+              ...stat(f),
+            };
+          });
+      }
     }
     items.push(item);
   }
@@ -581,8 +603,9 @@ function readSourceConfig(abs) {
 /**
  * input/sources/*.yaml → 数据源清单，每个源挂着它在 input/converted/_sources/ 下的产物。
  *
- * 返回 null = 「这个工作空间没有数据源这回事」，调用方据此**不给** scan 里的这个字段，
- * 于是前端不渲染那个 tab —— 没配、目录空、旧服务进程三种情况走同一条代码路径。
+ * 返回 null = 「这个工作空间没有 `input/sources/` 目录」，调用方据此**不给** scan 里的这个字段。
+ * 目录在、一份 yaml 都还没配 → 返回空数组，前端才能画出空态和「添加数据库源」按钮。
+ * 否则第一个源永远加不进来：没源就没 tab，没 tab 就点不到入口。
  *
  * 单份 yaml 读不出来只降级成一个「配置读不出来」的条目（照 config.mjs 的 readProjects 风格），
  * 不影响其它源、不让整次扫描失败：坏的那份得让用户看得见，而不是整块消失。
@@ -601,8 +624,8 @@ function scanSources(root) {
       .filter((e) => e.isDirectory() && !SKIP.has(e.name) && !e.name.startsWith('.'))
       .map((e) => e.name)
     : [];
-  // 两边都空 = 这个工作空间跟数据库没关系，字段整个缺省
-  if (!files.length && !productDirs.length) return null;
+  // 没有 sources 目录、也没有任何产物 = 跟数据库无关，字段整个缺省
+  if (!fs.existsSync(configDir) && !productDirs.length) return null;
 
   const used = new Set();
   const sources = [];
@@ -717,7 +740,7 @@ function scanInput(root) {
   const indexPath = path.join(inputDir, 'INDEX.md');
   // 模板工作空间才有 scripts/ingest.py；自己 mkdir 的只有目录约定，不能在看板里触发转换
   const canIngest = fs.existsSync(path.join(root, 'scripts', 'ingest.py'));
-  // 数据源：没配过就是 null，整个字段不进 JSON（前端据此不渲染那个 tab）
+  // 数据源：没有 input/sources/ 目录就是 null，整个字段不进 JSON（前端据此不渲染那个 tab）
   const sources = scanSources(root);
   return {
     raw,
@@ -728,7 +751,7 @@ function scanInput(root) {
     indexPath: fs.existsSync(indexPath) ? rel(root, indexPath) : '',
     canIngest,
     ...(sources ? { sources } : {}),
-    // 只有配了数据源才需要知道采集脚本在不在；没配的工作空间连这个字段都不给
+    // 有 input/sources/ 目录才需要知道采集脚本在不在（空数组也要给，刷新按钮才能出现在空态旁）
     ...(sources ? { canIngestSources: fs.existsSync(path.join(root, 'scripts', 'db_ingest.py')) } : {}),
     stats: {
       raw: raw.length,

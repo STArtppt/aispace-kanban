@@ -9,7 +9,7 @@ description: 把用户提供的环境参数写进工作空间：数据库连接�
 
 数据库 yaml 的字段、只读会话、样例行默认不抽，以 [`input/sources/README.md`](input/sources/README.md) 为准，这里不重复。本技能只负责：**把用户丢过来的参数安全地落到文件上，并验证能连上。**
 
-看板以后会用「添加 → 复制 prompt」把字段拼成下面这种消息。字段契约见 [`references/kanban-prompt.md`](references/kanban-prompt.md)。
+看板「添加 API Key / 添加数据库源」会把字段拼成下面这种消息，用户粘过来时走本技能。数据库那一侧往往是显示名 + 一段连接信息原文，按下面「解析用户输入」拆。字段契约见 [`references/kanban-prompt.md`](references/kanban-prompt.md)。
 
 ## 先分清三种东西
 
@@ -87,7 +87,7 @@ python3 scripts/db_ingest.py schema <源名>
 
 ## 向用户汇报
 
-PM 要听到的是「配好了、能用了」，按这个结构说：
+看板复制出来的 prompt 末尾有「输出要求」，按这一节说。PM 要听到的是「配好了、能用了」，用几句简单易懂的话：
 
 1. 配了哪个源 / 哪几个变量（只报名字）
 2. 文件落在哪：yaml 路径、`.env` 里的变量名（不是值）

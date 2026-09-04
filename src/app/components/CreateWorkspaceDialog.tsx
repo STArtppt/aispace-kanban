@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, Copy, Plus } from 'lucide-react';
+import { Check, Copy, Folder, Loader2, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -28,9 +28,78 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { writeClipboard } from '@/components/Primitives';
-import { api, type WorkspaceTemplate } from '@/lib/api';
+import { ApiError, api, type WorkspaceTemplate } from '@/lib/api';
 
 type Tab = 'create' | 'add';
+
+function DirectoryField({
+  value,
+  onChange,
+  onEnter,
+  autoFocus,
+  pickerAvailable,
+  picking,
+  pickerHint,
+  onPick,
+  hint,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  onEnter: () => void;
+  autoFocus?: boolean;
+  pickerAvailable: boolean;
+  picking: boolean;
+  pickerHint: string;
+  onPick: () => void;
+  hint?: string;
+}) {
+  return (
+    <label className="flex flex-col gap-1.5">
+      <span className="text-xs text-muted-foreground">路径</span>
+      <div className="flex items-center gap-2">
+        <Input
+          autoFocus={autoFocus}
+          className="min-w-0 flex-1"
+          value={value}
+          placeholder="目录绝对路径"
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && onEnter()}
+        />
+        {pickerAvailable ? (
+          <TooltipProvider delay={300}>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="选择目录"
+                    disabled={picking}
+                    onClick={onPick}
+                    className="inline-flex size-9 shrink-0 items-center justify-center rounded-lg border border-input bg-background text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-50"
+                  />
+                }
+              >
+                {picking ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Folder className="size-4" />
+                )}
+              </TooltipTrigger>
+              <TooltipContent>选择目录</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : null}
+      </div>
+      {picking ? (
+        <span className="text-[11px] text-muted-foreground">
+          已打开系统选择框，请在桌面上完成选择
+        </span>
+      ) : null}
+      {pickerHint ? <span className="text-[11px] text-destructive">{pickerHint}</span> : null}
+      {hint ? <span className="text-[11px] text-muted-foreground">{hint}</span> : null}
+    </label>
+  );
+}
 
 /**
  * 侧栏「新建」：一个对话框里放「新建工作空间」和「登记已有目录」。
@@ -48,6 +117,9 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pickerAvailable, setPickerAvailable] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [pickerHint, setPickerHint] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -59,6 +131,9 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
     setCreatePrompt('');
     setCopied(false);
     setError('');
+    setPickerAvailable(false);
+    setPicking(false);
+    setPickerHint('');
     let alive = true;
     void api
       .templates()
@@ -75,6 +150,17 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
         // 404：老服务没有列表接口。当没模板处理，下面创建时不传 template。
         setTemplates([]);
         setCreatePrompt('');
+      });
+    // 旧服务进程没有这个接口 → 404，不显示文件夹按钮，对话框其余部分与改动前一字不差。
+    void api
+      .pickDirectoryAvailable()
+      .then((data) => {
+        if (!alive) return;
+        setPickerAvailable(Boolean(data.available));
+      })
+      .catch(() => {
+        if (!alive) return;
+        setPickerAvailable(false);
       });
     return () => {
       alive = false;
@@ -108,6 +194,25 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
       setError((err as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const pickPath = async () => {
+    if (picking) return;
+    setPicking(true);
+    setPickerHint('');
+    setError('');
+    try {
+      const result = await api.pickDirectory();
+      if (result.picked && result.path) setRoot(result.path);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        setPickerAvailable(false);
+        return;
+      }
+      setPickerHint((err as Error).message);
+    } finally {
+      setPicking(false);
     }
   };
 
@@ -221,31 +326,29 @@ export function CreateWorkspaceDialog({ onDone }: { onDone: (id: string) => void
                       onKeyDown={(e) => e.key === 'Enter' && void submit()}
                     />
                   </label>
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-xs text-muted-foreground">路径</span>
-                    <Input
-                      value={root}
-                      placeholder="目录绝对路径"
-                      onChange={(e) => setRoot(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && void submit()}
-                    />
-                  </label>
+                  <DirectoryField
+                    value={root}
+                    onChange={setRoot}
+                    onEnter={() => void submit()}
+                    pickerAvailable={pickerAvailable}
+                    picking={picking}
+                    pickerHint={pickerHint}
+                    onPick={() => void pickPath()}
+                  />
                 </TabsContent>
 
                 <TabsContent value="add" className="flex flex-col gap-3">
-                  <label className="flex flex-col gap-1.5">
-                    <span className="text-xs text-muted-foreground">路径</span>
-                    <Input
-                      autoFocus={tab === 'add'}
-                      value={root}
-                      placeholder="目录绝对路径"
-                      onChange={(e) => setRoot(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && void submit()}
-                    />
-                    <span className="text-[11px] text-muted-foreground">
-                      登记一个已经存在的工作空间，目录里要有 input/ 和 output/。
-                    </span>
-                  </label>
+                  <DirectoryField
+                    autoFocus={tab === 'add'}
+                    value={root}
+                    onChange={setRoot}
+                    onEnter={() => void submit()}
+                    pickerAvailable={pickerAvailable}
+                    picking={picking}
+                    pickerHint={pickerHint}
+                    onPick={() => void pickPath()}
+                    hint="登记一个已经存在的工作空间，目录里要有 input/ 和 output/。"
+                  />
                 </TabsContent>
               </Tabs>
               {error ? <p className="mt-3 text-xs text-destructive">{error}</p> : null}

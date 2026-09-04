@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactElement, type ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, Copy, Loader2, MoreHorizontal, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -170,13 +170,43 @@ export async function writeClipboard(text: string): Promise<boolean> {
 }
 
 /**
- * 面板标题栏上的图标按钮。ghost + size=icon + startist Tooltip，别再用原生 title。
+ * 标题栏图标上的 startist Tooltip。排序 / 筛选这类不是 Button 的宿主也走这里，
+ * 别再用原生 title（浏览器默认黄框）。
+ */
+export function HeaderTooltip({
+  label,
+  side,
+  disabled,
+  children,
+}: {
+  label: string;
+  side?: 'top' | 'right' | 'bottom' | 'left';
+  disabled?: boolean;
+  children: ReactElement;
+}) {
+  return (
+    <TooltipProvider delay={300}>
+      <Tooltip disabled={disabled}>
+        <TooltipTrigger render={children} />
+        <TooltipContent side={side}>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+/**
+ * 面板标题栏上的图标按钮。size=icon + startist Tooltip，别再用原生 title。
+ * 默认 ghost（侧栏 / 阅读器工具条）；跟排序、筛选、搜索排在一起时传 outline，
+ * 才能对上 SelectTrigger / Input 那套描边方钮。
+ * side 默认朝上；贴边工具栏那种紧靠屏幕边缘的按钮传 "right"，否则气泡会被切掉。
  */
 export function HeaderIconButton({
   label,
   pressed,
   disabled,
   className,
+  side,
+  variant = 'ghost',
   onClick,
   children,
 }: {
@@ -184,6 +214,8 @@ export function HeaderIconButton({
   pressed?: boolean;
   disabled?: boolean;
   className?: string;
+  side?: 'top' | 'right' | 'bottom' | 'left';
+  variant?: 'ghost' | 'outline';
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -193,7 +225,7 @@ export function HeaderIconButton({
         <TooltipTrigger
           render={
             <Button
-              variant="ghost"
+              variant={variant}
               size="icon"
               className={className}
               aria-label={label}
@@ -205,7 +237,7 @@ export function HeaderIconButton({
         >
           {children}
         </TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
+        <TooltipContent side={side}>{label}</TooltipContent>
       </Tooltip>
     </TooltipProvider>
   );

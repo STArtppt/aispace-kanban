@@ -28,7 +28,7 @@ import { CAPTURE_PACKAGE_PATH, readPackageBody, receiveCapturePackage } from './
 import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-history.mjs';
 import { resolveInside } from './paths.mjs';
 import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
-import { PYTHON_CANDIDATES, revealInSystem } from './platform.mjs';
+import { PYTHON_CANDIDATES, pickDirectory, revealInSystem } from './platform.mjs';
 import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
 import { scanWorkspace, verifySource } from './scan.mjs';
@@ -56,6 +56,12 @@ const INGEST_LOG_LIMIT = 32 * 1024;
  * 形状与 ingestJobs 完全一致，走的也是同一套「立即返回 + 轮询进度」。
  */
 const sourceJobs = new Map();
+
+/**
+ * 目录选择框是模态的，同一时刻只允许一个。
+ * true = 正在等用户在桌面上选；第二个请求直接 409，不要弹出两个。
+ */
+let directoryPickBusy = false;
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -1088,6 +1094,32 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   // version 可选：老服务进程没有，侧栏缺了就不显示，退回改动前的行为。
   if (head === 'health') {
     return json(res, 200, { ok: true, platform: process.platform, version: APP_VERSION });
+  }
+
+  // 系统原生目录选择器。GET 只用来探这条路走不走得通（旧进程 404，前端就不显示按钮）；
+  // POST 才真正弹窗。它不写任何文件，但会让服务那台机器弹窗，所以闸和写接口同级。
+  if (head === 'pick-directory' && !id) {
+    if (req.method === 'GET') {
+      // 只读分享模式下 POST 一定 403，这里就先说 false —— 让远程访问者看见一个
+      // 点了必然报错的按钮，不如不显示；前端据此走「和改动前一字不差」的手工输入。
+      return json(res, 200, { available: allowMutations });
+    }
+    if (req.method === 'POST') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (directoryPickBusy) {
+        return json(res, 409, {
+          error: '已经开着一个目录选择框了，请先在桌面上把那个选完或关掉。',
+        });
+      }
+      directoryPickBusy = true;
+      try {
+        const result = await pickDirectory({ prompt: '选择工作空间目录' });
+        return json(res, 200, result);
+      } finally {
+        directoryPickBusy = false;
+      }
+    }
   }
 
   if (head === 'projects' && !id) {

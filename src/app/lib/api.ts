@@ -85,7 +85,15 @@ export interface ConvertedItem extends FileItem {
  *  - 拆分了的 schema 快照：单表明细在 `tables` 里（SplittingObject/<表>.md）。
  */
 export interface DatabaseSourceItem extends ConvertedItem {
-  /** 拆分了的 schema 快照的单表明细。可选：没拆分、或旧服务进程时缺省 */
+  /**
+   * 拆分了的 schema 快照的表数。任何情况下新服务都会给。
+   * 大库上服务端不再下发 `tables`，前端优先读这个数、缺省回落 `tables?.length`。
+   */
+  tableCount?: number;
+  /**
+   * 拆分了的 schema 快照的单表明细。可选：没拆分、表数超过拆分阈值、或旧服务进程时缺省。
+   * 大库上不要依赖它的 length，改读 `tableCount`。
+   */
   tables?: FileItem[];
 }
 
@@ -317,9 +325,9 @@ export interface Scan {
     /**
      * input/sources/*.yaml 配的数据库源，每个源挂着它在 input/converted/_sources/ 下的产物。
      *
-     * **可选，而且这个可选就是「数据库源」tab 的唯一判据**：没配过、目录是空的、
-     * 旧服务进程压根不给这个字段 —— 三种情况都是字段缺省，前端一律不渲染那个 tab，
-     * 其余三个 tab 行为与改动前完全一致。不需要为版本错配单写分支。
+     * **可选，而且这个可选就是「数据库源」tab 的唯一判据**：
+     * 空数组是合法状态（有 `input/sources/` 目录但还没配源），前端要渲染空态和添加入口；
+     * 字段缺省才是「跟数据库无关 / 旧服务进程」，不渲染那个 tab。
      *
      * 注意 `input/converted/_sources/` 下的产物**不在** `converted` 里，
      * `stats.converted` 也不含它们：数据库和文件是两条来源，混在一个清单里会让
@@ -576,6 +584,17 @@ export const api = {
    * 两者都可选：老服务进程没有，缺了 platform 按 macOS 的说法走、version 不显示。
    */
   health: () => request<{ ok: boolean; platform?: string; version?: string }>('/api/health'),
+  /**
+   * 探 `POST /api/pick-directory` 在不在。旧服务进程 404，调用方据此藏掉文件夹按钮。
+   * GET 不弹窗。
+   */
+  pickDirectoryAvailable: () => request<{ available?: boolean }>('/api/pick-directory'),
+  /**
+   * 在服务所在的机器上弹出系统原生目录选择框。
+   * picked: false = 用户取消，不是错误。409 = 已经开着一个；403 = 非环回。
+   */
+  pickDirectory: () =>
+    request<{ picked: boolean; path?: string }>('/api/pick-directory', { method: 'POST' }),
   projects: () => request<{ projects: Project[]; activeProjectId: string }>('/api/projects'),
   addProject: (root: string, name?: string) =>
     request<Project>('/api/projects', { method: 'POST', body: JSON.stringify({ root, name }) }),

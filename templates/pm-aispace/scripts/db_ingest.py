@@ -505,6 +505,9 @@ def _short(err: Exception) -> str:
 # 统一走 information_schema，行数只取**估算值**（PG 的 pg_class.reltuples /
 # MySQL 的 TABLE_ROWS）。绝不对业务表发 count(*) —— 大表全表扫会拖垮生产库，
 # 而我们只需要量级：AI 要知道的是「这表是万级还是亿级」，不是精确到个位。
+#
+# PG 白名单必须写成 ANY(%s::text[])。不带 ::text[] 时，KingbaseES 这类兼容库
+# 推不出参数类型，不报错、直接返回 0 行，快照会被写成「0 张表」。
 # --------------------------------------------------------------------------- #
 
 PG_TABLES = """
@@ -514,7 +517,7 @@ SELECT t.table_schema, t.table_name, t.table_type,
   FROM information_schema.tables t
   LEFT JOIN pg_namespace n ON n.nspname = t.table_schema
   LEFT JOIN pg_class c ON c.relname = t.table_name AND c.relnamespace = n.oid
- WHERE t.table_schema = ANY(%s)
+ WHERE t.table_schema = ANY(%s::text[])
  ORDER BY t.table_schema, t.table_name
 """
 
@@ -525,7 +528,7 @@ SELECT c.table_schema, c.table_name, c.column_name, c.data_type,
   LEFT JOIN pg_namespace n ON n.nspname = c.table_schema
   LEFT JOIN pg_class k ON k.relname = c.table_name AND k.relnamespace = n.oid
   LEFT JOIN pg_description d ON d.objoid = k.oid AND d.objsubid = c.ordinal_position
- WHERE c.table_schema = ANY(%s)
+ WHERE c.table_schema = ANY(%s::text[])
  ORDER BY c.table_schema, c.table_name, c.ordinal_position
 """
 
@@ -537,7 +540,7 @@ SELECT tc.table_schema, tc.table_name, tc.constraint_type, kcu.column_name,
     ON kcu.constraint_name = tc.constraint_name AND kcu.table_schema = tc.table_schema
   LEFT JOIN information_schema.constraint_column_usage ccu
     ON ccu.constraint_name = tc.constraint_name AND tc.constraint_type = 'FOREIGN KEY'
- WHERE tc.table_schema = ANY(%s) AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')
+ WHERE tc.table_schema = ANY(%s::text[]) AND tc.constraint_type IN ('PRIMARY KEY', 'FOREIGN KEY')
  ORDER BY tc.table_schema, tc.table_name, kcu.ordinal_position
 """
 
@@ -710,6 +713,64 @@ def table_detail_lines(entry: dict) -> list[str]:
     return out
 
 
+def _table_prefix(name: str) -> str | None:
+    """表名前缀。`t_sys_user` → `t_sys`（两段），`user_info` → `user`（一段）。
+
+    企业库常见 `t_<模块>_<实体>`，只切第一段会把几乎所有表收进一个 `t_*` 里。
+    没有下划线或以下划线开头则分不出组。
+    """
+    parts = name.split("_")
+    if len(parts) >= 3 and parts[0] and parts[1]:
+        return f"{parts[0]}_{parts[1]}"
+    if len(parts) >= 2 and parts[0]:
+        return parts[0]
+    return None
+
+
+def group_tables_by_prefix(tables: list[dict]) -> list[tuple[str, list[dict]]] | None:
+    """按表名前缀（`<前缀>_…`）分组。分不出有意义的组时返回 None，调用方改走首字母清单。
+
+    「有意义」= 至少一半的表落进「≥2 张表」的前缀组。单表组一律丢掉，
+    不许造出一堆只含一张表的「组」。
+    """
+    buckets: dict[str, list[dict]] = {}
+    for entry in tables:
+        prefix = _table_prefix(entry["name"])
+        if not prefix:
+            continue
+        buckets.setdefault(prefix, []).append(entry)
+    real = {p: g for p, g in buckets.items() if len(g) >= 2}
+    grouped_n = sum(len(g) for g in real.values())
+    if not real or grouped_n < len(tables) * 0.5:
+        return None
+    grouped_ids = {id(e) for g in real.values() for e in g}
+    rest = [e for e in tables if id(e) not in grouped_ids]
+    sections = sorted(real.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    if rest:
+        sections.append(("其他", rest))
+    return sections
+
+
+def group_tables_by_letter(tables: list[dict]) -> list[tuple[str, list[dict]]]:
+    """按表名首字符分段的单一清单。ASCII 字母数字一组，其余归到「#」。"""
+    buckets: dict[str, list[dict]] = {}
+    for entry in tables:
+        ch = (entry["name"][:1] or "#").upper()
+        key = ch if ("A" <= ch <= "Z" or "0" <= ch <= "9") else "#"
+        buckets.setdefault(key, []).append(entry)
+    return sorted(buckets.items(), key=lambda kv: (kv[0] == "#", kv[0]))
+
+
+def _compact_table_line(entry: dict) -> str:
+    file_name = f"{safe_component(entry['schema'] + '.' + entry['name'])}.md"
+    comment = (entry.get("comment") or "").strip().replace("\n", " ")
+    bits = [f"`{entry['schema']}.{entry['name']}`", f"{len(entry['columns'])} 列"]
+    if comment:
+        bits.append(comment)
+    bits.append(f"[明细]({SPLIT_DIR}/{file_name})")
+    return "- " + " · ".join(bits)
+
+
 def write_schema_snapshot(src: Source, data: dict) -> Path:
     """写 L1 快照。表多到一份装不下时退化成表清单，单表明细拆进 SplittingObject/。"""
     tables = data["tables"]
@@ -744,21 +805,21 @@ def write_schema_snapshot(src: Source, data: dict) -> Path:
 
     if split:
         body += [
-            f"表太多（超过 {SPLIT_TABLE_THRESHOLD} 张），这里只留表清单，"
+            f"表太多（超过 {SPLIT_TABLE_THRESHOLD} 张），这里只留按前缀分组的清单，"
             f"单表的列明细在 `{SPLIT_DIR}/<表名>.md`，按需读一张。",
             "",
-            "| 表 | 类型 | 行数量级 | 用途 | 明细 |",
-            "| --- | --- | --- | --- | --- |",
         ]
-        for entry in tables:
-            file_name = f"{safe_component(entry['schema'] + '.' + entry['name'])}.md"
-            purpose = entry["comment"] or (f"{len(entry['columns'])} 列，主键 {', '.join(entry['pk'])}"
-                                           if entry["pk"] else f"{len(entry['columns'])} 列")
-            body.append(
-                f"| {_md_cell(entry['schema'])}.{_md_cell(entry['name'])} | {entry['kind']} | "
-                f"{entry['rows']} | {_md_cell(purpose)} | [{file_name}]({SPLIT_DIR}/{file_name}) |"
-            )
-        body.append("")
+        sections = group_tables_by_prefix(tables)
+        prefix_mode = sections is not None
+        if sections is None:
+            body += ["表名分不出稳定前缀，改按首字母分段。", ""]
+            sections = group_tables_by_letter(tables)
+        for title, group in sections:
+            heading = f"{title}_*" if prefix_mode and title != "其他" else title
+            body += [f"## {heading}（{len(group)} 张）", ""]
+            for entry in group:
+                body.append(_compact_table_line(entry))
+            body.append("")
     else:
         body += ["## 表", ""]
         for entry in tables:
@@ -892,9 +953,9 @@ def cli_collect_schema(src: Source) -> dict:
             "不降级成「只靠脚本白名单」。"
         )
     schemas = "{" + ",".join(f'"{s}"' for s in src.schemas) + "}"
-    t_rows = psql_rows(src, PG_TABLES.replace("%s", "$1::text[]"), [schemas])
-    c_rows = psql_rows(src, PG_COLUMNS.replace("%s", "$1::text[]"), [schemas])
-    k_rows = psql_rows(src, PG_KEYS.replace("%s", "$1::text[]"), [schemas])
+    t_rows = psql_rows(src, PG_TABLES.replace("%s", "$1"), [schemas])
+    c_rows = psql_rows(src, PG_COLUMNS.replace("%s", "$1"), [schemas])
+    k_rows = psql_rows(src, PG_KEYS.replace("%s", "$1"), [schemas])
 
     tables: dict[tuple[str, str], dict] = {}
     for row in t_rows:
@@ -963,7 +1024,11 @@ def cmd_schema(args) -> int:
             log("会话已置为只读，开始读 information_schema…")
             data = collect_schema(session, src)
     if not data["tables"]:
-        log(f"没读到任何表。检查 schema 白名单写对了没：{', '.join(src.schemas)}")
+        raise ConfigError(
+            "一张表都没读到，请检查 schema 白名单"
+            + (f"：{', '.join(src.schemas)}" if src.schemas else "。")
+            + "上一份快照原样保留，没有写成空快照。"
+        )
     manifest = write_schema_snapshot(src, data)
     log(f"schema 快照已更新：{repo_rel(manifest)}（{len(data['tables'])} 张表 / 视图）")
     return 0

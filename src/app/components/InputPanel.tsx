@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, AppWindow, ArrowUpDown, ChevronDown, ChevronRight, CodeXml, Copy, Database, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Star, StarOff, Table, X } from 'lucide-react';
+import { AlertTriangle, AppWindow, ArrowUpDown, ChevronDown, ChevronRight, CodeXml, Copy, Database, EyeOff, FileOutput, FileText, FolderOpen, Image, Key, ListFilter, Loader2, RefreshCw, Star, StarOff, Table, X } from 'lucide-react';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import {
@@ -15,6 +15,8 @@ import { AssetGalleryStack } from '@/components/AssetGalleryStack';
 import { ImageLightbox } from '@/components/ImageLightbox';
 import {
   EmptyState,
+  HeaderIconButton,
+  HeaderTooltip,
   ListPager,
   Row,
   RowActions,
@@ -23,6 +25,7 @@ import {
   writeClipboard,
   type RowAction,
 } from '@/components/Primitives';
+import { ApiKeyDialog, DatabaseSourceDialog, type EnvConfigKind } from '@/components/EnvConfigDialog';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { codePreviewLanguage } from '@/components/CodeFileView';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
@@ -524,7 +527,7 @@ const INPUT_TABS = [
   { key: 'pending' as const, title: '原始资料' },
   { key: 'converted' as const, title: '转换产物' },
   { key: 'assets' as const, title: '图片资料' },
-  // 数据库源排在三个已有 tab **之后**，而且只有真配过数据源才出现（见 showSources）
+  // 数据库源排在三个已有 tab **之后**，有 input/sources/ 目录才出现（见 showSources）
   { key: 'sources' as const, title: '数据库源' },
 ];
 
@@ -562,6 +565,8 @@ function readInputTab(): InputTab {
 /** 图标选择器：正方形触发器，藏掉默认文案和下拉箭头 */
 const ICON_SELECT_TRIGGER =
   'size-8 min-h-8 w-8 justify-center gap-0 px-0 py-0 [&_.lucide-chevron-down]:hidden';
+/** 标题栏描边方钮：与排序 / 筛选 SelectTrigger、搜索框同一套 size-8 + shadow-sm */
+const TOOLBAR_ICON_BUTTON = 'size-8 shadow-sm';
 
 function ConvertedList({
   items,
@@ -855,13 +860,16 @@ function SourceItemRow({
   openPath: string;
   onOpen: (item: FileItem) => void;
 }) {
-  const sheets = (item as DatabaseSourceItem).sheets || [];
-  const tables = (item as DatabaseSourceItem).tables || [];
+  const sourceItem = item as DatabaseSourceItem;
+  const sheets = sourceItem.sheets || [];
+  const tableCount = typeof sourceItem.tableCount === 'number'
+    ? sourceItem.tableCount
+    : sourceItem.tables?.length;
   // 查询产物点开直接看结果表；schema 快照点开看摘要本身
   const target = sheets.length ? sheets[0] : item;
   const detail = [
     sheets.length ? `结果表 ${sheets[0].name}` : '',
-    tables.length ? `${tables.length} 张表的明细` : '',
+    typeof tableCount === 'number' && tableCount > 0 ? `${tableCount} 张表的明细` : '',
     item.mtime ? formatRelative(item.mtime) : '',
   ].filter(Boolean).join(' · ');
   return (
@@ -906,37 +914,36 @@ function SourceRefreshButton({
 
   if (eligible.length === 1) {
     return (
-      <Button
+      <HeaderIconButton
+        label="刷新 schema"
         variant="outline"
-        size="icon"
-        className="size-8"
-        aria-label="刷新 schema"
-        title="刷新 schema"
+        className={TOOLBAR_ICON_BUTTON}
         disabled={running}
         onClick={() => onStart(eligible[0].key)}
       >
         {icon}
-      </Button>
+      </HeaderIconButton>
     );
   }
 
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        disabled={running}
-        render={
-          <Button
-            variant="outline"
-            size="icon"
-            className="size-8"
-            aria-label="刷新 schema"
-            title="刷新 schema"
-            disabled={running}
-          />
-        }
-      >
-        {icon}
-      </DropdownMenuTrigger>
+      <HeaderTooltip label="刷新 schema">
+        <DropdownMenuTrigger
+          disabled={running}
+          render={
+            <Button
+              variant="outline"
+              size="icon"
+              className={TOOLBAR_ICON_BUTTON}
+              aria-label="刷新 schema"
+              disabled={running}
+            />
+          }
+        >
+          {icon}
+        </DropdownMenuTrigger>
+      </HeaderTooltip>
       <DropdownMenuContent align="end">
         {eligible.map((source) => (
           <DropdownMenuItem
@@ -1136,12 +1143,13 @@ export function InputPanel({
   // 旧服务进程没有 assetGroups：退回平铺网格
   const galleries = input.assetGroups || [];
   /**
-   * 「数据库源」tab 的唯一判据。没配过、目录是空的、旧服务进程压根不给这个字段 ——
-   * 三种情况都是 sources 缺省，走同一条代码路径：不渲染这个 tab，其余三个照旧。
+   * 「数据库源」tab 的唯一判据：服务端给了这个字段（空数组也算）。
+   * 字段缺省 = 没有 input/sources/ 目录，或旧服务进程 —— 不渲染这个 tab。
    */
+  const showSources = Array.isArray(input.sources);
   const sources = input.sources || [];
-  const showSources = sources.length > 0;
   const sourceIngest = useSourceIngestJob(projectId, showSources && input.canIngestSources);
+  const [envKind, setEnvKind] = useState<EnvConfigKind | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(INPUT_VIEW_KEY));
   const [tab, setTab] = useState<InputTab>(readInputTab);
   const [query, setQuery] = useState('');
@@ -1232,6 +1240,16 @@ export function InputPanel({
               )}
               aria-hidden={activeTab === 'assets' || activeTab === 'sources'}
             >
+              {activeTab === 'pending' ? (
+                <HeaderIconButton
+                  label="添加 API Key"
+                  variant="outline"
+                  className={TOOLBAR_ICON_BUTTON}
+                  onClick={() => setEnvKind('api_key')}
+                >
+                  <Key className="size-3.5 text-muted-foreground" />
+                </HeaderIconButton>
+              ) : null}
               <ViewModeToggle mode={viewMode} onChange={setViewMode} label="资料清单" />
               <Select
                 value={sortKey}
@@ -1241,14 +1259,16 @@ export function InputPanel({
                   }
                 }}
               >
-                <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="排序输入资料" title="排序">
-                  <ArrowUpDown
-                    className={cn(
-                      'size-3.5',
-                      sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
-                    )}
-                  />
-                </SelectTrigger>
+                <HeaderTooltip label="排序">
+                  <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="排序输入资料">
+                    <ArrowUpDown
+                      className={cn(
+                        'size-3.5',
+                        sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
+                      )}
+                    />
+                  </SelectTrigger>
+                </HeaderTooltip>
                 <SelectContent align="end" className="min-w-36 w-max">
                   <SelectItem value="name">{SORTS.name}</SelectItem>
                   <SelectItem value="mtimeAsc">{SORTS.mtimeAsc}</SelectItem>
@@ -1264,14 +1284,16 @@ export function InputPanel({
                     }
                   }}
                 >
-                  <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="筛选转换产物" title="筛选">
-                    <ListFilter
-                      className={cn(
-                        'size-3.5',
-                        activeFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
-                      )}
-                    />
-                  </SelectTrigger>
+                  <HeaderTooltip label="筛选">
+                    <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="筛选转换产物">
+                      <ListFilter
+                        className={cn(
+                          'size-3.5',
+                          activeFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
+                        )}
+                      />
+                    </SelectTrigger>
+                  </HeaderTooltip>
                   <SelectContent align="end" className="min-w-36 w-max">
                     {filterOptions.map((option) => (
                       <SelectItem key={option} value={option}>
@@ -1289,13 +1311,23 @@ export function InputPanel({
                 aria-label="搜索输入资料"
               />
             </div>
-            {activeTab === 'sources' && input.canIngestSources ? (
-              <div className="col-start-1 row-start-1 flex items-center justify-end">
-                <SourceRefreshButton
-                  sources={sources}
-                  running={sourceIngest.running}
-                  onStart={(key) => void sourceIngest.start(key)}
-                />
+            {activeTab === 'sources' ? (
+              <div className="col-start-1 row-start-1 flex items-center justify-end gap-2">
+                <HeaderIconButton
+                  label="添加数据库源"
+                  variant="outline"
+                  className={TOOLBAR_ICON_BUTTON}
+                  onClick={() => setEnvKind('database')}
+                >
+                  <Database className="size-3.5 text-muted-foreground" />
+                </HeaderIconButton>
+                {input.canIngestSources ? (
+                  <SourceRefreshButton
+                    sources={sources}
+                    running={sourceIngest.running}
+                    onStart={(key) => void sourceIngest.start(key)}
+                  />
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -1429,13 +1461,27 @@ export function InputPanel({
 
           {showSources ? (
             <TabsContent value="sources">
-              <DatabaseSourceList
-                sources={sources}
-                openPath={openPath}
-                onOpen={onOpen}
-                canIngest={Boolean(input.canIngestSources)}
-                control={sourceIngest}
-              />
+              {sources.length ? (
+                <DatabaseSourceList
+                  sources={sources}
+                  openPath={openPath}
+                  onOpen={onOpen}
+                  canIngest={Boolean(input.canIngestSources)}
+                  control={sourceIngest}
+                />
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <EmptyState
+                    title="还没有数据源"
+                    hint="点右上角的数据库图标，填连接信息后复制 prompt 给当前 Agent。"
+                  />
+                  <div className="flex justify-center">
+                    <Button variant="outline" size="sm" onClick={() => setEnvKind('database')}>
+                      添加数据库源
+                    </Button>
+                  </div>
+                </div>
+              )}
             </TabsContent>
           ) : null}
         </Tabs>
@@ -1467,6 +1513,18 @@ export function InputPanel({
           </Button>
         </section>
       ) : null}
+      <ApiKeyDialog
+        open={envKind === 'api_key'}
+        onOpenChange={(next) => {
+          if (!next) setEnvKind(null);
+        }}
+      />
+      <DatabaseSourceDialog
+        open={envKind === 'database'}
+        onOpenChange={(next) => {
+          if (!next) setEnvKind(null);
+        }}
+      />
     </div>
   );
 }
