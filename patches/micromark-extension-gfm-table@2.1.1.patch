@@ -1,0 +1,161 @@
+diff --git a/dev/lib/edit-map.js b/dev/lib/edit-map.js
+index 983d0556e2713dc92982faa6a09b1093ef4d02db..567b5fb9ede57ea481bd4c4ce4fe71d2e9188cc1 100644
+--- a/dev/lib/edit-map.js
++++ b/dev/lib/edit-map.js
+@@ -34,6 +34,19 @@ export class EditMap {
+      * @type {Array<Change>}
+      */
+     this.map = []
++
++    /**
++     * Index of changes by `at`.
++     *
++     * Patched (aispace-kanban): `add` used to scan the whole `map` for a matching
++     * `at` on every call, which is quadratic in the number of edits. A table with
++     * ~830 rows spends ~90ms of main-thread time in there alone. Keeping an index
++     * makes each `add` a single lookup; `map` itself is unchanged, so `consume`
++     * (which sorts and applies it) behaves exactly as before.
++     *
++     * @type {Map<number, Change>}
++     */
++    this.index = new Map()
+   }
+ 
+   /**
+@@ -124,6 +137,7 @@ export class EditMap {
+ 
+     // Truncate everything.
+     this.map.length = 0
++    this.index.clear()
+   }
+ }
+ 
+@@ -137,32 +151,31 @@ export class EditMap {
+  * @returns {undefined}
+  */
+ function addImplementation(editMap, at, remove, add) {
+-  let index = 0
+-
+   /* c8 ignore next 3 -- `resolve` is never called without tables, so without edits. */
+   if (remove === 0 && add.length === 0) {
+     return
+   }
+ 
+-  while (index < editMap.map.length) {
+-    if (editMap.map[index][0] === at) {
+-      editMap.map[index][1] += remove
++  const existing = editMap.index.get(at)
+ 
+-      // To do: before not used by tables, use when moving to micromark.
+-      // if (before) {
+-      //   add.push(...editMap.map[index][2])
+-      //   editMap.map[index][2] = add
+-      // } else {
+-      editMap.map[index][2].push(...add)
+-      // }
++  if (existing) {
++    existing[1] += remove
+ 
+-      return
+-    }
++    // To do: before not used by tables, use when moving to micromark.
++    // if (before) {
++    //   add.push(...existing[2])
++    //   existing[2] = add
++    // } else {
++    existing[2].push(...add)
++    // }
+ 
+-    index += 1
++    return
+   }
+ 
+-  editMap.map.push([at, remove, add])
++  /** @type {Change} */
++  const change = [at, remove, add]
++  editMap.map.push(change)
++  editMap.index.set(at, change)
+ }
+ 
+ // /**
+diff --git a/lib/edit-map.js b/lib/edit-map.js
+index ecc8bce784d29a48e0869be1c4a2dd5ccf1d3d01..5442f80a8aaaa90067d4e57015e733438bd5aaa5 100644
+--- a/lib/edit-map.js
++++ b/lib/edit-map.js
+@@ -34,6 +34,19 @@ export class EditMap {
+      * @type {Array<Change>}
+      */
+     this.map = [];
++
++    /**
++     * Index of changes by `at`.
++     *
++     * Patched (aispace-kanban): `add` used to scan the whole `map` for a matching
++     * `at` on every call, which is quadratic in the number of edits. A table with
++     * ~830 rows spends ~90ms of main-thread time in there alone. Keeping an index
++     * makes each `add` a single lookup; `map` itself is unchanged, so `consume`
++     * (which sorts and applies it) behaves exactly as before.
++     *
++     * @type {Map<number, Change>}
++     */
++    this.index = new Map();
+   }
+ 
+   /**
+@@ -117,6 +130,7 @@ export class EditMap {
+ 
+     // Truncate everything.
+     this.map.length = 0;
++    this.index.clear();
+   }
+ }
+ 
+@@ -130,29 +144,31 @@ export class EditMap {
+  * @returns {undefined}
+  */
+ function addImplementation(editMap, at, remove, add) {
+-  let index = 0;
+-
+   /* c8 ignore next 3 -- `resolve` is never called without tables, so without edits. */
+   if (remove === 0 && add.length === 0) {
+     return;
+   }
+-  while (index < editMap.map.length) {
+-    if (editMap.map[index][0] === at) {
+-      editMap.map[index][1] += remove;
+-
+-      // To do: before not used by tables, use when moving to micromark.
+-      // if (before) {
+-      //   add.push(...editMap.map[index][2])
+-      //   editMap.map[index][2] = add
+-      // } else {
+-      editMap.map[index][2].push(...add);
+-      // }
+ 
+-      return;
+-    }
+-    index += 1;
++  const existing = editMap.index.get(at);
++
++  if (existing) {
++    existing[1] += remove;
++
++    // To do: before not used by tables, use when moving to micromark.
++    // if (before) {
++    //   add.push(...existing[2])
++    //   existing[2] = add
++    // } else {
++    existing[2].push(...add);
++    // }
++
++    return;
+   }
+-  editMap.map.push([at, remove, add]);
++
++  /** @type {Change} */
++  const change = [at, remove, add];
++  editMap.map.push(change);
++  editMap.index.set(at, change);
+ }
+ 
+ // /**

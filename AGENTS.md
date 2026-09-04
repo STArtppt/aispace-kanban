@@ -67,6 +67,21 @@
 `scripts/build-npm-package.mjs` **按 `src/server` + `bin` 的 import 图重算依赖**,
 服务端引了不在 `dependencies` 里的包,组包会直接报错拦下。
 
+### 唯一的第三方补丁:micromark 的 GFM 表格扩展
+
+`patches/micromark-extension-gfm-table@2.1.1.patch`(登记在 `pnpm-workspace.yaml` 的
+`patchedDependencies`,那份文件目前**只为这一件事存在**)。
+
+改的是 `EditMap.add`:原实现每加一条编辑都要线性扫一遍已有编辑,表格行一多就是平方级。
+一份 833 行表格的产物,光这一处就占主线程 ~90ms(点开总耗时的一半)。补丁给它加了一张
+`at → change` 的索引表,`map` 本身和 `consume` 的行为一个字没动。
+**产出的 HTML 与打补丁前逐字节相同**(验过:602926 字节两边一致),管线 146ms → 74ms。
+
+上游 2.1.1 是最新版(2025-01),没修这个问题。**升级 `remark-gfm` / micromark 系列时补丁会因
+版本不符失效,pnpm 会当场报错**(不会静默),那时要么重打(`pnpm patch <包>@<新版本>`),
+要么确认上游已修后删掉补丁与 `pnpm-workspace.yaml` 里那行。
+验证照旧:`pnpm test:anchor` + 浏览器里点开一份大表产物看长任务时长。
+
 ---
 
 ## 3. 三个平面与目录结构

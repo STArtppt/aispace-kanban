@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  micromark-extension-gfm-table@2.1.1:
+    hash: d5fd712223221d4ab6ea42d965e87af5b270af6c56fc65828d734ffe997442b8
+    path: patches/micromark-extension-gfm-table@2.1.1.patch
+
 importers:
 
   .:
@@ -5333,7 +5338,7 @@ snapshots:
       micromark-util-symbol: 2.0.1
       micromark-util-types: 2.0.2
 
-  micromark-extension-gfm-table@2.1.1:
+  micromark-extension-gfm-table@2.1.1(patch_hash=d5fd712223221d4ab6ea42d965e87af5b270af6c56fc65828d734ffe997442b8):
     dependencies:
       devlop: 1.1.0
       micromark-factory-space: 2.0.1
@@ -5358,7 +5363,7 @@ snapshots:
       micromark-extension-gfm-autolink-literal: 2.1.0
       micromark-extension-gfm-footnote: 2.1.0
       micromark-extension-gfm-strikethrough: 2.1.0
-      micromark-extension-gfm-table: 2.1.1
+      micromark-extension-gfm-table: 2.1.1(patch_hash=d5fd712223221d4ab6ea42d965e87af5b270af6c56fc65828d734ffe997442b8)
       micromark-extension-gfm-tagfilter: 2.0.0
       micromark-extension-gfm-task-list-item: 2.1.0
       micromark-util-combine-extensions: 2.0.1
