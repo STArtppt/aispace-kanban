@@ -9,7 +9,7 @@ import {
   List,
   type LucideIcon,
 } from 'lucide-react';
-import { Row, RowActions, writeClipboard, type RowAction } from '@/components/Primitives';
+import { HeaderTooltip, Row, RowActions, writeClipboard, type RowAction } from '@/components/Primitives';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -40,21 +40,22 @@ function ModeButton({
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      aria-label={title}
-      aria-pressed={active}
-      title={title}
-      onClick={onClick}
-      className={cn(
-        'flex size-7 items-center justify-center rounded-md transition-colors',
-        active
-          ? 'bg-muted text-foreground'
-          : 'text-muted-foreground hover:bg-accent hover:text-foreground',
-      )}
-    >
-      <Icon className="size-3.5" />
-    </button>
+    <HeaderTooltip label={title}>
+      <button
+        type="button"
+        aria-label={title}
+        aria-pressed={active}
+        onClick={onClick}
+        className={cn(
+          'flex size-7 items-center justify-center rounded-md transition-colors',
+          active
+            ? 'bg-muted text-foreground'
+            : 'text-muted-foreground hover:bg-accent hover:text-foreground',
+        )}
+      >
+        <Icon className="size-3.5" />
+      </button>
+    </HeaderTooltip>
   );
 }
 

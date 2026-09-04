@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Search, X } from 'lucide-react';
+import { HeaderTooltip } from '@/components/Primitives';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 
@@ -25,38 +26,40 @@ export function ExpandableSearch({
   const expanded = open || value.trim().length > 0;
 
   return (
-    <div
-      className={cn(
-        'relative h-8 transition-[width] duration-200 ease-out',
-        expanded ? expandedClassName : 'w-8',
-      )}
-    >
-      <Input
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
-        placeholder={expanded ? placeholder : ''}
-        className={cn('h-8 text-xs', expanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
-        aria-label={ariaLabel}
-        title="搜索"
-      />
-      {hasValue ? (
-        <button
-          type="button"
-          className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground hover:text-foreground"
-          aria-label="清空搜索"
-          title="清空"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => onChange('')}
-        >
-          <X className="size-3.5" />
-        </button>
-      ) : (
-        <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
-          <Search className="size-3.5" />
-        </span>
-      )}
-    </div>
+    <HeaderTooltip label="搜索" disabled={expanded}>
+      <div
+        className={cn(
+          'relative h-8 transition-[width] duration-200 ease-out',
+          expanded ? expandedClassName : 'w-8',
+        )}
+      >
+        <Input
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          placeholder={expanded ? placeholder : ''}
+          className={cn('h-8 text-xs', expanded ? 'pr-8 pl-2.5' : 'px-0 caret-transparent')}
+          aria-label={ariaLabel}
+        />
+        {hasValue ? (
+          <HeaderTooltip label="清空">
+            <button
+              type="button"
+              className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground hover:text-foreground"
+              aria-label="清空搜索"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => onChange('')}
+            >
+              <X className="size-3.5" />
+            </button>
+          </HeaderTooltip>
+        ) : (
+          <span className="pointer-events-none absolute inset-y-0 right-0 flex w-8 items-center justify-center text-muted-foreground">
+            <Search className="size-3.5" />
+          </span>
+        )}
+      </div>
+    </HeaderTooltip>
   );
 }

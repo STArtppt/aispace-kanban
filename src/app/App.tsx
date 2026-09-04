@@ -5,22 +5,24 @@ import {
   FolderInput,
   FolderOutput,
   LayoutDashboard,
-  Menu,
   MonitorPlay,
   Moon,
+  PanelLeftClose,
   RefreshCw,
   Settings2,
   Sun,
   X,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Toaster } from '@/components/ui/sonner';
 import { CreateWorkspaceDialog } from '@/components/CreateWorkspaceDialog';
+import { HeaderIconButton } from '@/components/Primitives';
 import { HelpPanel } from '@/components/HelpPanel';
 import { InputPanel } from '@/components/InputPanel';
 import { OutputPanel } from '@/components/OutputPanel';
 import { OverviewPanel } from '@/components/OverviewPanel';
 import { Reader } from '@/components/Reader';
+import { SidebarRail } from '@/components/SidebarRail';
 import { UnavailableWorkspace, WorkspaceDialog } from '@/components/WorkspaceSettings';
 import { VisualPanel } from '@/components/VisualPanel';
 import { useBoardSession, type View } from '@/hooks/useBoardSession';
@@ -136,6 +138,34 @@ function useTheme() {
   return { dark, toggle: () => setDark((v) => !v) };
 }
 
+/** 侧栏是否收成贴边工具栏 */
+const RAIL_KEY = 'aispace-kanban:sidebar-rail';
+/** 贴边工具栏是否自动隐藏（默认开） */
+const AUTOHIDE_KEY = 'aispace-kanban:rail-autohide';
+
+/**
+ * 记住一个界面开关。localStorage 在隐私模式下会直接抛异常，
+ * 读写都兜住：存不下就当作默认值，不能让侧栏状态把整页拖崩。
+ */
+function usePersistedFlag(key: string, fallback: boolean) {
+  const [value, setValue] = useState(() => {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw === null ? fallback : raw === '1';
+    } catch {
+      return fallback;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, value ? '1' : '0');
+    } catch {
+      // 存不下就只在本次会话里生效，不影响使用
+    }
+  }, [key, value]);
+  return [value, setValue] as const;
+}
+
 function SidebarBody({
   projects,
   activeId,
@@ -150,6 +180,7 @@ function SidebarBody({
   toggleTheme,
   setSettingsFor,
   openHelp,
+  onCollapse,
   onProjectAdded,
   onNavigate,
 }: {
@@ -166,6 +197,7 @@ function SidebarBody({
   toggleTheme: () => void;
   setSettingsFor: (p: Project) => void;
   openHelp: () => void;
+  onCollapse: () => void;
   onProjectAdded: (id: string) => void | Promise<void>;
   onNavigate?: () => void;
 }) {
@@ -178,19 +210,14 @@ function SidebarBody({
           <span className="font-display truncate text-base">工作空间看板</span>
         </span>
         <div className="flex items-center gap-0.5">
-          <Button variant="ghost" size="icon" title="切换主题" onClick={toggleTheme}>
-            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </Button>
           {onNavigate ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              title="关闭菜单"
+            <HeaderIconButton
+              label="关闭菜单"
               className="max-[899px]:inline-flex min-[900px]:hidden"
               onClick={onNavigate}
             >
               <X className="size-4" />
-            </Button>
+            </HeaderIconButton>
           ) : null}
         </div>
       </div>
@@ -224,17 +251,16 @@ function SidebarBody({
                 {broken ? <AlertTriangle className="size-3.5 shrink-0 text-destructive" /> : null}
                 <span className="truncate">{project.name}</span>
               </button>
-              <button
-                type="button"
-                title="工作空间设置"
+              <HeaderIconButton
+                label="工作空间设置"
                 onClick={() => setSettingsFor(project)}
                 className={cn(
-                  'shrink-0 rounded p-1 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100',
+                  'size-7 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100',
                   broken && 'opacity-100',
                 )}
               >
                 <Settings2 className="size-3.5" />
-              </button>
+              </HeaderIconButton>
             </div>
           );
         })}
@@ -264,18 +290,19 @@ function SidebarBody({
 
       <div className="mt-auto flex flex-col gap-2 px-1">
         <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            title="重新扫描"
-            aria-label="重新扫描"
-            onClick={() => void reload()}
-          >
+          {/* 窄屏是抽屉侧栏，抽屉自己有关闭按钮，不需要再给一个「收起」 */}
+          <HeaderIconButton label="收起侧栏" className="max-[899px]:hidden" onClick={onCollapse}>
+            <PanelLeftClose className="size-4" />
+          </HeaderIconButton>
+          <HeaderIconButton label="切换主题" onClick={toggleTheme}>
+            {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
+          </HeaderIconButton>
+          <HeaderIconButton label="重新扫描" onClick={() => void reload()}>
             <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
-          </Button>
-          <Button variant="ghost" size="icon" title="查看帮助" aria-label="查看帮助" onClick={openHelp}>
+          </HeaderIconButton>
+          <HeaderIconButton label="查看帮助" onClick={openHelp}>
             <CircleHelp className="size-4" />
-          </Button>
+          </HeaderIconButton>
         </div>
         <span className="px-2 text-[11px] text-muted-foreground">
           {refreshedAt ? `更新于 ${formatRelative(refreshedAt)}` : '—'}
@@ -297,6 +324,8 @@ export default function App() {
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [settingsFor, setSettingsFor] = useState<Project | null>(null);
   const [navOpen, setNavOpen] = useState(false);
+  const [collapsed, setCollapsed] = usePersistedFlag(RAIL_KEY, false);
+  const [autoHide, setAutoHide] = usePersistedFlag(AUTOHIDE_KEY, true);
   const { dark, toggle } = useTheme();
   const version = useAppVersion();
   const [helpOpen, setHelpOpen] = useState(false);
@@ -366,6 +395,7 @@ export default function App() {
     toggleTheme: toggle,
     setSettingsFor,
     openHelp,
+    onCollapse: () => setCollapsed(true),
     onProjectAdded: async (id: string) => {
       await reloadProjects();
       select(id);
@@ -451,13 +481,47 @@ export default function App() {
         className={cn(
           'hidden h-full shrink-0 flex-col gap-4 border-r border-border bg-muted/30 min-[900px]:flex',
           'transition-[width,padding,opacity,border-color] duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
-          previewActive && previewExpanded
-            ? 'pointer-events-none w-0 overflow-hidden border-transparent py-4 opacity-0'
+          (previewActive && previewExpanded) || collapsed
+            ? 'pointer-events-none w-0 overflow-hidden border-r-0 py-4 opacity-0'
             : 'w-56 overflow-y-auto px-3 py-4 opacity-100',
         )}
       >
         <SidebarBody {...sidebarProps} />
       </nav>
+
+      {/*
+        ── 贴边悬浮工具条（宽屏是侧栏收起后的形态，窄屏是常驻入口） ──
+        这层永远零宽：工具条始终悬浮在正文之上，不挤压内容（靠 85% 不透明度让下面透出来）。
+        窄屏没有完整侧栏可收，所以不看 collapsed，直接常驻。
+      */}
+      {collapsed || !isWide ? (
+        <div
+          className={cn(
+            'relative h-full w-0 shrink-0',
+            'transition-opacity duration-[320ms] ease-[cubic-bezier(0.22,1,0.36,1)]',
+            previewActive && previewExpanded ? 'pointer-events-none opacity-0' : 'opacity-100',
+          )}
+        >
+          <SidebarRail
+            nav={NAV}
+            view={view}
+            setView={setView}
+            projects={projects}
+            activeId={activeId}
+            onSelectProject={select}
+            // 宽屏是把完整侧栏放回来，窄屏没有常驻侧栏，只能拉抽屉
+            onExpand={() => (isWide ? setCollapsed(false) : setNavOpen(true))}
+            loading={loading}
+            reload={reload}
+            openHelp={openHelp}
+            dark={dark}
+            toggleTheme={toggle}
+            autoHide={autoHide}
+            setAutoHide={setAutoHide}
+            version={version}
+          />
+        </div>
+      ) : null}
 
       {/* ── 窄屏抽屉侧栏 ── */}
       {navOpen ? (
@@ -507,25 +571,16 @@ export default function App() {
           >
             {/*
               项目抬头常驻在滚动区外：切视图、滚动都看得见当前是哪个工作空间。
-              窄屏时它同时兼顶栏（菜单 + 主题都在这一栏里），所以哪怕还没扫描结果也要渲染，
-              否则抽屉侧栏就没有入口了；宽屏没结果时才收起来。
+              菜单和主题按钮已经下放给贴边工具条（窄屏也常驻），这里只剩标题，
+              所以没扫描结果时两个断点都收起来。
             */}
             <header
               className={cn(
                 // h-16 与 Reader / HelpPanel 顶栏对齐，并排时底边才是一条线
                 'flex h-16 shrink-0 items-center gap-2 border-b border-border bg-background px-3 sm:px-5',
-                !scan && 'min-[900px]:hidden',
+                !scan && 'hidden',
               )}
             >
-              <Button
-                variant="ghost"
-                size="icon"
-                title="打开菜单"
-                className="shrink-0 min-[900px]:hidden"
-                onClick={() => setNavOpen(true)}
-              >
-                <Menu className="size-4" />
-              </Button>
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <h1 className="font-display truncate text-lg leading-tight sm:text-xl" title={headerTitle}>
                   {headerTitle}
@@ -539,15 +594,6 @@ export default function App() {
                   </p>
                 ) : null}
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                title="切换主题"
-                className="shrink-0 min-[900px]:hidden"
-                onClick={toggle}
-              >
-                {dark ? <Sun className="size-4" /> : <Moon className="size-4" />}
-              </Button>
             </header>
             <ScrollArea
               className="min-h-0 w-full flex-1"
@@ -610,6 +656,7 @@ export default function App() {
           onRemoved={() => void reloadProjects()}
         />
       ) : null}
+      <Toaster />
     </div>
   );
 }

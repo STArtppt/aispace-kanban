@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { ExpandableSearch } from '@/components/ExpandableSearch';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { EmptyState, PanelTitle, Row, RowActions, TruncatedHint, writeClipboard } from '@/components/Primitives';
+import { EmptyState, HeaderTooltip, PanelTitle, Row, RowActions, TruncatedHint, writeClipboard } from '@/components/Primitives';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { codePreviewLanguage } from '@/components/CodeFileView';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
@@ -379,14 +379,16 @@ export function OutputPanel({
                 }
               }}
             >
-              <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="排序产出文档" title="排序">
-                <ArrowUpDown
-                  className={cn(
-                    'size-3.5',
-                    sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
-                  )}
-                />
-              </SelectTrigger>
+              <HeaderTooltip label="排序">
+                <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="排序产出文档">
+                  <ArrowUpDown
+                    className={cn(
+                      'size-3.5',
+                      sortKey === 'name' ? 'text-muted-foreground' : 'text-foreground',
+                    )}
+                  />
+                </SelectTrigger>
+              </HeaderTooltip>
               <SelectContent align="end" className="min-w-36 w-max">
                 <SelectItem value="name">{SORTS.name}</SelectItem>
                 <SelectItem value="mtimeAsc">{SORTS.mtimeAsc}</SelectItem>
