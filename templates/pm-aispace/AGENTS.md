@@ -135,6 +135,7 @@ python3 /path/to/aispace-kanban/templates/init_workspace.py \
 | [`skills/pm-list-diff`](skills/pm-list-diff/SKILL.md) | 阶段二之外：两份清单（甲方给的 vs 我方已接入的）交叉比对，产出对外可回填核对件 |
 | [`skills/pm-prd-writing`](skills/pm-prd-writing/SKILL.md) | 阶段三：写 PRD / 需求规格说明书 |
 | [`skills/pm-prototype-brief`](skills/pm-prototype-brief/SKILL.md) | 阶段四：把文档收敛成原型输入，衔接 Axhub Make |
+| [`skills/pm-env-config`](skills/pm-env-config/SKILL.md) | 用户给了数据库连接、API Key 等环境参数时：写 `.env`、配 `input/sources/*.yaml`、验证能连上 |
 | [`skills/skill-creator`](skills/skill-creator/SKILL.md) | 工作中发现重复套路时，把它固化成新技能 |
 
 **发现自己在重复第三遍同一套动作时，主动提议用 `skill-creator` 把它做成技能。**
@@ -325,6 +326,7 @@ python3 scripts/db_ingest.py query 仓库库 \
   `_manifest_<查询名>.md`（SQL 原文 / 行数 / sha256）。上下文里只留路径和摘要，正文按需读。
 
 源怎么配、凭据放哪儿、为什么样例行默认不抽，见 [`input/sources/README.md`](input/sources/README.md)。
+用户把 jdbc / 主机端口 / 账号口令丢过来时，走 [`skills/pm-env-config`](skills/pm-env-config/SKILL.md) 落文件，不要把口令写进 yaml。
 
 **写操作由数据库自己拒绝。** 脚本在发任何一条用户语句之前先把会话置为只读
 （PG `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` / MySQL `SET SESSION TRANSACTION READ ONLY`），
