@@ -2,6 +2,7 @@ import {
   Children,
   cloneElement,
   isValidElement,
+  useCallback,
   useLayoutEffect,
   useEffect,
   useMemo,
@@ -11,7 +12,7 @@ import {
   type ReactElement,
   type RefObject,
 } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { MarkdownCodeBlock } from '@/components/MarkdownCodeBlock';
@@ -348,12 +349,16 @@ export function Markdown({
   const rootRef = useRef<HTMLDivElement>(null);
   const onHeadingsChangeRef = useRef(onHeadingsChange);
   onHeadingsChangeRef.current = onHeadingsChange;
-
-  // 布局后根据真实 DOM 打 id，再回传目录 —— 彻底避开 render 期序号问题
-  useLayoutEffect(() => {
-    const items = syncHeadingsFromDom(rootRef.current);
-    onHeadingsChangeRef.current?.(items);
-  }, [children]);
+  // 调用方给的是行内箭头函数（每次 render 换个身份）。下面要按身份 memo 整棵正文，
+  // 所以这里把它收进 ref，对外只暴露一个身份恒定的包装。
+  const urlTransformRef = useRef(urlTransform);
+  urlTransformRef.current = urlTransform;
+  const stableUrlTransform = useCallback(
+    // 没传时必须退回 react-markdown 自己的实现：它会挡 javascript: 之类的协议，
+    // 直接原样返回等于把这道消毒去掉了。
+    (url: string) => (urlTransformRef.current ?? defaultUrlTransform)(url),
+    [],
+  );
 
   const renderKey = useMemo(
     () => `${children.length}:${children.slice(0, 64)}:${sourceFile ?? ''}:${sourceByteOffset}`,
@@ -373,8 +378,16 @@ export function Markdown({
     return plugins;
   }, [sourceFile, children, sourceByteOffset]);
 
-  return (
-    <div ref={rootRef} className="markdown-body max-w-[76ch]">
+  /**
+   * 整棵正文按「源码 + 锚点参数」memo。
+   *
+   * react-markdown 是在 render 里跑完整条 markdown 管线的：父组件每重渲染一次
+   * （回传目录后 setState、批注层量完几何后 setState、扫描刷新……），同一篇文档就要
+   * 重新解析一遍。大表文档一次解析上百毫秒，点开一次实际会卡两三次。
+   * 元素身份不变时 React 会跳过这棵子树，解析于是只发生在正文真的换了的时候。
+   */
+  const rendered = useMemo(
+    () => (
       <ReactMarkdown
         key={renderKey}
         // 关掉单波浪删除线：中文文档里「6~8 月」「0~2 MW」这类区间写法太常见，
@@ -386,10 +399,23 @@ export function Markdown({
         rehypePlugins={rehypePlugins}
         disallowedElements={['script', 'iframe', 'object', 'embed']}
         components={mdComponents}
-        urlTransform={urlTransform}
+        urlTransform={stableUrlTransform}
       >
         {children}
       </ReactMarkdown>
+    ),
+    [children, renderKey, rehypePlugins, stableUrlTransform],
+  );
+
+  // 布局后根据真实 DOM 打 id，再回传目录 —— 彻底避开 render 期序号问题
+  useLayoutEffect(() => {
+    const items = syncHeadingsFromDom(rootRef.current);
+    onHeadingsChangeRef.current?.(items);
+  }, [children]);
+
+  return (
+    <div ref={rootRef} className="markdown-body max-w-[76ch]">
+      {rendered}
     </div>
   );
 }

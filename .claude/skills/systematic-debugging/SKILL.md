@@ -45,6 +45,7 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 切换文档预览卡顿，大文档点开界面僵住数秒（CDP `Runtime.evaluate` 都会超时） | `rehypeSourcePos` 的偏移换算是平方级 —— `charToByte` 每次都 `slice` + 编码整段正文，而盖锚点要对每个元素和每个文本节点各算两次；文档越大越吃不消（377 KB 的产物一次点击卡 4.2 s） | 浏览器里装 `PerformanceObserver({entryTypes:['longtask']})` 再点条目，看单条 longtask 时长；`pnpm test:anchor` 第 5 项「包 span 的渲染开销」就是这道闸，管线耗时跳到秒级即回归。换算一律走 `buildByteIndex` 的前缀表，别再调 `charToByte` |
 | 点开预览空白，控制台 `whitespace text nodes cannot be a child of <colgroup>` / `<table>` / `<tr>` | 转换产物里的裸 HTML 表带换行缩进，`rehype-raw` 保留成文本节点；React 19 当成 hydration 错误，开发态 overlay 把预览盖白 | 打开 converted `.md` 搜 `<colgroup` / `<table`；`Markdown.tsx` 必须在 `rehype-raw` 之后接 `rehypeStripTableWhitespace`（`pnpm test:anchor` 第 6 项就是这道闸）。别删 `rehype-raw`，MinerU / 老 pandoc 产物还要用 |
 | 点开 `.json` 预览空白、没有报错 | `/api/.../file` 按 MIME 把 `application/json` 当二进制直出了；阅读器 `res.json()` 得到的是文件自己，`data.content` 是 `undefined` | `curl` 该接口：必须有字符串字段 `content`，不能是文件根对象。json / map 不能进 `rawStream` |
+| 点开大表 markdown 产物卡顿（几百毫秒，长任务不止一段） | **同一篇被解析了 2–3 次** —— `react-markdown` 是在 render 里跑完整条管线的，父组件每重渲染一次（回传目录后 setState、批注层量完几何后 setState、扫描刷新）就整篇重解析 | 浏览器里装 `PerformanceObserver({entryTypes:['longtask']})` 再点条目：长任务有几段就解析了几次。`Markdown.tsx` 里那棵 `<ReactMarkdown>` 必须按「源码 + 锚点参数」`useMemo` 住 —— 元素身份不变 React 才会跳过这棵子树；`urlTransform` 这类行内箭头函数要先收进 ref 包成恒定身份，否则 memo 每次都失效。另:800 行以上的表还吃 micromark GFM 表格扩展 `EditMap.add` 的平方级累积，本仓为此有一个 pnpm 补丁（见 AGENTS.md 第 2 节），补丁没应用上会明显变慢 |
 
 排不掉,继续:
 
