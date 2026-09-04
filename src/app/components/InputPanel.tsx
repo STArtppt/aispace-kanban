@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, AppWindow, ArrowUpDown, CodeXml, Copy, Database, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Star, StarOff, Table, X } from 'lucide-react';
+import { AlertTriangle, AppWindow, ArrowUpDown, ChevronDown, ChevronRight, CodeXml, Copy, Database, EyeOff, FileOutput, FileText, FolderOpen, Image, ListFilter, Loader2, RefreshCw, Star, StarOff, Table, X } from 'lucide-react';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { ExpandableSearch } from '@/components/ExpandableSearch';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -871,10 +877,86 @@ function SourceItemRow({
   );
 }
 
+/** 配置读不出 / 只剩产物的源没法采，标题栏刷新按钮也跳过它们 */
+function ingestibleSources(sources: DatabaseSource[]): DatabaseSource[] {
+  return sources.filter((source) => source.state !== 'unreadable' && source.state !== 'orphan');
+}
+
+/**
+ * 「刷新 schema」放在「输入列表」标题栏右侧，跟排序 / 搜索同一排。
+ * 只有一个可采的源就直接开采；多个源用下拉选出要刷哪一个 —— 采集接口一次只接一个源名。
+ */
+function SourceRefreshButton({
+  sources,
+  running,
+  onStart,
+}: {
+  sources: DatabaseSource[];
+  running: boolean;
+  onStart: (key: string) => void;
+}) {
+  const eligible = ingestibleSources(sources);
+  if (!eligible.length) return null;
+
+  const icon = running ? (
+    <Loader2 className="size-3.5 animate-spin" />
+  ) : (
+    <RefreshCw className="size-3.5" />
+  );
+
+  if (eligible.length === 1) {
+    return (
+      <Button
+        variant="outline"
+        size="icon"
+        className="size-8"
+        aria-label="刷新 schema"
+        title="刷新 schema"
+        disabled={running}
+        onClick={() => onStart(eligible[0].key)}
+      >
+        {icon}
+      </Button>
+    );
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        disabled={running}
+        render={
+          <Button
+            variant="outline"
+            size="icon"
+            className="size-8"
+            aria-label="刷新 schema"
+            title="刷新 schema"
+            disabled={running}
+          />
+        }
+      >
+        {icon}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {eligible.map((source) => (
+          <DropdownMenuItem
+            key={source.key}
+            disabled={running}
+            onClick={() => onStart(source.key)}
+          >
+            <Database />
+            {source.name}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 /**
  * 「数据库源」tab 的正文：一个源一段，下面挂它的 schema 快照与查询产物。
  *
- * 这里**没有写 SQL 的地方**，只有「刷新 schema」—— 看板是只读看板，不是 SQL 客户端。
+ * 这里**没有写 SQL 的地方**，刷新入口在标题栏右侧 —— 看板是只读看板，不是 SQL 客户端。
  * 按需查询由 AI 在终端里跑 `python3 scripts/db_ingest.py query …` 发起，
  * 产物写盘后由 SSE 推回来，自己出现在这个清单里。
  */
@@ -888,11 +970,22 @@ function DatabaseSourceList({
   sources: DatabaseSource[];
   openPath: string;
   onOpen: (item: FileItem) => void;
-  /** 工作空间里有 scripts/db_ingest.py 才给按钮；没有就只显示清单 */
+  /** 工作空间里有 scripts/db_ingest.py 才提示点刷新；没有就只显示清单 */
   canIngest: boolean;
   control: SourceIngestControl;
 }) {
   const runningSource = control.running ? control.job?.source || '' : '';
+  // 记「收起了哪些」：默认展开，跟改动前一样能直接看到产物
+  const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
+  const toggle = (key: string) => {
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   return (
     <div className="flex flex-col gap-3">
       <TruncatedHint
@@ -900,7 +993,7 @@ function DatabaseSourceList({
           '数据库不同步到本地，只按需取：schema 快照是 KB 级摘要，查询结果才落成 csv。'
           + '这些产物不进「转换产物」清单 —— 数据库和文件是两条来源。'
           + (canIngest
-            ? '点「刷新 schema」重采一次结构；按需查询在终端里跑 python3 scripts/db_ingest.py query。'
+            ? '点右上角刷新图标重采一次结构；按需查询在终端里跑 python3 scripts/db_ingest.py query。'
             : '这个工作空间没有 scripts/db_ingest.py，从模板里拷一份过来才能在看板上采集。')
         }
       >
@@ -932,6 +1025,7 @@ function DatabaseSourceList({
         const note = sourceStateNote(source);
         const stale = snapshotIsStale(source.snapshotAt);
         const running = runningSource === source.key;
+        const open = !collapsed.has(source.key);
         // 上一轮采这个源失败了：跟「配置读不出来」一样是要人处理的事，一并走 orange
         const failed = !running
           && control.job?.source === source.key
@@ -943,7 +1037,17 @@ function DatabaseSourceList({
         ].filter(Boolean).join(' · ');
         return (
           <section key={source.key} className="flex flex-col gap-1">
-            <div className="flex min-w-0 items-center gap-2 rounded-lg border border-border px-3 py-2">
+            <button
+              type="button"
+              aria-expanded={open}
+              onClick={() => toggle(source.key)}
+              className="flex min-w-0 items-center gap-2 rounded-lg border border-border px-3 py-2 text-left transition-colors hover:bg-accent"
+            >
+              {open ? (
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+              )}
               <Database className="size-4 shrink-0 text-muted-foreground" />
               <div className="flex min-w-0 flex-1 flex-col gap-0.5">
                 <div className="flex min-w-0 items-center gap-2">
@@ -972,49 +1076,36 @@ function DatabaseSourceList({
                   ) : null}
                 </span>
               </div>
-              {canIngest && source.state !== 'unreadable' && source.state !== 'orphan' ? (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0"
-                  disabled={control.running}
-                  onClick={() => void control.start(source.key)}
-                >
-                  {running ? (
-                    <>
-                      <Loader2 className="size-3.5 animate-spin" />
-                      采集中…
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="size-3.5" />
-                      刷新 schema
-                    </>
-                  )}
-                </Button>
+              {running ? (
+                <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
               ) : null}
-            </div>
+              {source.items.length ? (
+                <span className="shrink-0 text-xs text-muted-foreground">{source.items.length}</span>
+              ) : null}
+            </button>
             {running ? (
               <p className="px-3 text-xs text-muted-foreground">
                 {control.job?.message || '正在采集…'}
               </p>
             ) : null}
-            {source.items.length ? (
-              source.items.map((item) => (
-                <SourceItemRow
-                  key={item.path}
-                  item={item}
-                  openPath={openPath}
-                  onOpen={onOpen}
-                />
-              ))
-            ) : (
-              <p className="px-3 py-1 text-xs text-muted-foreground">
-                {source.state === 'ok'
-                  ? '还没有产物。点「刷新 schema」采一次结构，之后 AI 就能照着它写查询。'
-                  : '没有产物。'}
-              </p>
-            )}
+            {open ? (
+              source.items.length ? (
+                source.items.map((item) => (
+                  <SourceItemRow
+                    key={item.path}
+                    item={item}
+                    openPath={openPath}
+                    onOpen={onOpen}
+                  />
+                ))
+              ) : (
+                <p className="px-3 py-1 text-xs text-muted-foreground">
+                  {source.state === 'ok'
+                    ? '还没有产物。点右上角刷新图标采一次结构，之后 AI 就能照着它写查询。'
+                    : '没有产物。'}
+                </p>
+              )
+            ) : null}
           </section>
         );
       })}
@@ -1128,14 +1219,19 @@ export function InputPanel({
           <div className="min-w-0 shrink">
             <PanelTitle>输入列表</PanelTitle>
           </div>
-          {/* 图片资料用不到这些按钮，但要占着高度，否则标题行一矮 tab 会往上跳 */}
-          <div
-            className={cn(
-              'flex shrink-0 items-center gap-2',
-              (activeTab === 'assets' || activeTab === 'sources') && 'invisible pointer-events-none',
-            )}
-            aria-hidden={activeTab === 'assets' || activeTab === 'sources'}
-          >
+          {/*
+            视图切换带边框+内边距，实际约 34px，比 min-h-8 / size-8 刷新按钮都高。
+            图片资料、数据库源用不到排序搜索，但仍要占着这排高度，否则标题和 tab 会往上跳。
+            刷新按钮叠在同一格右对齐，不把占位卸掉。
+          */}
+          <div className="grid shrink-0">
+            <div
+              className={cn(
+                'col-start-1 row-start-1 flex items-center gap-2',
+                (activeTab === 'assets' || activeTab === 'sources') && 'invisible pointer-events-none',
+              )}
+              aria-hidden={activeTab === 'assets' || activeTab === 'sources'}
+            >
               <ViewModeToggle mode={viewMode} onChange={setViewMode} label="资料清单" />
               <Select
                 value={sortKey}
@@ -1192,6 +1288,16 @@ export function InputPanel({
                 expandedClassName="w-[12rem] sm:w-[14rem]"
                 aria-label="搜索输入资料"
               />
+            </div>
+            {activeTab === 'sources' && input.canIngestSources ? (
+              <div className="col-start-1 row-start-1 flex items-center justify-end">
+                <SourceRefreshButton
+                  sources={sources}
+                  running={sourceIngest.running}
+                  onStart={(key) => void sourceIngest.start(key)}
+                />
+              </div>
+            ) : null}
           </div>
         </div>
 
