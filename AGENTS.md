@@ -109,7 +109,8 @@ aispace-kanban/
 │   │   ├── lib/api.ts      #   ★ 前后端契约:接口封装 + 全部响应类型
 │   │   └── styles/globals.css  # ★ 设计令牌唯一源头
 │   └── shared/             # 平面 2 与 3 共用的**纯函数**(.mjs + JSDoc)
-│       └── textMatch.mjs   #   归一 + 分词:整表检索在服务端判定、片段加粗在前端,口径必须同源
+│       ├── textMatch.mjs   #   归一 + 分词:整表检索在服务端判定、片段加粗在前端,口径必须同源
+│       └── codeLang.mjs    #   代码扩展名 → 语言:扫描标 text、预览高亮,口径必须同源
 ├── scripts/                # 平面外 · 仓库工具
 │   ├── build-npm-package.mjs  #   组 npm 包(pnpm build:npm),产出 npm-package/
 │   └── smoke-package.mjs      #   ★ 装包冒烟(pnpm smoke:npm),CI 三平台跑的就是它

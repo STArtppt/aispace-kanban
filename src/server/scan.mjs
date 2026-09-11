@@ -6,6 +6,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import { CODE_LANG_BY_EXT } from '../shared/codeLang.mjs';
 import { countAnnotations, linkReferences } from './citations.mjs';
 import { countWords, parseFrontmatter } from './frontmatter.mjs';
 import { readMeta } from './meta.mjs';
@@ -13,7 +14,8 @@ import { scanPrototypes } from './prototypes.mjs';
 import { scanReferences } from './references.mjs';
 
 const SKIP = new Set(['.git', 'node_modules', '.DS_Store', '.gitkeep']);
-const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.csv', '.tsv', '.json', '.yaml', '.yml', '.xml']);
+/** 网页里当文本读的扩展名。代码类跟前端高亮映射同源，漏一边就会变成「原始格式」。 */
+const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.csv', '.tsv', ...Object.keys(CODE_LANG_BY_EXT)]);
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 /** 图片资料的兜底分组：没有归到某份文档名下的图都算这一堆（ingest.py 的落点同名） */
 const UNSORTED_ASSETS = '未分类';

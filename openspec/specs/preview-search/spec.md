@@ -23,7 +23,7 @@ xlsx/xlsm 表格预览与代码类高亮预览的可搜性由 `preview-code-xlsx
 - 单份 csv/tsv 表格预览(含分析中间产物里的纯 csv);
 - 单份 xlsx/xlsm 表格预览(当前选中的那一张 sheet);
 - HTML 原型停在「校验说明」页且说明已读到;
-- 纯文本预览,以及按语言高亮的代码类文本(yaml / json / xml)。
+- 纯文本预览,以及按语言高亮的代码类文本(yaml / json / xml / sql / py 等)。
 
 表格「数据」页、单份 csv/tsv 与单份 xlsx/xlsm 的检索范围 MUST 是**整张表**
 (xlsx 即当前 sheet),由服务端扫描完成(见 `table-scan-search`)。

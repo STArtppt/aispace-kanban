@@ -2,18 +2,9 @@ import { Fragment, useEffect, useState, type Ref } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { writeClipboard } from '@/components/Primitives';
 import { cn } from '@/lib/utils';
+import { CODE_LANG_BY_EXT } from '../../shared/codeLang.mjs';
 
-/** 预览窗按扩展名走代码高亮的语言映射。只认这四类，其它仍是纯文本。 */
-const LANG_BY_EXT: Record<string, string> = {
-  '.yaml': 'yaml',
-  '.yml': 'yaml',
-  '.json': 'json',
-  '.xml': 'xml',
-};
-
-/**
- * 从扩展名或路径取出 Shiki 语言。对不上就返回 undefined —— 调用方走原来的纯文本 <pre>。
- */
+/** 取出小写扩展名（含点）。入参可以是 `.py` 也可以是路径。 */
 function fileExt(extOrPath: string): string {
   const lower = extOrPath.toLowerCase();
   if (lower.startsWith('.') && !lower.includes('/') && !lower.includes('\\') && lower.lastIndexOf('.') === 0) {
@@ -28,10 +19,10 @@ function fileExt(extOrPath: string): string {
  * 从扩展名或路径取出 Shiki 语言。对不上就返回 undefined —— 调用方走原来的纯文本 <pre>。
  */
 export function codePreviewLanguage(extOrPath: string): string | undefined {
-  return LANG_BY_EXT[fileExt(extOrPath)];
+  return CODE_LANG_BY_EXT[fileExt(extOrPath)];
 }
 
-/** 语言标签用扩展名本身（yaml / yml / json / xml），不含点。 */
+/** 语言标签用扩展名本身（sql / py / yaml …），不含点。 */
 export function codePreviewLabel(extOrPath: string): string {
   const ext = fileExt(extOrPath);
   return ext.startsWith('.') ? ext.slice(1) : ext;
@@ -69,7 +60,7 @@ export function CodeFileView({
 }: {
   code: string;
   language: string;
-  /** 语言标签，用扩展名（yaml / yml / json / xml） */
+  /** 语言标签，用扩展名（sql / py / yaml …） */
   label: string;
   preRef?: Ref<HTMLPreElement>;
 }) {

@@ -302,6 +302,28 @@ try {
   }
   ok('JSON 文件走 { content } 包装，不是裸 application/json');
 
+  // 代码文件必须标成 text 才能在预览窗打开，不能掉进「网页里不渲染」
+  const pyRel = 'output/docs/smoke.py';
+  const sqlRel = 'output/docs/smoke.sql';
+  fs.writeFileSync(path.join(wsPath, pyRel), 'print("hello-kanban")\n');
+  fs.writeFileSync(path.join(wsPath, sqlRel), 'SELECT 1 AS n;\n');
+  const scanCode = await fetch(`${base}/api/projects/${created.id}/scan`).then((r) => r.json());
+  const pyItem = (scanCode.output?.docs || []).find((f) => f.path === pyRel);
+  const sqlItem = (scanCode.output?.docs || []).find((f) => f.path === sqlRel);
+  if (!pyItem || pyItem.reader !== 'text') {
+    die('扫描没把 .py 标成 text', JSON.stringify(pyItem));
+  }
+  if (!sqlItem || sqlItem.reader !== 'text') {
+    die('扫描没把 .sql 标成 text', JSON.stringify(sqlItem));
+  }
+  const pyFile = await fetch(`${base}/api/projects/${created.id}/file?path=${encodeURIComponent(pyRel)}`).then(
+    (r) => r.json(),
+  );
+  if (typeof pyFile.content !== 'string' || !pyFile.content.includes('hello-kanban')) {
+    die('.py 文件接口没有返回正文', JSON.stringify(pyFile));
+  }
+  ok('.py / .sql 扫描为 text，/file 能读到正文');
+
   // ── 7xlsx 工作簿分页与检索（解析只在内存，不写工作空间）────────────────────
   if (!installedPkg.dependencies?.xlsx) {
     die(

@@ -2,23 +2,24 @@
 
 ## Purpose
 
-约定 yaml / yml / json / xml 这类代码类文本在预览窗的呈现:按扩展名映射语言,用既有 Shiki
-主题做语法高亮并显示行号,高亮失败退回纯文本;高亮不得破坏预览窗内检索的按行分块,
-复制不含行号,也不启用批注。本能力由 `preview-code-xlsx` 变更落地。
+约定常见代码文件（sql / py / js / ts / go 等，连同 yaml / json / xml）在预览窗的呈现:
+按扩展名映射语言,用既有 Shiki 主题做语法高亮并显示行号,高亮失败退回纯文本;
+高亮不得破坏预览窗内检索的按行分块,复制不含行号,也不启用批注。扩展名与语言的映射
+前后端共用 `src/shared/codeLang.mjs`,漏一边就会变成「网页里不渲染」。
 
 ## Requirements
 
 ### Requirement: 代码类文本按语言高亮预览
 
-当预览窗打开扩展名为 `.yaml`、`.yml`、`.json` 或 `.xml` 的文件，且正文已通过现有文本接口读到时，看板 MUST 按该扩展名对应的语言做语法高亮显示，MUST 显示行号，MUST NOT 再使用无高亮的裸等宽纯文本作为默认视图。
+当预览窗打开扩展名落在 `CODE_LANG_BY_EXT` 里的文件（至少包括 `.yaml` / `.yml` / `.json` / `.xml` / `.sql` / `.py` / `.js` / `.ts` / `.tsx` / `.go` / `.rs` / `.java` / `.sh`），且正文已通过现有文本接口读到时，看板 MUST 按该扩展名对应的语言做语法高亮显示，MUST 显示行号，MUST NOT 再使用无高亮的裸等宽纯文本作为默认视图。扫描 MUST 把这些扩展名标成 `reader: 'text'`，MUST NOT 标成 `external`。
 
-语言映射 MUST 为：`.yaml` / `.yml` → yaml，`.json` → json，`.xml` → xml。`.txt` MUST 保持现有纯文本预览，MUST NOT 被当成代码高亮。
+语言映射 MUST 与 `src/shared/codeLang.mjs` 一致。`.txt` MUST 保持现有纯文本预览，MUST NOT 被当成代码高亮。`.md` MUST 继续走 markdown 阅读器，MUST NOT 改成代码高亮。`.html` MUST 继续走 iframe 预览。
 
 高亮配色 MUST 使用已有的 Shiki 主题（浅色 `github-light`、深色 `github-dark`），MUST NOT 另引入一套彩色语法主题，MUST NOT 在组件里硬编码色值。
 
 高亮失败（未知语言、Shiki 抛错）时 MUST 退回改动前的纯文本 `<pre>` 视图，MUST NOT 白屏，MUST NOT 把文件改标成「原始格式、网页里不渲染」。
 
-正文仍 MUST 走现有 `GET /api/projects/:id/file`，MUST NOT 为代码预览新增接口。`reader` 字段 MUST 继续是 `text`（旧服务进程同样能高亮）。
+正文仍 MUST 走现有 `GET /api/projects/:id/file`，MUST NOT 为代码预览新增接口。`reader` 字段 MUST 是 `text`，MUST NOT 新增 `code` 枚举。yaml / json / xml 在旧服务进程里已经是 `text`，新前端不重启也能高亮；`.sql` / `.py` 等新加入的扩展名，旧进程仍给 `external`（「网页里不渲染」），重启服务后才变成可预览。
 
 #### Scenario: yaml 按代码高亮
 - **WHEN** 预览窗打开一份 `.yaml` 或 `.yml` 产出且正文已读到
@@ -28,6 +29,12 @@
 #### Scenario: json 与 xml 同样处理
 - **WHEN** 预览窗打开一份 `.json` 或 `.xml`
 - **THEN** 分别按 json、xml 高亮，并显示行号
+
+#### Scenario: sql 与 py 能在看板里打开
+- **WHEN** 产出或资料里有一份 `.sql` 或 `.py`
+- **THEN** 扫描给出 `reader: 'text'`，不是 `external`
+- **AND** 预览窗按 sql / python 高亮并显示行号
+- **AND** 不出现「网页里不渲染」的原始格式空态
 
 #### Scenario: txt 仍是纯文本
 - **WHEN** 预览窗打开一份 `.txt`
