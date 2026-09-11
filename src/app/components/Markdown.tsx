@@ -23,12 +23,13 @@ import { cn } from '@/lib/utils';
 
 export type TocItem = { id: string; text: string; level: number; index: number };
 
-const HEADING_SELECTOR = 'h1, h2, h3';
+const HEADING_SELECTOR = 'h1, h2, h3, h4';
 
 function headingLevel(tag: string): number {
   if (tag === 'H1') return 1;
   if (tag === 'H2') return 2;
-  return 3;
+  if (tag === 'H3') return 3;
+  return 4;
 }
 
 /** 在已渲染的 markdown DOM 上打锚点，并生成与 DOM 完全一致的目录。 */
@@ -179,7 +180,7 @@ const mdComponents = buildComponents();
 
 /**
  * 文档目录 —— 相对预览面板固定。
- * 跳转 / 高亮一律按「渲染后 DOM 里的 h1–h3 顺序」，与目录同源。
+ * 跳转 / 高亮一律按「渲染后 DOM 里的 h1–h4 顺序」，与目录同源。
  */
 export function DocumentToc({
   items,
@@ -313,7 +314,8 @@ export function DocumentToc({
                     isActive ? 'font-medium text-foreground' : 'text-muted-foreground',
                     item.level === 1 && 'mt-0.5 pl-4 text-[13px]',
                     item.level === 2 && 'pl-7',
-                    item.level >= 3 && 'pl-10',
+                    item.level === 3 && 'pl-10',
+                    item.level >= 4 && 'pl-12',
                   )}
                 >
                   {isActive ? (
