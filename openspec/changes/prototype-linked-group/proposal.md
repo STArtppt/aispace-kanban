@@ -5,7 +5,7 @@
 「在线版落后本地改动」这类需要人处理的状态只写在一份 md 里。
 
 原型工作区（Axhub Make 工程）新增了一条单向反写流程：原型改完后，把离线 HTML 包、在线发布链接、
-规格 / 目录文档 / 标注 / 批注和一份 `SYNC.md` 写进工作空间的 `visualization/prototypes/`。
+规格 / 文档 / 标注 / 批注和一份 `SYNC.md` 写进工作空间的 `visualization/prototypes/`。
 布局是这样的：
 
 ```

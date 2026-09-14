@@ -63,24 +63,21 @@ export function PrototypePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      {updatedAt ? (
-        <p className="text-xs text-muted-foreground">
-          最近更新 {formatRelative(updatedAt)}
-          {linkedItems.length ? ` · ${linkedItems.length} 份原型已接入原型工作区` : ''}
-        </p>
-      ) : null}
-
       <CaptureBar
         plane="prototype"
         control={capture}
         placeholder="贴一条云端发布链接，例如 https://…/p/abc"
         actionLabel="导入"
+        status={
+          updatedAt
+            ? `最近更新 ${formatRelative(updatedAt)}${linkedItems.length ? ` · ${linkedItems.length} 份原型已接入原型工作区` : ''}`
+            : null
+        }
         scopeNote={
           // 这里收的不是文件：云端原型是 SPA，抓下来既失真又没意义，点它就该开原站
           <>
-            这里收的是<strong className="font-medium text-foreground">云端发布链接</strong>
-            （axhub-make 发布、figma make 的 publish / share）—— 只存链接和一张封面，
-            点卡片打开的是原站，本地不留页面副本。本地的 HTML 包请直接放进{' '}
+            这里收的是云端发布链接（axhub-make 发布、figma make 的 publish / share）——
+            只存链接和一张封面，点卡片打开的是原站，本地不留页面副本。本地的 HTML 包请直接放进{' '}
             <code className="font-mono">visualization/prototypes/</code>。
           </>
         }
@@ -97,14 +94,18 @@ export function PrototypePanel({
         linkedItems.length ? (
           <>
             <section className="flex flex-col gap-3">
-              <SectionTitle count={linkedItems.length}>已接入原型工作区</SectionTitle>
+              <SectionTitle count={linkedItems.length} divider>
+                已接入原型工作区
+              </SectionTitle>
               {linkedItems.map((item) => (
                 <LinkedPrototypeRow key={item.itemKey} item={item} openPath={openPath} onOpen={onOpen} />
               ))}
             </section>
             {grid ? (
               <section className="flex flex-col gap-3">
-                <SectionTitle count={plainItems.length}>其他原型</SectionTitle>
+                <SectionTitle count={plainItems.length} divider>
+                  其他原型
+                </SectionTitle>
                 {grid}
               </section>
             ) : null}

@@ -37,15 +37,12 @@ export function ReferencePanel({
 
   return (
     <div className="flex flex-col gap-4">
-      {updatedAt ? (
-        <p className="text-xs text-muted-foreground">最近更新 {formatRelative(updatedAt)}</p>
-      ) : null}
-
       <CaptureBar
         plane="reference"
         control={capture}
         placeholder="贴一条公开可访问的网址，例如 https://example.com/pricing"
         actionLabel="采集"
+        status={updatedAt ? `最近更新 ${formatRelative(updatedAt)}` : null}
         scopeNote={
           // 相邻仓验证过的坑：登录后的页面抓下来是登录页，任务却显示成功。
           // 我们不做检测（那会把登录态注入整条线拖进来），改成在入口旁说清楚，

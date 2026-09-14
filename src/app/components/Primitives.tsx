@@ -43,13 +43,23 @@ export function Stat({
   );
 }
 
-export function SectionTitle({ children, count }: { children: ReactNode; count?: number }) {
+/** divider：标题后面拖一根细线到行尾，一个 tab 里分好几段时用来切段 */
+export function SectionTitle({
+  children,
+  count,
+  divider,
+}: {
+  children: ReactNode;
+  count?: number;
+  divider?: boolean;
+}) {
   return (
     <h2 className="flex items-baseline gap-2 text-sm font-medium">
       {children}
       {typeof count === 'number' ? (
         <span className="text-xs font-normal text-muted-foreground">{count}</span>
       ) : null}
+      {divider ? <span aria-hidden className="ml-1 h-px flex-1 self-center bg-border" /> : null}
     </h2>
   );
 }

@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 
 const GROUPS: Array<{ key: PrototypeDoc['group']; label: string }> = [
   { key: 'spec', label: '规格' },
-  { key: 'docs', label: '目录文档' },
+  { key: 'docs', label: '文档' },
   { key: 'annotations', label: '标注' },
   { key: 'comments', label: '批注' },
   { key: 'sync', label: '同步清单' },

@@ -1,7 +1,7 @@
 ## Context
 
 原型工作区的同步脚本往工作空间写的布局见 proposal。实测一份已登记原型的 dry-run 输出：
-1 个离线包 zip、1 份 `meta.json`、13 份拷贝的 md（主规格 1 + 页面级规格 9 + 目录文档 2 + 标注 JSON 1）、
+1 个离线包 zip、1 份 `meta.json`、13 份拷贝的 md（主规格 1 + 页面级规格 9 + 文档（docs/）2 + 标注 JSON 1）、
 2 份生成的 md（`标注汇总.md`、`SYNC.md`）。同一工作空间里还有一份此前用「贴 URL 导入」手工建的
 url 卡片，链接和同步写的 `meta.json` 只差一个 `#page=…` hash。
 
