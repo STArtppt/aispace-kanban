@@ -29,7 +29,7 @@ import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-his
 import { resolveInside } from './paths.mjs';
 import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
 import { PYTHON_CANDIDATES, pickDirectory, revealInSystem } from './platform.mjs';
-import { resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
+import { resolvePrototypeCover, resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
 import { scanWorkspace, verifySource } from './scan.mjs';
 import { readSheetPage, scanSheet } from './spreadsheet.mjs';
@@ -1244,7 +1244,13 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const slug = segments[3] || '';
     if (!slug) return json(res, 400, { error: '缺少原型包标识' });
     const serveDir = resolvePrototypeServeDir(project.root, slug);
-    if (!serveDir) return json(res, 404, { error: '找不到这个原型包' });
+    if (!serveDir) {
+      // url 形态没有包可伺服，但 scan 下发的封面地址也走这条路由 —— 只放行 cover.png，
+      // 否则卡片和已接入原型行的封面永远 404、退回占位
+      const coverAbs = segments.slice(4).join('/') === 'cover.png' ? resolvePrototypeCover(project.root, slug) : '';
+      if (coverAbs && fs.existsSync(coverAbs)) return sendStaticFile(res, coverAbs);
+      return json(res, 404, { error: '找不到这个原型包' });
+    }
     const relParts = segments.slice(4);
     const relFile = relParts.length ? relParts.join('/') : 'index.html';
     // 挡 ../ 穿越：只能落在 serveDir 内

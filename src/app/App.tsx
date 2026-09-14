@@ -461,7 +461,13 @@ export default function App() {
               onOpen={selectFileAndCloseHelp}
             />
           ) : null}
-          {view === 'prototypes' ? <VisualPanel scan={scan} /> : null}
+          {view === 'prototypes' ? (
+            <VisualPanel
+              scan={scan}
+              openPath={openFile?.path || mountedFile?.path || ''}
+              onOpen={selectFileAndCloseHelp}
+            />
+          ) : null}
         </>
       ) : null}
     </>

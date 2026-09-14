@@ -4,7 +4,7 @@ import { PanelTitle } from '@/components/Primitives';
 import { PrototypePanel } from '@/components/PrototypePanel';
 import { ReferencePanel } from '@/components/ReferencePanel';
 import { useCaptureJob } from '@/hooks/useCaptureJob';
-import type { Scan } from '@/lib/api';
+import type { FileItem, Scan } from '@/lib/api';
 
 type VisualTab = 'reference' | 'prototype';
 
@@ -24,7 +24,16 @@ function readTab(): VisualTab {
  * 「视觉呈现」视图的壳：参考 / 原型两个 tab。
  * 以后加视频、幻灯片就是在 visualization/ 下再开一个子目录、这里再开一个 tab。
  */
-export function VisualPanel({ scan }: { scan: Scan }) {
+export function VisualPanel({
+  scan,
+  openPath,
+  onOpen,
+}: {
+  scan: Scan;
+  /** 原型资料在阅读器里打开时高亮对应行 */
+  openPath?: string;
+  onOpen?: (file: FileItem) => void;
+}) {
   const [tab, setTab] = useState<VisualTab>(readTab);
   // 采集任务的状态提到这一层：服务端一个工作空间只允许一轮，
   // 两个 tab 各存一份的话第二处会撞 409 却显示成「没反应」
@@ -40,7 +49,8 @@ export function VisualPanel({ scan }: { scan: Scan }) {
   };
 
   const referenceCount = scan.references?.items.length;
-  const prototypeCount = scan.prototypes.items.length;
+  // 按原型计数：被同步原型并入的 zip / 重复卡片不重复算
+  const prototypeCount = scan.prototypes.items.filter((item) => !item.groupedInto).length;
 
   return (
     <section className="flex min-w-0 flex-col gap-2">
@@ -74,7 +84,12 @@ export function VisualPanel({ scan }: { scan: Scan }) {
           <ReferencePanel references={scan.references} capture={capture} />
         </TabsContent>
         <TabsContent value="prototype">
-          <PrototypePanel prototypes={scan.prototypes} capture={capture} />
+          <PrototypePanel
+            prototypes={scan.prototypes}
+            capture={capture}
+            openPath={openPath}
+            onOpen={onOpen}
+          />
         </TabsContent>
       </Tabs>
     </section>

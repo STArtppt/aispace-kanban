@@ -224,6 +224,46 @@ export interface PrototypeItem {
   cover?: string;
   sourcePath?: string;
   mtime?: string;
+  /**
+   * 原型工作区同步过来的镜像目录（目录里有 SYNC.md）才有：离线包、在线版、同步状态、资料。
+   * 可选：旧服务进程没有；缺了就当普通卡片展示（退回改动前的行为）。
+   */
+  linked?: PrototypeLinked;
+  /**
+   * 这条已被并入某份同步原型（值是那份原型的 itemKey）：同名 `-html.zip`，或指向同一在线链接的手工卡片。
+   * 新前端不再单独成卡；服务端照旧下发它，是为了让旧前端看到的和改动前一样。
+   */
+  groupedInto?: string;
+}
+
+/** 同步镜像里一份可阅读的资料 md，路径相对工作空间根，用现有阅读器打开 */
+export interface PrototypeDoc {
+  path: string;
+  group: 'spec' | 'docs' | 'annotations' | 'comments' | 'sync';
+  label: string;
+}
+
+/** 一份已接入原型工作区的原型。每一块都可选：缺哪块界面就少显示哪块 */
+export interface PrototypeLinked {
+  /** 同级 `<目录名>-html.zip`，看板伺服的入口 */
+  offline?: { url: string; sourcePath: string; mtime?: string; size?: number };
+  /** 镜像目录 meta.json 里的发布链接；target 为空 = 地址不合法。缺省 = 从未发布过 */
+  online?: { target: string; publishedAt?: string; publishTarget?: string };
+  /**
+   * 从 SYNC.md 解析出的状态。解析不出的字段一律缺省，界面显示「—」、不标 orange。
+   * onlineStale：本地最近改动晚于发布时间（两个时间都合法才算）；
+   * offlineStale：本次同步没导出成功，离线包是旧的或不存在。
+   */
+  sync?: {
+    commit?: string;
+    localChangedAt?: string;
+    syncedAt?: string;
+    onlineStale?: boolean;
+    offlineStale?: boolean;
+  };
+  docs?: PrototypeDoc[];
+  /** 已并入的手工卡片目录（工作空间相对路径）。看板只提示，不代删 */
+  duplicates?: string[];
 }
 
 /**

@@ -1,8 +1,9 @@
 import { CaptureBar } from '@/components/CaptureBar';
-import { EmptyState } from '@/components/Primitives';
+import { LinkedPrototypeRow } from '@/components/LinkedPrototypeRow';
+import { EmptyState, SectionTitle } from '@/components/Primitives';
 import { ShowcaseCard, ShowcaseGrid } from '@/components/ShowcaseCard';
 import type { CaptureControl } from '@/hooks/useCaptureJob';
-import type { PrototypeItem, Prototypes } from '@/lib/api';
+import type { FileItem, PrototypeItem, Prototypes } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
 /** 用户跑完这条就搬完家了。看板只给命令，不代劳（对工作空间只读）。 */
@@ -20,20 +21,53 @@ function kindLabel(kind?: PrototypeItem['kind']) {
  *
  * 两种形态点击行为不同：bundle 开看板伺服的 url，url 形态直接开外部 target。
  * kind 缺失（旧服务进程）时当 bundle 处理，退回改动前的行为。
+ *
+ * 原型工作区同步过来的原型（item.linked）单独一段、一行一份；被它并入的 zip 与重复卡片
+ * （item.groupedInto）不再单独成卡。旧服务进程不给这两个字段时，只剩卡片网格，与改动前一致。
  */
 export function PrototypePanel({
   prototypes,
   capture,
+  openPath,
+  onOpen,
 }: {
   prototypes: Prototypes;
   capture: CaptureControl;
+  openPath?: string;
+  onOpen?: (file: FileItem) => void;
 }) {
   const { items, note, updatedAt, legacyDir } = prototypes;
+  const linkedItems = items.filter((item) => item.linked);
+  const plainItems = items.filter((item) => !item.linked && !item.groupedInto);
+
+  const grid = plainItems.length ? (
+    <ShowcaseGrid>
+      {plainItems.map((item) => {
+        const isUrl = item.kind === 'url';
+        // url 形态的 target 已由服务端校过协议：空串 = 地址不合法
+        const href = isUrl ? item.target || '' : item.url;
+        return (
+          <ShowcaseCard
+            key={item.itemKey}
+            title={item.title}
+            subtitle={isUrl ? item.target || item.sourcePath || item.itemKey : item.sourcePath || item.itemKey}
+            cover={item.cover}
+            href={href}
+            badge={kindLabel(item.kind) || undefined}
+            disabledHint={isUrl && !href ? '这条云端原型的地址不合法（只支持 http / https），看板不打开它' : undefined}
+          />
+        );
+      })}
+    </ShowcaseGrid>
+  ) : null;
 
   return (
     <div className="flex flex-col gap-4">
       {updatedAt ? (
-        <p className="text-xs text-muted-foreground">最近更新 {formatRelative(updatedAt)}</p>
+        <p className="text-xs text-muted-foreground">
+          最近更新 {formatRelative(updatedAt)}
+          {linkedItems.length ? ` · ${linkedItems.length} 份原型已接入原型工作区` : ''}
+        </p>
       ) : null}
 
       <CaptureBar
@@ -60,24 +94,24 @@ export function PrototypePanel({
       ) : null}
 
       {items.length ? (
-        <ShowcaseGrid>
-          {items.map((item) => {
-            const isUrl = item.kind === 'url';
-            // url 形态的 target 已由服务端校过协议：空串 = 地址不合法
-            const href = isUrl ? item.target || '' : item.url;
-            return (
-              <ShowcaseCard
-                key={item.itemKey}
-                title={item.title}
-                subtitle={isUrl ? item.target || item.sourcePath || item.itemKey : item.sourcePath || item.itemKey}
-                cover={item.cover}
-                href={href}
-                badge={kindLabel(item.kind) || undefined}
-                disabledHint={isUrl && !href ? '这条云端原型的地址不合法（只支持 http / https），看板不打开它' : undefined}
-              />
-            );
-          })}
-        </ShowcaseGrid>
+        linkedItems.length ? (
+          <>
+            <section className="flex flex-col gap-3">
+              <SectionTitle count={linkedItems.length}>已接入原型工作区</SectionTitle>
+              {linkedItems.map((item) => (
+                <LinkedPrototypeRow key={item.itemKey} item={item} openPath={openPath} onOpen={onOpen} />
+              ))}
+            </section>
+            {grid ? (
+              <section className="flex flex-col gap-3">
+                <SectionTitle count={plainItems.length}>其他原型</SectionTitle>
+                {grid}
+              </section>
+            ) : null}
+          </>
+        ) : (
+          grid
+        )
       ) : (
         <div className="flex flex-col gap-3">
           <EmptyState
