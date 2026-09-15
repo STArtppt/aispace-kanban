@@ -47,6 +47,7 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | 点开 `.json` 预览空白、没有报错 | `/api/.../file` 按 MIME 把 `application/json` 当二进制直出了；阅读器 `res.json()` 得到的是文件自己，`data.content` 是 `undefined` | `curl` 该接口：必须有字符串字段 `content`，不能是文件根对象。json / map 不能进 `rawStream` |
 | 点开大表 markdown 产物卡顿（几百毫秒，长任务不止一段） | **同一篇被解析了 2–3 次** —— `react-markdown` 是在 render 里跑完整条管线的，父组件每重渲染一次（回传目录后 setState、批注层量完几何后 setState、扫描刷新）就整篇重解析 | 浏览器里装 `PerformanceObserver({entryTypes:['longtask']})` 再点条目：长任务有几段就解析了几次。`Markdown.tsx` 里那棵 `<ReactMarkdown>` 必须按「源码 + 锚点参数」`useMemo` 住 —— 元素身份不变 React 才会跳过这棵子树；`urlTransform` 这类行内箭头函数要先收进 ref 包成恒定身份，否则 memo 每次都失效。另:800 行以上的表还吃 micromark GFM 表格扩展 `EditMap.add` 的平方级累积，本仓为此有一个 pnpm 补丁（见 AGENTS.md 第 2 节），补丁没应用上会明显变慢 |
 | 切某个 tab 时标题栏 / tab 栏往上跳几像素 | 标题行右侧控件被卸掉或换成更矮的按钮。视图切换（边框+内边距）约 34px，`min-h-8` / `size-8` 只有 32px | 量标题行 `getBoundingClientRect().height`；不用的控件用 `invisible` 占着高度，别 `return null` 或换成更矮的按钮 |
+| 原型离线包 / 参考页点进去白屏，控制台 `Failed to read the 'localStorage' property` / `sandboxed and lacks the 'allow-same-origin' flag` | CSP `sandbox` 把页面关进不透明源，`window.localStorage` 的 getter 直接抛；页面脚本（常见是 React `useEffect` 里无 try 的 `setItem`）一碰就崩。**不要**给 `allow-same-origin`，那等于把看板接口也放开 | `curl -D-` 该 HTML：必须仍有 `Content-Security-Policy: sandbox` 且**没有** `allow-same-origin`；响应正文 `<head>` 后应有 `aispace-kanban-storage-shim`。缺垫片就白屏；有垫片仍白屏再查是不是别的 API（如 `indexedDB`） |
 
 排不掉,继续:
 

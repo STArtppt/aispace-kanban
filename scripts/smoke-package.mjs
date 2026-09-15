@@ -634,6 +634,13 @@ try {
   if (!/\bsandbox\b/.test(protoHtml.headers.get('content-security-policy') || '')) {
     die('原型 bundle 的伺服响应没带 CSP sandbox 头');
   }
+  if (/allow-same-origin/.test(protoHtml.headers.get('content-security-policy') || '')) {
+    die('原型 HTML 的 sandbox 给了 allow-same-origin —— 隔离等于没做');
+  }
+  const protoBody = await protoHtml.text();
+  if (!protoBody.includes('aispace-kanban-storage-shim')) {
+    die('原型 HTML 没注入 storage 垫片 —— 依赖 localStorage 的页面会在不透明源里白屏');
+  }
   const urlServe = await fetch(`${base}/api/projects/${created.id}/proto/${encodeURIComponent('线上版')}/index.html`);
   if (urlServe.status === 200) die('url 形态的原型被看板伺服了 —— 它本地根本没有产物');
   const viewer = await fetch(`${base}/api/projects/${created.id}/ref/foo/view`);

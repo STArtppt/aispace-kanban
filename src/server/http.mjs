@@ -96,9 +96,48 @@ const MIME = {
  * 这些 HTML 是别人写的（采下来的线上页面、工具产出的包），而看板的接口没有鉴权：
  * 不隔离的话，它们的脚本和 /api/projects/* 同源，可以直接列出你所有登记的工作空间、读任意文件。
  * `sandbox` 指令让响应落进不透明源 —— 页面照常渲染、脚本照常跑，但同源请求、cookie、
- * localStorage 全拿不到；不给 allow-top-navigation，frame-busting 脚本也跳不走外层窗口。
+ * 看板自己的 localStorage 全拿不到；不给 allow-top-navigation，frame-busting 脚本也跳不走外层窗口。
+ *
+ * 不透明源里 `window.localStorage` 的 getter 会直接抛 SecurityError。工具导出的 React 包
+ * 经常在 useEffect 里无 try 地 setItem（离线包的「场景预警」页就是这样），于是白屏。
+ * 下面这块垫片把 Storage API 补成**这份文档自己的内存表**，影子在 window 上，
+ * 够不到看板同源的真实 localStorage，也不让同源 /api 请求复活。
  */
 const SANDBOX_CSP = 'sandbox allow-scripts allow-forms allow-popups';
+
+const STORAGE_SHIM = `<script>(function(){
+  void "aispace-kanban-storage-shim";
+  function mem(){
+    var m = Object.create(null);
+    var api = {
+      getItem: function(k){ k = String(k); return Object.prototype.hasOwnProperty.call(m, k) ? m[k] : null; },
+      setItem: function(k, v){ m[String(k)] = String(v); },
+      removeItem: function(k){ delete m[String(k)]; },
+      clear: function(){ for (var k in m) delete m[k]; },
+      key: function(i){ return Object.keys(m)[i] || null; }
+    };
+    Object.defineProperty(api, "length", { get: function(){ return Object.keys(m).length; } });
+    return new Proxy(api, {
+      get: function(t, p){ return p in t ? t[p] : t.getItem(p); },
+      set: function(t, p, v){ if (p in t && p !== "length") { t[p] = v; return true; } t.setItem(p, v); return true; },
+      deleteProperty: function(t, p){ t.removeItem(p); return true; }
+    });
+  }
+  try {
+    Object.defineProperty(window, "localStorage", { configurable: true, enumerable: true, value: mem() });
+    Object.defineProperty(window, "sessionStorage", { configurable: true, enumerable: true, value: mem() });
+  } catch (e) {}
+})();</script>`;
+
+function injectStorageShim(html) {
+  const head = html.match(/<head[^>]*>/i);
+  if (head) return html.slice(0, head.index + head[0].length) + STORAGE_SHIM + html.slice(head.index + head[0].length);
+  const htmlTag = html.match(/<html[^>]*>/i);
+  if (htmlTag) {
+    return html.slice(0, htmlTag.index + htmlTag[0].length) + STORAGE_SHIM + html.slice(htmlTag.index + htmlTag[0].length);
+  }
+  return STORAGE_SHIM + html;
+}
 
 /** 直出一个静态文件。isolate = true 时挂 sandbox 头（伺服工作空间里的页面一律要挂）。 */
 function sendStaticFile(res, abs, { isolate = false } = {}) {
@@ -108,6 +147,13 @@ function sendStaticFile(res, abs, { isolate = false } = {}) {
     'cache-control': 'no-cache',
   };
   if (isolate) headers['content-security-policy'] = SANDBOX_CSP;
+  // 隔离 HTML 要先注入垫片再出，不能再 pipe 原文件
+  if (isolate && (ext === '.html' || ext === '.htm')) {
+    const body = injectStorageShim(fs.readFileSync(abs, 'utf8'));
+    headers['content-length'] = Buffer.byteLength(body);
+    res.writeHead(200, headers);
+    return res.end(body);
+  }
   res.writeHead(200, headers);
   return fs.createReadStream(abs).pipe(res);
 }
