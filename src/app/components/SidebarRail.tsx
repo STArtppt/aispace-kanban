@@ -84,7 +84,7 @@ function SettingRow({
  * 高度由图标撑起、垂直居中、右侧两角圆角,**始终悬浮**不占布局宽度 ——
  * 所以半透明(85%)+ 背景模糊,压住的正文还能透出来一点,不至于像块实心挡板。
  *
- * 自动隐藏开启时平移出屏:桌面靠一块「工具条外扩 20px」的热区接住鼠标(见下面的 mousemove),
+ * 自动隐藏开启时向左收起、露出 8px:桌面靠一块「工具条外扩 20px」的热区接住鼠标(见下面的 mousemove),
  * 触屏没有 hover,所以另给一个「从左边缘向右划」的手势。唤出后点/触工具条以外的地方就收回去。
  */
 export function SidebarRail({
@@ -249,7 +249,9 @@ export function SidebarRail({
           // 而垂直居中常常落在半像素上（高 223px 时 top=338.5），一重采样图标就发虚。
           'bg-background/85',
           RAIL_MOTION,
-          revealed ? 'translate-x-0' : '-translate-x-[110%]',
+          // 藏起来时露出 8px。用 px 而不是 calc(-100%+8px)：后者和 translate-x-0 插值不成，过渡会卡住。
+          // 33 = RAIL_W_PX(41) - 8，改宽度时两处一起改。
+          revealed ? 'translate-x-0' : '-translate-x-[33px]',
         )}
       >
         {nav.map(({ key, label, icon: Icon }) => (
