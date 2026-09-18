@@ -264,6 +264,12 @@ export interface PrototypeLinked {
   docs?: PrototypeDoc[];
   /** 已并入的手工卡片目录（工作空间相对路径）。看板只提示，不代删 */
   duplicates?: string[];
+  /**
+   * 这份已接入原型能不能从看板一键刷新。
+   * 可选：旧服务进程没有这个字段，缺了就不显示刷新按钮（退回改动前的行为）。
+   * available: false 时按钮置灰，reason 是原因（没有 sync.json、脚本名不对、登记不回指等）。
+   */
+  refresh?: { available: boolean; reason?: string };
 }
 
 /**
@@ -546,6 +552,26 @@ export interface SourceIngestJob {
 }
 
 /**
+ * POST/GET /api/projects/:id/proto-sync 的原型刷新任务状态。
+ * 与 IngestJob 同构，但**在服务端是另一把锁**：正在转资料的时候照样能刷新原型。
+ * idle = 这个服务进程里还没刷过；running 时前端轮询；done/error 时展示 message。
+ */
+export interface ProtoSyncJob {
+  status: IngestStatus;
+  /**
+   * 三态各自的人话。done 时是脚本输出里的 `!` 行（没有就取 `✓` 行），
+   * error 时是最后一条 `✗` 行 —— 原文照搬，不要自己写「操作失败请重试」。
+   */
+  message: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number | null;
+  log?: string;
+  /** 正在 / 刚刷过的原型 itemKey。idle 时为空串 */
+  item?: string;
+}
+
+/**
  * GET /api/projects/:id/verify-source 的结果：重算原件 sha256 跟产物记的比。
  * 'unknown' = 比不了（没记来源 / 没记 sha256 / 来源是目录），reason 里是中文原因，
  * 这种情况不要拿扫描的 mtime 结论冒充哈希结论。
@@ -745,6 +771,19 @@ export const api = {
       body: JSON.stringify({ source }),
     }),
   sourceIngestStatus: (id: string) => request<SourceIngestJob>(`/api/projects/${id}/db-source`),
+  /**
+   * 触发原型工作区的 workspace-sync.mjs --both；立刻返回，进度用 protoSyncStatus 轮询。
+   * 看板只 spawn，写盘的是那个脚本；镜像落盘由 visualization/ 的 SSE 捕获，原型 tab 自己刷新。
+   *
+   * 请求只带已接入原型的 itemKey，不接受任何路径。
+   * 旧服务进程没有这个接口（404），request 会带上「重启 serve」的提示。
+   */
+  startProtoSync: (id: string, item: string) =>
+    request<ProtoSyncJob>(`/api/projects/${id}/proto-sync`, {
+      method: 'POST',
+      body: JSON.stringify({ item }),
+    }),
+  protoSyncStatus: (id: string) => request<ProtoSyncJob>(`/api/projects/${id}/proto-sync`),
   /**
    * 把 input/raw/ 下的文件或目录写进 input/.ingestignore，不再算待转换。
    * 文件还在磁盘上，只是看板和 ingest.py 一起跳过它。

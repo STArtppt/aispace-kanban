@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { ExternalLink, MonitorPlay } from 'lucide-react';
+import { ExternalLink, Loader2, MonitorPlay, RefreshCw } from 'lucide-react';
 import { CopyButton } from '@/components/Primitives';
 import { Button } from '@/components/ui/button';
+import type { ProtoSyncControl } from '@/hooks/useIngestJob';
 import type { FileItem, PrototypeDoc, PrototypeItem } from '@/lib/api';
 import { formatBytes, formatDate, formatRelative } from '@/lib/format';
 import { cn } from '@/lib/utils';
@@ -80,15 +81,26 @@ export function LinkedPrototypeRow({
   item,
   openPath,
   onOpen,
+  protoSync,
 }: {
   item: PrototypeItem;
   openPath?: string;
   onOpen?: (file: FileItem) => void;
+  protoSync?: ProtoSyncControl;
 }) {
   const linked = item.linked || {};
-  const { offline, online, sync = {} } = linked;
+  const { offline, online, sync = {}, refresh } = linked;
   const docs = linked.docs || [];
   const duplicates = linked.duplicates || [];
+  const mine = protoSync?.job?.item === item.itemKey;
+  const refreshing = Boolean(protoSync?.running && mine);
+  const resultMessage = mine && protoSync?.job && (protoSync.job.status === 'done' || protoSync.job.status === 'error')
+    ? protoSync.job.message
+    : '';
+  const resultFailed = Boolean(mine && protoSync?.job?.status === 'error');
+  const apiError = protoSync?.error && protoSync.errorItem === item.itemKey ? protoSync.error : '';
+  const resultText = apiError || resultMessage;
+  const resultWarn = Boolean(apiError) || resultFailed;
 
   const firstGroup = GROUPS.find((g) => docs.some((d) => d.group === g.key))?.key || 'spec';
   const [group, setGroup] = useState<PrototypeDoc['group']>(firstGroup);
@@ -137,6 +149,19 @@ export function LinkedPrototypeRow({
             </div>
           </div>
           <div className="flex flex-wrap gap-1.5">
+            {refresh ? (
+              <span title={!refresh.available ? refresh.reason : refreshing ? '导出离线包可能要一两分钟' : undefined}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!refresh.available || Boolean(protoSync?.running)}
+                  onClick={() => void protoSync?.start(item.itemKey)}
+                >
+                  {refreshing ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  {refreshing ? '正在刷新…' : '刷新'}
+                </Button>
+              </span>
+            ) : null}
             {offline?.url ? (
               <Button size="sm" onClick={() => openInNewWindow(offline.url)}>
                 <MonitorPlay />
@@ -255,8 +280,13 @@ export function LinkedPrototypeRow({
           </div>
         ) : null}
 
-        {onlineStale || duplicates.length ? (
+        {onlineStale || duplicates.length || resultText ? (
           <div className="flex flex-col gap-1.5 border-t border-dashed border-border pt-2.5 text-xs text-muted-foreground">
+            {resultText ? (
+              <p className={cn('whitespace-pre-wrap [overflow-wrap:anywhere]', resultWarn ? 'text-destructive' : 'text-muted-foreground')}>
+                {resultText}
+              </p>
+            ) : null}
             {onlineStale ? (
               <p className="text-foreground">
                 <span className="mr-1.5 inline-block size-1.5 rounded-full bg-destructive align-[2px]" />

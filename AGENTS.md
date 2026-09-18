@@ -45,6 +45,18 @@
      ④ 路径必须过 `resolveInside()`,slug 由服务端生成并安全化,不接受客户端传来的任何路径片段;
      ⑤ **只新建,不覆盖、不删除** —— 同一 URL 再采生成新 slug,删除由用户自己在文件系统里做;
      ⑥ 后续别的写入来源(浏览器插件投递等)复用同一个收口,**不得扩大它的目录范围**
+   - 刷新已接入原型时调原型工作区的 `workspace-sync.mjs`(`src/server/http.mjs` 的 `startProtoSync`)——
+     **这是第三条窄例外,范围就是下面五条,越界即为 bug**:
+     ① 看板只 `spawn`,自己不写任何一个字节,与资料转换、新建工作空间同构;
+        真正写盘的是原型工作区的同步脚本
+     ② 必须用户在看板上点「刷新」明确发起,没有后台自动跑、没有定时任务
+     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`)
+     ④ 请求只带原型的 `itemKey`,**不接受任何路径**;脚本路径与原型目录只来自通过三道校验的 `sync.json`
+        (脚本文件名为 `workspace-sync.mjs` 且存在;原型目录存在;`.workspace-link.json` 回指当前工作空间)
+     ⑤ `input/` `output/` `project.yaml` 仍然只读 —— 推送方向只**读**它们的修改时间。
+        工作空间内只允许脚本写 `visualization/prototypes/<slug>/`(整份覆盖
+        `spec/` `docs/` `annotations/` `comments/` `meta.json` `SYNC.md` `sync.json`)
+        与同级 `<slug>-html.zip`;工作空间外只写原型目录的 `.workspace-inbox.md`
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
@@ -91,7 +103,7 @@ aispace-kanban/
 ├── bin/cli.mjs             # 平面 1 · CLI:参数解析 + serve/add/list/relink/remove
 ├── src/
 │   ├── server/             # 平面 2 · 常驻服务(.mjs,无类型检查)
-│   │   ├── http.mjs        #   路由 + 静态伺服 + SSE + 系统调用(open)
+│   │   ├── http.mjs        #   路由 + 静态伺服 + SSE + 系统调用(open);原型刷新 spawn 也在这
 │   │   ├── config.mjs      #   注册表读写 + 工作空间识别 + 重连候选
 │   │   ├── scan.mjs        #   工作空间扫描 → 结构化 JSON(只读)
 │   │   ├── meta.mjs        #   project.yaml 解析 + 完整度统计

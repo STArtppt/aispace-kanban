@@ -29,7 +29,7 @@ import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-his
 import { resolveInside } from './paths.mjs';
 import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
 import { PYTHON_CANDIDATES, pickDirectory, revealInSystem } from './platform.mjs';
-import { resolvePrototypeCover, resolvePrototypeServeDir, scanPrototypes } from './prototypes.mjs';
+import { resolvePrototypeCover, resolvePrototypeServeDir, resolveRefreshTarget, scanPrototypes } from './prototypes.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
 import { scanWorkspace, verifySource } from './scan.mjs';
 import { readSheetPage, scanSheet } from './spreadsheet.mjs';
@@ -56,6 +56,14 @@ const INGEST_LOG_LIMIT = 32 * 1024;
  * 形状与 ingestJobs 完全一致，走的也是同一套「立即返回 + 轮询进度」。
  */
 const sourceJobs = new Map();
+
+/**
+ * 每个项目至多一个进行中的**原型刷新**任务。与 ingestJobs / sourceJobs 并列，**不共用锁** ——
+ * 刷新原型不该挡住资料转换。形状照抄 ingest，多一个 item（原型 slug）。
+ * 脚本在工作空间之外，看板只 spawn；10 分钟看门狗（脚本自身导出超时 5 分钟，留一倍余量）。
+ */
+const protoSyncJobs = new Map();
+const PROTO_SYNC_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
  * 目录选择框是模态的，同一时刻只允许一个。
@@ -800,6 +808,133 @@ function sourceIngestStatus(projectId) {
   };
 }
 
+/**
+ * 脚本输出约定 `✓ / ! / · / ✗` 开头的行（前面可以有缩进）。
+ * 退出码 0：message 取所有 `!` 行（没有就取 `✓` 行）；非 0：取最后一条 `✗` 行。
+ * 原文照搬，看板不改写。
+ */
+function summarizeProtoSyncLog(log, exitCode) {
+  const text = (log || '').trim();
+  const lines = text ? text.split(/\r?\n/).filter(Boolean) : [];
+  const marked = (sym) => lines.filter((l) => l.trimStart().startsWith(sym)).map((l) => l.trim());
+  const tail = lines.slice(-16).join('\n');
+  if (exitCode === 0) {
+    const warns = marked('!');
+    const oks = marked('✓');
+    const picked = warns.length ? warns : oks;
+    return { message: picked.length ? picked.join('\n') : '刷新完成。', log: tail };
+  }
+  const fails = marked('✗');
+  const lastFail = fails.length ? fails[fails.length - 1] : '';
+  return {
+    message: lastFail || `刷新脚本异常退出（退出码 ${exitCode}）。`,
+    log: tail,
+  };
+}
+
+/**
+ * 起原型工作区的 workspace-sync.mjs --both。看板只 spawn，自己不写任何一个字节。
+ * 命令参数由服务端固定为 `<原型目录> --both`，不从任何文件或请求读参数。
+ * 用看板自己的 node（process.execPath），不查 PATH。
+ */
+function startProtoSync(project, itemKey) {
+  const existing = protoSyncJobs.get(project.id);
+  if (existing?.status === 'running') {
+    const err = new Error(`正在刷新「${existing.title || existing.item}」，等这轮结束后再试。`);
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const status = projectStatus(project);
+  if (!status.ok) {
+    const err = new Error(
+      `这个工作空间现在不可用${status.reasons?.length ? `：${status.reasons.join('；')}` : ''}。`,
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const target = resolveRefreshTarget(project.root, itemKey);
+  const item = typeof itemKey === 'string' ? itemKey.trim() : '';
+
+  const job = {
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    finishedAt: '',
+    exitCode: null,
+    item,
+    title: target.title,
+    message: `正在刷新「${target.title}」…导出离线包可能要一两分钟。`,
+    log: '',
+  };
+  protoSyncJobs.set(project.id, job);
+
+  const child = spawn(process.execPath, [target.script, target.protoDir, '--both'], {
+    cwd: target.protoDir,
+  });
+
+  const watchdog = setTimeout(() => {
+    if (job.status !== 'running') return;
+    try {
+      child.kill();
+    } catch {
+      /* 进程已经没了 */
+    }
+    job.status = 'error';
+    job.finishedAt = new Date().toISOString();
+    job.message = '刷新超过 10 分钟仍未结束，已终止。再点一次刷新即可。';
+  }, PROTO_SYNC_TIMEOUT_MS);
+  if (typeof watchdog.unref === 'function') watchdog.unref();
+
+  child.stdout.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
+  child.stderr.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
+  child.on('error', (err) => {
+    clearTimeout(watchdog);
+    // spawn 异步失败：不能让未处理的 error 把常驻服务带崩
+    if (job.status !== 'running') return;
+    job.status = 'error';
+    job.finishedAt = new Date().toISOString();
+    job.exitCode = null;
+    job.message = err.code === 'ENOENT'
+      ? '找不到 Node。看板自己的进程路径失效了，重启看板服务再试。'
+      : `启动同步脚本失败：${err.message}`;
+  });
+  child.on('close', (code) => {
+    clearTimeout(watchdog);
+    if (job.status !== 'running') return;
+    const exitCode = code ?? 1;
+    job.exitCode = exitCode;
+    job.finishedAt = new Date().toISOString();
+    const summary = summarizeProtoSyncLog(job.log, exitCode);
+    job.message = summary.message;
+    job.log = summary.log;
+    job.status = exitCode === 0 ? 'done' : 'error';
+  });
+
+  return {
+    status: job.status,
+    startedAt: job.startedAt,
+    message: job.message,
+    item: job.item,
+  };
+}
+
+function protoSyncStatus(projectId) {
+  const job = protoSyncJobs.get(projectId);
+  if (!job) {
+    return { status: 'idle', message: '', startedAt: '', finishedAt: '', exitCode: null, log: '', item: '' };
+  }
+  return {
+    status: job.status,
+    message: job.message || '',
+    startedAt: job.startedAt || '',
+    finishedAt: job.finishedAt || '',
+    exitCode: job.exitCode,
+    log: job.log || '',
+    item: job.item || '',
+  };
+}
+
 /** 壳页里要拼进 HTML 的都是用户目录名和 meta.json 里的字符串 —— 一律转义。 */
 function escapeHtml(value) {
   return String(value ?? '')
@@ -942,7 +1077,10 @@ function requireProject(id) {
  * 监听工作空间的资料、产出与视觉目录，变了就通过 SSE 推给前端。
  *
  * `visualization/` 整树（覆盖 references/ 与 prototypes/ 两个子目录）：
- * 参考或原型包增删、zip 替换后都要推。它**可能启动时还不存在** —— 老工作空间要等用户
+ * 参考或原型包增删、zip 替换后都要推。原型刷新写的镜像和离线 zip 也在这棵树上，
+ * 完成后原型 tab 会自己刷新。推送给原型仓的 `.workspace-inbox.md` 在工作空间外，
+ * 不接 SSE，只在任务结果行体现。
+ * 它**可能启动时还不存在** —— 老工作空间要等用户
  * 手工 `mv` 才有，采集也是第一次采才建。所以再非递归地看一眼工作空间根，
  * 这个目录冒出来时补挂递归 watcher，用户跑完 mv 不用重启服务就能看到卡片。
  */
@@ -1547,6 +1685,21 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       if (!file) return json(res, 400, { error: '缺少文件路径' });
       resolveInside(project.root, file);
       return json(res, 200, appendNoteHistory(project.id, file, body.notes));
+    }
+  }
+
+  // 刷新已接入原型：看板只 spawn 原型工作区的 workspace-sync.mjs，自己不写任何一个字节。
+  // 请求只带 itemKey，脚本路径与原型目录只来自通过三道校验的 sync.json。
+  if (head === 'projects' && id && action === 'proto-sync') {
+    const project = requireProject(id);
+    if (req.method === 'GET') {
+      return json(res, 200, protoSyncStatus(project.id));
+    }
+    if (req.method === 'POST') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      const body = await readBody(req);
+      return json(res, 200, startProtoSync(project, body.item));
     }
   }
 

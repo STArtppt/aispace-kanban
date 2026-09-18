@@ -46,6 +46,8 @@ const LINKED_DOC_GROUPS = [
 ];
 /** 单个原型的资料上限：超出只截断列表，不影响聚合 */
 const LINKED_DOC_LIMIT = 500;
+/** 看板只执行这个文件名的同步脚本，其它一律当不可用 */
+const SYNC_SCRIPT_NAME = 'workspace-sync.mjs';
 
 function readTitle(indexAbs) {
   try {
@@ -71,6 +73,23 @@ function isFile(abs) {
     return fs.statSync(abs).isFile();
   } catch {
     return false;
+  }
+}
+
+function isDir(abs) {
+  try {
+    return fs.statSync(abs).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** realpath 失败（目录丢了、权限没有）当成空串，交给校验降级，不抛 */
+function realpathOrEmpty(abs) {
+  try {
+    return abs ? fs.realpathSync(abs) : '';
+  } catch {
+    return '';
   }
 }
 
@@ -287,6 +306,61 @@ function listLinkedDocs(dirAbs, slug) {
 }
 
 /**
+ * 读镜像里的 sync.json，按三道校验决定能不能刷新。
+ * 任何读失败都不抛，降级为不可用 + 中文原因 —— 这份文件在用户工作空间里，坏掉不该拖垮扫描。
+ *
+ * 三道：脚本文件名必须是 workspace-sync.mjs 且真实存在；原型目录存在；
+ * 原型目录里 .workspace-link.json 的 workspace 与当前工作空间根 realpath 相等。
+ * 回指是关键：伪造的 sync.json 能指向任意脚本，但指不到一个反过来声明属于本工作空间的原型目录。
+ *
+ * @returns {{ available: boolean, reason?: string, script?: string, protoDir?: string }}
+ */
+function readSyncTarget(mirrorAbs, workspaceRoot) {
+  const syncPath = path.join(mirrorAbs, 'sync.json');
+  if (!isFile(syncPath)) {
+    return {
+      available: false,
+      reason: '镜像里没有 sync.json，先在原型工作区跑一次同步，看板才能找到刷新脚本',
+    };
+  }
+  let data;
+  try {
+    data = JSON.parse(fs.readFileSync(syncPath, 'utf8'));
+  } catch {
+    return { available: false, reason: '镜像里的 sync.json 读不到或不是合法 JSON' };
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { available: false, reason: '镜像里的 sync.json 格式不对' };
+  }
+
+  const script = typeof data.script === 'string' ? data.script.trim() : '';
+  const protoDir = typeof data.protoDir === 'string' ? data.protoDir.trim() : '';
+  if (!script || !path.isAbsolute(script) || path.basename(script) !== SYNC_SCRIPT_NAME) {
+    return { available: false, reason: '同步脚本文件名必须是 workspace-sync.mjs' };
+  }
+  if (!isFile(script)) {
+    return { available: false, reason: '同步脚本不存在' };
+  }
+  if (!protoDir || !path.isAbsolute(protoDir) || !isDir(protoDir)) {
+    return { available: false, reason: '原型目录不存在' };
+  }
+
+  let registered = '';
+  try {
+    const link = JSON.parse(fs.readFileSync(path.join(protoDir, '.workspace-link.json'), 'utf8'));
+    if (typeof link?.workspace === 'string') registered = link.workspace;
+  } catch {
+    return { available: false, reason: '原型目录里没有有效的登记文件，无法确认它属于本工作空间' };
+  }
+  const wsReal = realpathOrEmpty(workspaceRoot);
+  const regReal = realpathOrEmpty(registered);
+  if (!wsReal || !regReal || wsReal !== regReal) {
+    return { available: false, reason: '登记不指向本工作空间' };
+  }
+  return { available: true, script, protoDir };
+}
+
+/**
  * 探测工作空间根上是否还有非空的旧 prototypes/。
  * **只判断存在与非空**：不读内容、不列卡片、不伺服、不解压。
  * 结果只用来在原型 tab 的空态里给一行迁移提示。
@@ -480,7 +554,7 @@ export function scanPrototypes(root, projectId = '') {
     };
   });
 
-  aggregateLinked(listed.items, items, baseOf);
+  aggregateLinked(listed.items, items, baseOf, root);
 
   const legacyDir = detectLegacyDir(root);
 
@@ -502,7 +576,7 @@ export function scanPrototypes(root, projectId = '') {
  * **被并入的条目不从 items 删除** —— 旧前端不认 groupedInto，删了离线包卡片就凭空消失。
  * 两份都带 SYNC.md 的镜像各自成组，不互相合并。
  */
-function aggregateLinked(listedItems, items, baseOf) {
+function aggregateLinked(listedItems, items, baseOf, workspaceRoot) {
   const outByKey = new Map(items.map((i) => [i.itemKey, i]));
   const listedByKey = new Map(listedItems.map((i) => [i.slug, i]));
 
@@ -554,8 +628,41 @@ function aggregateLinked(listedItems, items, baseOf) {
 
     if (Object.keys(sync).length) linked.sync = sync;
     linked.docs = listLinkedDocs(mirror.dirAbs, mirror.slug);
+    const refresh = readSyncTarget(mirror.dirAbs, workspaceRoot);
+    // 只下发 available / reason，脚本路径不出服务端
+    linked.refresh = refresh.available
+      ? { available: true }
+      : { available: false, reason: refresh.reason };
     out.linked = linked;
   }
+}
+
+/**
+ * 按扫描清单里的 slug 解析一份可执行的刷新目标。
+ * 请求只带 itemKey，不接受任何路径 —— 命不中就 404，校验不过就 400。
+ * @returns {{ script: string, protoDir: string, title: string }}
+ */
+export function resolveRefreshTarget(root, itemKey) {
+  const key = typeof itemKey === 'string' ? itemKey.trim() : '';
+  if (!key) {
+    const err = new Error('没有这份已接入原型');
+    err.statusCode = 404;
+    throw err;
+  }
+  const listed = listPrototypePackages(root);
+  const mirror = listed.items.find((i) => i.slug === key && i.synced);
+  if (!mirror?.dirAbs) {
+    const err = new Error('没有这份已接入原型');
+    err.statusCode = 404;
+    throw err;
+  }
+  const target = readSyncTarget(mirror.dirAbs, root);
+  if (!target.available || !target.script || !target.protoDir) {
+    const err = new Error(target.reason || '这份原型现在不能刷新');
+    err.statusCode = 400;
+    throw err;
+  }
+  return { script: target.script, protoDir: target.protoDir, title: mirror.title };
 }
 
 /**

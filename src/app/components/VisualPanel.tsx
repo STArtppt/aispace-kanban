@@ -4,6 +4,7 @@ import { PanelTitle } from '@/components/Primitives';
 import { PrototypePanel } from '@/components/PrototypePanel';
 import { ReferencePanel } from '@/components/ReferencePanel';
 import { useCaptureJob } from '@/hooks/useCaptureJob';
+import { useProtoSyncJob } from '@/hooks/useIngestJob';
 import type { FileItem, Scan } from '@/lib/api';
 
 type VisualTab = 'reference' | 'prototype';
@@ -38,6 +39,7 @@ export function VisualPanel({
   // 采集任务的状态提到这一层：服务端一个工作空间只允许一轮，
   // 两个 tab 各存一份的话第二处会撞 409 却显示成「没反应」
   const capture = useCaptureJob(scan.project.id);
+  const protoSync = useProtoSyncJob(scan.project.id);
 
   const select = (value: VisualTab) => {
     setTab(value);
@@ -87,6 +89,7 @@ export function VisualPanel({
           <PrototypePanel
             prototypes={scan.prototypes}
             capture={capture}
+            protoSync={protoSync}
             openPath={openPath}
             onOpen={onOpen}
           />

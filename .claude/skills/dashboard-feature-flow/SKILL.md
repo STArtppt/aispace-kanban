@@ -50,7 +50,7 @@ description: 在 aispace-kanban 里新增或修改任何功能时使用 —— �
   - **接路径参数的接口第一件事是 `resolveInside(project.root, 参数)`**(红线,防 `../` 穿越)。
   - 需要项目对象就用 `requireProject(id)`,别自己写"项目不存在"。
 - **只读红线**:不 `writeFile` / `rename` / `unlink` 工作空间里的任何东西。
-  想写?先停下来问人(唯一例外是注册表 `config.mjs` 与模板仓的 `init_workspace.py`)。
+  想写?先停下来问人。允许的窄例外只写在 [AGENTS.md](../../../AGENTS.md) 不变量 1,这里不复制 —— 改范围改那一份。
 - 读失败降级成空值,别让进程崩(照 `readProjects` 的写法)。
 
 ### 步骤 2 · 同步契约(`src/app/lib/api.ts`)

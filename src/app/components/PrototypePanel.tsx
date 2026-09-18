@@ -3,6 +3,7 @@ import { LinkedPrototypeRow } from '@/components/LinkedPrototypeRow';
 import { EmptyState, SectionTitle } from '@/components/Primitives';
 import { ShowcaseCard, ShowcaseGrid } from '@/components/ShowcaseCard';
 import type { CaptureControl } from '@/hooks/useCaptureJob';
+import type { ProtoSyncControl } from '@/hooks/useIngestJob';
 import type { FileItem, PrototypeItem, Prototypes } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
 
@@ -28,11 +29,13 @@ function kindLabel(kind?: PrototypeItem['kind']) {
 export function PrototypePanel({
   prototypes,
   capture,
+  protoSync,
   openPath,
   onOpen,
 }: {
   prototypes: Prototypes;
   capture: CaptureControl;
+  protoSync: ProtoSyncControl;
   openPath?: string;
   onOpen?: (file: FileItem) => void;
 }) {
@@ -98,7 +101,7 @@ export function PrototypePanel({
                 已接入原型工作区
               </SectionTitle>
               {linkedItems.map((item) => (
-                <LinkedPrototypeRow key={item.itemKey} item={item} openPath={openPath} onOpen={onOpen} />
+                <LinkedPrototypeRow key={item.itemKey} item={item} openPath={openPath} onOpen={onOpen} protoSync={protoSync} />
               ))}
             </section>
             {grid ? (

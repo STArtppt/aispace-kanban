@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type IngestJob, type IngestStatus, type SourceIngestJob } from '@/lib/api';
+import { api, type IngestJob, type IngestStatus, type ProtoSyncJob, type SourceIngestJob } from '@/lib/api';
 
 /** 任务状态轮询间隔；大 PDF 可能跑几分钟，1.5s 足够且不刷接口 */
 const INGEST_POLL_MS = 1500;
@@ -150,4 +150,43 @@ export function useSourceIngestJob(projectId: string, canIngest?: boolean): Sour
   return useSpawnJob<SourceIngestJob, string>(
     projectId, canIngest, sourceStatus, startSource, '采集失败',
   );
+}
+
+/** 一个工作空间至多一轮原型刷新，已接入原型行共用这一份状态 */
+export interface ProtoSyncControl {
+  job: ProtoSyncJob | null;
+  running: boolean;
+  error: string;
+  /** 最近一次点刷新的原型 itemKey，用来把 409 / 400 显示在对应行 */
+  errorItem: string;
+  start: (item: string) => Promise<void>;
+}
+
+const protoSyncStatus = (id: string) => api.protoSyncStatus(id);
+const startProtoSync = (id: string, item: string) => api.startProtoSync(id, item);
+
+/**
+ * 在看板里触发原型工作区的 workspace-sync.mjs --both。
+ * 旧服务进程没有这个接口时 GET 404 被静默吞掉，点按钮时再报「重启 serve」。
+ * 写盘由脚本完成，看板只负责 spawn + 轮询；镜像变化走已有 visualization/ SSE。
+ */
+export function useProtoSyncJob(projectId: string): ProtoSyncControl {
+  const [errorItem, setErrorItem] = useState('');
+  const control = useSpawnJob<ProtoSyncJob, string>(
+    projectId, Boolean(projectId), protoSyncStatus, startProtoSync, '刷新失败',
+  );
+  useEffect(() => {
+    setErrorItem('');
+  }, [projectId]);
+  const start = useCallback(async (item: string) => {
+    setErrorItem(item);
+    await control.start(item);
+  }, [control.start]);
+  return {
+    job: control.job,
+    running: control.running,
+    error: control.error,
+    errorItem,
+    start,
+  };
 }

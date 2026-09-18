@@ -665,7 +665,8 @@ try {
   ok('参考与原型伺服都落进不透明源，查看器壳页可用，路径穿越被挡住');
 
   // ── 7e 跨站防护：浏览器里任意一个网页都能往 127.0.0.1 POST，环回 ≠ 可信 ────────
-  // 覆盖全部五条会写盘 / 起子进程的接口（新的采集 + 既有四条）。
+  // 覆盖全部会写盘 / 起子进程的接口。原型刷新也在列里（跨站在 spawn 之前就 403，
+  // 不需要外部同步脚本；真正跑脚本的路径冒烟不覆盖）。
   // 这条要是漏了，恶意网页能用 enctype=text/plain 的表单静默触发本机操作。
   const crossSite = [
     ['POST', '/api/projects'],
@@ -673,6 +674,7 @@ try {
     [`POST`, `/api/projects/${created.id}/ingest`],
     [`POST`, `/api/projects/${created.id}/ignore`],
     [`POST`, `/api/projects/${created.id}/capture`],
+    [`POST`, `/api/projects/${created.id}/proto-sync`],
   ];
   for (const [method, endpoint] of crossSite) {
     const res = await fetch(`${base}${endpoint}`, {
@@ -694,7 +696,7 @@ try {
     headers: { 'sec-fetch-site': 'cross-site' },
   });
   if (roCross.status !== 200) die(`只读扫描被跨站校验误伤了（${roCross.status}）`);
-  ok('五条写接口都拒跨站请求，只读接口不受影响');
+  ok('写接口都拒跨站请求，只读接口不受影响');
 
   // ── 7f 采集：缺 single-file 时失败且带安装命令，写路径完全由服务端定 ──────────
   // 冒烟机器上通常没有 single-file（它不是看板的依赖，这正是要验的降级面）。
@@ -917,6 +919,7 @@ try {
       `/api/projects/${created.id}/ingest`,
       `/api/projects/${created.id}/ignore`,
       `/api/projects/${created.id}/capture`,
+      `/api/projects/${created.id}/proto-sync`,
     ]) {
       const leaked = await fetch(`${base}${endpoint}`, {
         method: 'POST',
@@ -928,7 +931,7 @@ try {
     // 普通网页跨站打接收端：照拒
     const webCross = await deliver(okPkg, { origin: 'https://evil.example', 'sec-fetch-site': 'cross-site' });
     if (webCross.status !== 403) die(`网页跨站投递没被拒（${webCross.status}）`);
-    ok('扩展来源只在 /capture-package 放行，其余五条写接口照旧 403；网页跨站投递也被拒');
+    ok('扩展来源只在 /capture-package 放行，其余写接口照旧 403；网页跨站投递也被拒');
   }
 
   // ── 7h 非环回监听时采集 403，工作空间一个字节都不许多 ────────────────────────
