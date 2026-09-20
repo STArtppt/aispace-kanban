@@ -90,7 +90,7 @@ python3 scripts/realdata.py --force     # 强制重建
 ## 发现的问题
 一条一个，带证据（测点ID + 数字），标注是**事实**还是 [推断]
 
-## 要向现场确认的（同步进 output/analysis/open-questions.md）
+## 要向现场确认的（每条同时落一份问题文件，见下节）
 ```
 
 ## 措辞纪律
@@ -122,4 +122,24 @@ python3 scripts/realdata.py --force     # 强制重建
 - 上游：`pm-doc-ingest`（资料入库）、点表走 `scripts/pointtable.py`
 - 下游：`pm-requirement-analysis`（用数据可用性调整需求优先级和验收标准）、
   `pm-prd-writing`（PRD 里的数据前提要引用核验结论）
-- 缺口一律同时写进 `output/analysis/open-questions.md`——**没有数据本身就是重要产出**
+- 缺口一律同时落成未决问题——**没有数据本身就是重要产出**
+
+### 发现未决问题怎么落
+
+**走 [`pm-open-questions`](../pm-open-questions/SKILL.md)，不要自己发明格式。**
+先看一眼 `output/analysis/`：
+
+- 有 `questions/` 目录 → **一问一文件**，新建 `questions/Q<四位编号>.md`（编号取当前最大加一）
+- 只有 `open-questions.md` → 旧工作空间，照旧往表格里追加，**不要擅自迁移结构**
+
+新结构下每条必须填 `source`（触发这条问题的文档路径）与 `context`
+（触发时在做什么，一句话）—— 溯源锚点挂在**条目**上，不挂在分节上。
+`blocks` 填它阻塞的在途交付物，判断不了就写 `backlog`，不要瞎填。
+`evidence` 与 `ai_*` 刚提问时留空；**查不到依据只能写 `我方推断`，且不能置 `answered`**。
+
+**双通道：正文归正文，问题归问题。** 分析结论写进文档，延伸出的未决问题写进问题文件，
+**两边不许互串** —— 文档里不再放「待确认问题」表格（要提就写一句「见 `questions/Q0134`」），
+问题条目里也不抄分析正文。同一条问题两处存在，很快就会对不上。
+
+数据类的问题填 `evidence` 时特别要守住：核验结论有 SQL 查出来的数字撑着就是 `资料实证`，
+只是「看起来应该是这样」就是 `我方推断` —— **推断不能关闭问题**。

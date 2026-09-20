@@ -13,7 +13,8 @@ description: 撰写可直接交付评审的 PRD、需求规格说明书、功能
 ## 写之前
 
 读齐三份输入：`output/analysis/现状基线.md`、`output/analysis/需求拆解.md`、
-`output/analysis/open-questions.md`。缺需求拆解就先走 `pm-requirement-analysis`。
+以及未决问题（新工作空间在 `output/analysis/questions/`，旧的在 `output/analysis/open-questions.md`）。
+缺需求拆解就先走 `pm-requirement-analysis`。
 
 然后问用户两件事，不要自己假设：
 
@@ -26,15 +27,21 @@ description: 撰写可直接交付评审的 PRD、需求规格说明书、功能
 
 ## 未决问题的处理
 
-PRD 里遇到 `open-questions.md` 中还没答案的地方，**显式留标记，不要用推断填平**：
+PRD 里遇到还没答案的地方，**显式留标记，不要用推断填平**：
 
 ```markdown
-> ⚠ **待确认**：计费周期按自然月还是 30 天滚动？影响本章全部规则。（→ Q1，责任人：财务王××）
+> ⚠ **待确认**：计费周期按自然月还是 30 天滚动？影响本章全部规则。（→ Q0001，责任人：财务王××）
 ```
 
 这一条是 PRD 能不能用的分水岭。悄悄按自己的理解写满，
 开发照着做完才发现理解错了，返工成本远高于文档上留一个显眼的待确认标记。
 文档开头的「未决问题汇总」把所有标记集中列一遍，评审时先过这张表。
+
+写 PRD 时**新**冒出来的问题（规则说不通、边界没人定过），走
+[`pm-open-questions`](../pm-open-questions/SKILL.md) 落成问题文件，
+`blocks` 填这份 PRD，`source` 填 PRD 路径。**不要在 PRD 正文里另起一份问题清单** ——
+文档里那张「未决问题汇总」只列**引用**（编号 + 一句话 + 责任人），
+问题本身的正文、凭据、结论都在问题文件里。两处各写一份，很快就会对不上。
 
 ## 写作规则
 
