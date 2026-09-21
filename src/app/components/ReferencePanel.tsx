@@ -1,9 +1,13 @@
+import { Loader2, RefreshCw } from 'lucide-react';
 import { CaptureBar } from '@/components/CaptureBar';
-import { EmptyState } from '@/components/Primitives';
+import { EmptyState, HeaderTooltip } from '@/components/Primitives';
 import { ShowcaseCard, ShowcaseGrid } from '@/components/ShowcaseCard';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import type { CaptureControl } from '@/hooks/useCaptureJob';
+import type { WebIngestControl } from '@/hooks/useIngestJob';
 import type { References } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 const SOURCE_LABEL: Record<string, string> = {
   manual: '手工放入',
@@ -20,9 +24,14 @@ const SOURCE_LABEL: Record<string, string> = {
 export function ReferencePanel({
   references,
   capture,
+  webIngest,
+  canMutate,
 }: {
   references?: References;
   capture: CaptureControl;
+  webIngest: WebIngestControl;
+  /** false = 非环回监听或旧服务，写入口不出现（与采集同一道闸） */
+  canMutate: boolean;
 }) {
   if (!references) {
     return (
@@ -34,6 +43,15 @@ export function ReferencePanel({
   }
 
   const { items, note, updatedAt } = references;
+  const pending = references.pending;
+  const canInbox = references.canInbox === true && canMutate;
+  const pendingHint = typeof pending === 'number' && pending > 0
+    ? (canInbox
+      ? `${pending} 份散装页面未入库，点右侧刷新`
+      : `${pending} 份散装页面未入库`)
+    : null;
+  const inboxBusy = webIngest.running;
+  const inboxMine = webIngest.job && webIngest.job.status !== 'idle';
 
   return (
     <div className="flex flex-col gap-4">
@@ -42,7 +60,13 @@ export function ReferencePanel({
         control={capture}
         placeholder="贴一条公开可访问的网址，例如 https://example.com/pricing"
         actionLabel="采集"
-        status={updatedAt ? `最近更新 ${formatRelative(updatedAt)}` : null}
+        status={
+          pendingHint
+            ? <span className="text-destructive">{pendingHint}</span>
+            : updatedAt
+              ? `最近更新 ${formatRelative(updatedAt)}`
+              : null
+        }
         scopeNote={
           // 相邻仓验证过的坑：登录后的页面抓下来是登录页，任务却显示成功。
           // 我们不做检测（那会把登录态注入整条线拖进来），改成在入口旁说清楚，
@@ -51,8 +75,54 @@ export function ReferencePanel({
           + '需要登录才能看的页面，请在浏览器里用采集插件投进来 —— 它跑在页面自己的上下文里，'
           + '带着你当前的登录态，收下来的就是你眼前那一版；投进来的参考和这里采的并排显示。'
           + '贴 URL 采下来的是页面当时的全部内容，不做脱敏，别对着不该落盘的页面点采集。'
+          + '浏览器另存的自包含 HTML 丢进 visualization/references/ 根上，点右侧刷新即可入库。'
+        }
+        extraAction={
+          canInbox ? (
+            <HeaderTooltip label={inboxBusy ? '正在入库' : '刷新收件箱'}>
+              <button
+                type="button"
+                disabled={inboxBusy}
+                aria-label="刷新收件箱"
+                className={cn(
+                  'flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground',
+                  'hover:bg-accent hover:text-foreground',
+                  'disabled:pointer-events-none disabled:opacity-50',
+                )}
+                onClick={() => void webIngest.start()}
+              >
+                {inboxBusy
+                  ? <Loader2 className="size-3.5 animate-spin" />
+                  : <RefreshCw className="size-3.5" />}
+              </button>
+            </HeaderTooltip>
+          ) : null
         }
       />
+
+      {webIngest.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="whitespace-pre-line">{webIngest.error}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {inboxMine && webIngest.job?.status === 'running' ? (
+        <Alert>
+          <AlertDescription>{webIngest.job.message}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {inboxMine && webIngest.job?.status === 'done' ? (
+        <Alert>
+          <AlertDescription className="whitespace-pre-line">{webIngest.job.message}</AlertDescription>
+        </Alert>
+      ) : null}
+
+      {inboxMine && webIngest.job?.status === 'error' && !webIngest.error ? (
+        <Alert variant="destructive">
+          <AlertDescription className="whitespace-pre-line">{webIngest.job.message}</AlertDescription>
+        </Alert>
+      ) : null}
 
       {/* note 也承载单个 zip 的解压失败等信息，清单为空时照样要显示，否则那条错误就没人看得见 */}
       {note ? (
@@ -78,7 +148,7 @@ export function ReferencePanel({
       ) : (
         <EmptyState
           title="还没有参考页"
-          hint="一份参考是一个目录，入口叫 index.html —— 把自包含的 HTML 放成 visualization/references/<名字>/index.html 即可。散装的 .html 直接扔在 references/ 根上扫不到。上面贴 URL 可以采公开页面；需要登录的页面用采集插件投进来。"
+          hint="一份参考是一个目录，入口叫 index.html。也可以把自包含的 HTML 丢进 visualization/references/ 根上，点右侧刷新即可入库。上面贴 URL 可以采公开页面；需要登录的页面用采集插件投进来。"
         />
       )}
     </div>

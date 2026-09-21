@@ -76,6 +76,19 @@
      ⑥ `input/`、`output/` 下的其它一切与 `project.yaml` 仍然只读;
      `output/decisions/` 的草稿由 agent 生成,看板不写。
      写入走「先写临时文件再原子替换」,失败不留半截文件
+   - 刷新参考收件箱时调工作空间的 `scripts/web_ingest.py --inbox`(`src/server/http.mjs` 的 `startWebIngest`)——
+     **这是第五条窄例外,范围就是下面五条,越界即为 bug**:
+     ① 看板只 `spawn`,自己不写、不 `rename`、不 `unlink` 任何一个字节,与资料转换、原型刷新同构;
+        真正写盘的是工作空间脚本
+     ② 必须用户在参考 tab 点「刷新」明确发起,没有后台自动跑、没有定时、没有自动入库
+     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`)
+     ④ 请求**不带任何路径、不带文件名、不带 URL**。脚本自己扫 `visualization/references/` 根上的散装
+        `.html` / `.htm`,slug 由脚本生成
+     ⑤ `input/raw/`、`output/`、`project.yaml`、`visualization/prototypes/` 仍然只读;
+        已有参考目录里的 `index.html` 只读不改。脚本只允许:
+        把根上散装文件收成新目录 `visualization/references/<slug>/`(`index.html` + `meta.json`),
+        以及把抽出的 Markdown 写入 `input/converted/`(落点复用 `layout.py`)。
+        URL 模式(`web_ingest.py <URL>`)仍然不向 `visualization/` 写入,看板也不得 spawn 带 URL 的调用
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
@@ -122,7 +135,7 @@ aispace-kanban/
 ├── bin/cli.mjs             # 平面 1 · CLI:参数解析 + serve/add/list/relink/remove
 ├── src/
 │   ├── server/             # 平面 2 · 常驻服务(.mjs,无类型检查)
-│   │   ├── http.mjs        #   路由 + 静态伺服 + SSE + 系统调用(open);原型刷新 spawn 也在这
+│   │   ├── http.mjs        #   路由 + 静态伺服 + SSE + 系统调用(open);原型刷新 / 参考收件箱 spawn 也在这
 │   │   ├── config.mjs      #   注册表读写 + 工作空间识别 + 重连候选
 │   │   ├── scan.mjs        #   工作空间扫描 → 结构化 JSON(只读)
 │   │   ├── meta.mjs        #   project.yaml 解析 + 完整度统计

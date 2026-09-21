@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, type IngestJob, type IngestStatus, type ProtoSyncJob, type SourceIngestJob } from '@/lib/api';
+import { api, type IngestJob, type IngestStatus, type ProtoSyncJob, type SourceIngestJob, type WebIngestJob } from '@/lib/api';
 
 /** 任务状态轮询间隔；大 PDF 可能跑几分钟，1.5s 足够且不刷接口 */
 const INGEST_POLL_MS = 1500;
@@ -164,6 +164,37 @@ export interface ProtoSyncControl {
 
 const protoSyncStatus = (id: string) => api.protoSyncStatus(id);
 const startProtoSync = (id: string, item: string) => api.startProtoSync(id, item);
+const webIngestStatus = (id: string) => api.webIngestStatus(id);
+
+/** 一个工作空间至多一轮参考收件箱任务 */
+export interface WebIngestControl {
+  job: WebIngestJob | null;
+  running: boolean;
+  error: string;
+  start: () => Promise<void>;
+}
+
+/**
+ * 在看板里触发 scripts/web_ingest.py --inbox。
+ * canInbox 缺失（旧服务 / 没有脚本）时不轮询也不查状态，按钮本来也不会出现。
+ * 写盘由工作空间脚本完成，看板只负责 spawn + 轮询；文件变化走已有 SSE。
+ */
+export function useWebIngestJob(projectId: string, canInbox?: boolean): WebIngestControl {
+  const control = useSpawnJob<WebIngestJob, void>(
+    projectId,
+    canInbox,
+    webIngestStatus,
+    (id) => api.startWebIngest(id),
+    '入库失败',
+  );
+  const start = useCallback(() => control.start(undefined as void), [control.start]);
+  return {
+    job: control.job,
+    running: control.running,
+    error: control.error,
+    start,
+  };
+}
 
 /**
  * 在看板里触发原型工作区的 workspace-sync.mjs --both。

@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { PanelTitle } from '@/components/Primitives';
 import { PrototypePanel } from '@/components/PrototypePanel';
 import { ReferencePanel } from '@/components/ReferencePanel';
 import { useCaptureJob } from '@/hooks/useCaptureJob';
-import { useProtoSyncJob } from '@/hooks/useIngestJob';
-import type { FileItem, Scan } from '@/lib/api';
+import { useProtoSyncJob, useWebIngestJob } from '@/hooks/useIngestJob';
+import { api, type FileItem, type Scan } from '@/lib/api';
 
 type VisualTab = 'reference' | 'prototype';
 
@@ -40,6 +40,24 @@ export function VisualPanel({
   // 两个 tab 各存一份的话第二处会撞 409 却显示成「没反应」
   const capture = useCaptureJob(scan.project.id);
   const protoSync = useProtoSyncJob(scan.project.id);
+  const canInbox = scan.references?.canInbox === true;
+  const webIngest = useWebIngestJob(scan.project.id, canInbox);
+  // GET /pick-directory 在非环回时 available=false，写入口（采集、收件箱刷新）一起藏掉
+  const [canMutate, setCanMutate] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    void api
+      .pickDirectoryAvailable()
+      .then((data) => {
+        if (alive) setCanMutate(Boolean(data.available));
+      })
+      .catch(() => {
+        if (alive) setCanMutate(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const select = (value: VisualTab) => {
     setTab(value);
@@ -83,7 +101,12 @@ export function VisualPanel({
           </TabsTrigger>
         </TabsList>
         <TabsContent value="reference">
-          <ReferencePanel references={scan.references} capture={capture} />
+          <ReferencePanel
+            references={scan.references}
+            capture={capture}
+            webIngest={webIngest}
+            canMutate={canMutate}
+          />
         </TabsContent>
         <TabsContent value="prototype">
           <PrototypePanel

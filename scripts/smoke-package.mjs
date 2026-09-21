@@ -675,6 +675,7 @@ try {
     [`POST`, `/api/projects/${created.id}/ignore`],
     [`POST`, `/api/projects/${created.id}/capture`],
     [`POST`, `/api/projects/${created.id}/proto-sync`],
+    [`POST`, `/api/projects/${created.id}/web-ingest`],
   ];
   for (const [method, endpoint] of crossSite) {
     const res = await fetch(`${base}${endpoint}`, {
@@ -920,6 +921,7 @@ try {
       `/api/projects/${created.id}/ignore`,
       `/api/projects/${created.id}/capture`,
       `/api/projects/${created.id}/proto-sync`,
+      `/api/projects/${created.id}/web-ingest`,
     ]) {
       const leaked = await fetch(`${base}${endpoint}`, {
         method: 'POST',
@@ -957,6 +959,14 @@ try {
         body: JSON.stringify({ plane: 'reference', url: 'https://example.com/' }),
       });
       if (denied.status !== 403) die(`非环回监听时采集没被拒（${denied.status}，应该是 403）`);
+      const inboxRefreshDenied = await fetch(`${hostBase}/api/projects/${created.id}/web-ingest`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ path: 'visualization/references/nope.html' }),
+      });
+      if (inboxRefreshDenied.status !== 403) {
+        die(`非环回监听时参考收件箱没被拒（${inboxRefreshDenied.status}，应该是 403）`);
+      }
       // 接收端也在这道闸后面 —— 它是个写接口，不能因为「扩展来源放行」就绕过非环回禁写
       const inboxDenied = await fetch(`${hostBase}/capture-package`, {
         method: 'POST',
@@ -973,7 +983,7 @@ try {
       if (roScan.status !== 200) die(`非环回时只读扫描也被拒了（${roScan.status}）`);
       const listAfter = fs.readdirSync(path.join(visRoot, 'references')).sort().join(',');
       if (listAfter !== listBefore) die('非环回采集被拒了却还是写了盘', `${listBefore} → ${listAfter}`);
-      ok('非环回监听：采集与采集包接收端都 403、工作空间没被写入，只读扫描照常');
+      ok('非环回监听：采集、参考收件箱与采集包接收端都 403、工作空间没被写入，只读扫描照常');
     } finally {
       hostServer.kill();
     }

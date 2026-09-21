@@ -325,6 +325,16 @@ export interface References {
   items: ReferenceItem[];
   note: string;
   updatedAt?: string;
+  /**
+   * 工作空间里有 scripts/web_ingest.py 时为 true，前端才显示参考 tab 的刷新按钮。
+   * 可选：旧服务进程没有这个字段时不显示刷新按钮，退回改动前的参考 tab。
+   */
+  canInbox?: boolean;
+  /**
+   * visualization/references/ 根上还没入库的散装 .html / .htm 份数。
+   * 它们不在 items 里。可选：旧服务进程没有这个字段时不提示待入库。
+   */
+  pending?: number;
 }
 
 export interface ProjectMeta {
@@ -556,6 +566,26 @@ export interface SourceIngestJob {
  * 与 IngestJob 同构，但**在服务端是另一把锁**：正在转资料的时候照样能刷新原型。
  * idle = 这个服务进程里还没刷过；running 时前端轮询；done/error 时展示 message。
  */
+/**
+ * POST/GET /api/projects/:id/web-ingest 的参考收件箱任务状态。
+ * 与 IngestJob 同构，但**在服务端是另一把锁**：正在转资料或采集时照样能刷新收件箱。
+ * 请求不带路径；看板只 spawn `--inbox`。
+ * idle = 这个服务进程里还没跑过；running 时前端轮询；done/error 时展示 message。
+ */
+export interface WebIngestJob {
+  status: IngestStatus;
+  /**
+   * 三态各自的人话。done 时是脚本的「收件箱完成」摘要，
+   * error 时是脚本原文（缺 defuddle 的安装命令、哪一份抽不出正文）——
+   * 直接显示它，不要自己写「操作失败请重试」。
+   */
+  message: string;
+  startedAt?: string;
+  finishedAt?: string;
+  exitCode?: number | null;
+  log?: string;
+}
+
 export interface ProtoSyncJob {
   status: IngestStatus;
   /**
@@ -905,6 +935,16 @@ export const api = {
       body: JSON.stringify({ item }),
     }),
   protoSyncStatus: (id: string) => request<ProtoSyncJob>(`/api/projects/${id}/proto-sync`),
+  /**
+   * 触发工作空间 scripts/web_ingest.py --inbox；立刻返回，进度用 webIngestStatus 轮询。
+   * 看板只 spawn，写盘的是那个脚本；落盘由 visualization/ 与 input/ 的 SSE 捕获。
+   *
+   * **请求不带路径、文件名或 URL**，参数由服务端写死为 `--inbox`。
+   * 旧服务进程没有这个接口（404），request 会带上「重启 serve」的提示。
+   */
+  startWebIngest: (id: string) =>
+    request<WebIngestJob>(`/api/projects/${id}/web-ingest`, { method: 'POST' }),
+  webIngestStatus: (id: string) => request<WebIngestJob>(`/api/projects/${id}/web-ingest`),
   /**
    * 把 input/raw/ 下的文件或目录写进 input/.ingestignore，不再算待转换。
    * 文件还在磁盘上，只是看板和 ingest.py 一起跳过它。

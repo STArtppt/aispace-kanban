@@ -67,6 +67,13 @@ const protoSyncJobs = new Map();
 const PROTO_SYNC_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
+ * 每个项目至多一个进行中的**参考收件箱**任务。与 ingest / source / proto-sync / capture 并列，**不共用锁** ——
+ * 转一份大 PDF 或采一页的时候仍应能把刚丢进来的散装 HTML 收掉。
+ * 看板只 spawn `scripts/web_ingest.py --inbox`，自己不写、不移动任何一个字节。
+ */
+const webIngestJobs = new Map();
+
+/**
  * 目录选择框是模态的，同一时刻只允许一个。
  * true = 正在等用户在桌面上选；第二个请求直接 409，不要弹出两个。
  */
@@ -936,6 +943,128 @@ function protoSyncStatus(projectId) {
   };
 }
 
+/**
+ * 从 web_ingest.py --inbox 的输出提炼人话。脚本自己打的就是中文，
+ * 成功有「收件箱完成」一行，失败会点名缺 defuddle 或哪一份抽不出正文 —— 原样带出去。
+ */
+function summarizeWebIngestLog(log, exitCode) {
+  const text = (log || '').trim();
+  const lines = text ? text.split(/\r?\n/).filter(Boolean) : [];
+  const tail = lines.slice(-16).join('\n');
+  const summary = lines.find((l) => l.startsWith('收件箱完成') || l.startsWith('没有需要处理'));
+  if (exitCode === 0) {
+    return { message: summary || tail || '收件箱入库完成。', log: tail };
+  }
+  return {
+    message: summary
+      ? `${summary}${tail && tail !== summary ? `\n${tail}` : ''}`
+      : (tail || `网页入库脚本异常退出（退出码 ${exitCode}）。`),
+    log: tail,
+  };
+}
+
+/**
+ * 在工作空间里异步跑 `scripts/web_ingest.py --inbox`。
+ * 看板只 spawn，真正写 visualization/references/<slug>/ 与 input/converted/ 的是脚本本身。
+ * 参数由服务端写死为 `--inbox`，不读请求体里的任何路径或 URL。
+ */
+async function startWebIngest(project) {
+  const existing = webIngestJobs.get(project.id);
+  if (existing?.status === 'running') {
+    const err = new Error('这个工作空间正在把参考页入库，等这轮结束后再试。');
+    err.statusCode = 409;
+    throw err;
+  }
+
+  const status = projectStatus(project);
+  if (!status.ok) {
+    const err = new Error(
+      `这个工作空间现在不可用${status.reasons?.length ? `：${status.reasons.join('；')}` : ''}。`,
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const script = path.join(project.root, 'scripts', 'web_ingest.py');
+  if (!fs.existsSync(script)) {
+    const err = new Error(
+      '这个工作空间没有 scripts/web_ingest.py，看板没法把散装参考页入库。'
+        + '用模板新建工作空间会自带这个脚本；老工作空间可以从模板里拷一份 '
+        + 'scripts/web_ingest.py 过来。',
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const py = await findPython();
+  if (!py) {
+    const err = new Error(
+      '找不到 Python 3。转换脚本要靠它跑，请先装 Python 3'
+        + '（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。',
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const [bin, ...prefix] = py;
+  const job = {
+    status: 'running',
+    startedAt: new Date().toISOString(),
+    finishedAt: '',
+    exitCode: null,
+    message: '正在把散装参考页入库…',
+    log: '',
+  };
+  webIngestJobs.set(project.id, job);
+
+  const child = spawn(bin, [...prefix, script, '--inbox'], {
+    cwd: project.root,
+  });
+
+  child.stdout.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
+  child.stderr.on('data', (chunk) => appendIngestLog(job, chunk.toString()));
+  child.on('error', (err) => {
+    if (job.status !== 'running') return;
+    job.status = 'error';
+    job.finishedAt = new Date().toISOString();
+    job.exitCode = null;
+    job.message = err.code === 'ENOENT'
+      ? '找不到 Python 3。请先装 Python 3（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。'
+      : `启动网页入库脚本失败：${err.message}`;
+  });
+  child.on('close', (code) => {
+    if (job.status !== 'running') return;
+    const exitCode = code ?? 1;
+    job.exitCode = exitCode;
+    job.finishedAt = new Date().toISOString();
+    const summary = summarizeWebIngestLog(job.log, exitCode);
+    job.message = summary.message;
+    job.log = summary.log;
+    job.status = exitCode === 0 ? 'done' : 'error';
+  });
+
+  return {
+    status: job.status,
+    startedAt: job.startedAt,
+    message: job.message,
+  };
+}
+
+function webIngestStatus(projectId) {
+  const job = webIngestJobs.get(projectId);
+  if (!job) {
+    return { status: 'idle', message: '', startedAt: '', finishedAt: '', exitCode: null, log: '' };
+  }
+  return {
+    status: job.status,
+    message: job.message || '',
+    startedAt: job.startedAt || '',
+    finishedAt: job.finishedAt || '',
+    exitCode: job.exitCode,
+    log: job.log || '',
+  };
+}
+
 /** 壳页里要拼进 HTML 的都是用户目录名和 meta.json 里的字符串 —— 一律转义。 */
 function escapeHtml(value) {
   return String(value ?? '')
@@ -1078,8 +1207,10 @@ function requireProject(id) {
  * 监听工作空间的资料、产出与视觉目录，变了就通过 SSE 推给前端。
  *
  * `visualization/` 整树（覆盖 references/ 与 prototypes/ 两个子目录）：
- * 参考或原型包增删、zip 替换后都要推。原型刷新写的镜像和离线 zip 也在这棵树上，
- * 完成后原型 tab 会自己刷新。推送给原型仓的 `.workspace-inbox.md` 在工作空间外，
+ * 参考或原型包增删、zip 替换后都要推。原型刷新写的镜像和离线 zip、
+ * 参考收件箱收下的新目录也在这棵树上，完成后参考 tab 会自己刷新。
+ * 收件箱抽出的 Markdown 落在 `input/converted/`，同样在监听内。
+ * 推送给原型仓的 `.workspace-inbox.md` 在工作空间外，
  * 不接 SSE，只在任务结果行体现。
  * 它**可能启动时还不存在** —— 老工作空间要等用户
  * 手工 `mv` 才有，采集也是第一次采才建。所以再非递归地看一眼工作空间根，
@@ -1707,6 +1838,21 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       if (!file) return json(res, 400, { error: '缺少文件路径' });
       resolveInside(project.root, file);
       return json(res, 200, appendNoteHistory(project.id, file, body.notes));
+    }
+  }
+
+  // 参考收件箱：看板只 spawn 工作空间 scripts/web_ingest.py --inbox，自己不写任何一个字节。
+  // 请求不带路径 / 文件名 / URL，参数由服务端写死。
+  if (head === 'projects' && id && action === 'web-ingest') {
+    const project = requireProject(id);
+    if (req.method === 'GET') {
+      return json(res, 200, webIngestStatus(project.id));
+    }
+    if (req.method === 'POST') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      await readBody(req);
+      return json(res, 200, await startWebIngest(project));
     }
   }
 

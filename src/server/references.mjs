@@ -7,8 +7,8 @@
  *   - meta.json 可选：缺了 / 坏了都退回 manual + 从 <title> 取标题，条目不消失
  *   - screenshots/{hero,full,mobile}.png 可选，缺了卡片走窗框占位
  *
- * 本模块**只读**：不往工作空间写任何东西。往里放参考的两条路
- * （贴 URL 采集、浏览器插件投递）在别的 change 里。
+ * 本模块**只读**：不往工作空间写任何东西。往里放参考的路
+ * （贴 URL 采集、浏览器插件投递、收件箱刷新 spawn `web_ingest.py --inbox`）在别的模块里。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -64,14 +64,23 @@ function listScreenshots(dirAbs) {
   return found;
 }
 
+function hasWebIngestScript(root) {
+  try {
+    return fs.existsSync(path.join(root, 'scripts', 'web_ingest.py'));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 列出 visualization/references/ 下可展示的参考（不产出 url，url 由 projectId 拼）。
  * 目录不存在或读不到时降级成空清单 + note，不抛。
- * @returns {{ items: Array, note: string, updatedAt: string }}
+ * pending / canInbox 读失败同样降级，不让扫描接口 500。
+ * @returns {{ items: Array, note: string, updatedAt: string, pending: number, canInbox: boolean }}
  */
 export function listReferences(root) {
   const dir = path.join(root, REFERENCES_DIR);
-  const result = { items: [], note: '', updatedAt: '' };
+  const result = { items: [], note: '', updatedAt: '', pending: 0, canInbox: hasWebIngestScript(root) };
 
   if (!fs.existsSync(dir)) {
     result.note = '工作空间里还没有 visualization/references/ 目录';
@@ -83,16 +92,24 @@ export function listReferences(root) {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     result.note = '读不到 visualization/references/ 目录';
+    result.pending = 0;
+    result.canInbox = false;
     return result;
   }
 
   const items = [];
   let newest = 0;
+  let pending = 0;
 
   for (const ent of entries) {
     const name = ent.name;
-    // 散装的 某页.html 直接躺在这里 → 不是一份参考，扫不到（空态里写清楚了）
-    if (!ent.isDirectory() || name.startsWith('.') || SKIP_DIR.has(name)) continue;
+    // 散装的 某页.html 直接躺在这里 → 不是一份参考，不进 items，计入 pending 等收件箱收走
+    if (!ent.isDirectory()) {
+      const ext = path.extname(name).toLowerCase();
+      if (!name.startsWith('.') && (ext === '.html' || ext === '.htm')) pending += 1;
+      continue;
+    }
+    if (name.startsWith('.') || SKIP_DIR.has(name)) continue;
     const abs = path.join(dir, name);
     if (!hasIndexHtml(abs)) continue;
 
@@ -125,18 +142,20 @@ export function listReferences(root) {
   }
 
   result.items = items.sort((a, b) => a.title.localeCompare(b.title, 'zh'));
+  result.pending = pending;
   if (newest) result.updatedAt = new Date(newest).toISOString();
   if (!result.items.length && !result.note) {
     result.note =
       'visualization/references/ 里还没有参考页。一份参考是一个目录，入口叫 index.html —— '
-      + '把自包含的 HTML 放成 visualization/references/<名字>/index.html 即可。';
+      + '把自包含的 HTML 放成 visualization/references/<名字>/index.html 即可。'
+      + '也可以把散装 .html 丢在根上，点刷新入库。';
   }
   return result;
 }
 
 /**
  * 给 scan / 独立接口用的完整结构（含可点击 url，指向查看器壳页）。
- * @returns {{ items: Array, note: string, updatedAt: string }}
+ * @returns {{ items: Array, note: string, updatedAt: string, pending: number, canInbox: boolean }}
  */
 export function scanReferences(root, projectId = '') {
   const listed = listReferences(root);
@@ -164,7 +183,13 @@ export function scanReferences(root, projectId = '') {
     };
   });
 
-  return { items, note: listed.note, updatedAt: listed.updatedAt };
+  return {
+    items,
+    note: listed.note,
+    updatedAt: listed.updatedAt,
+    pending: listed.pending,
+    canInbox: listed.canInbox,
+  };
 }
 
 /**

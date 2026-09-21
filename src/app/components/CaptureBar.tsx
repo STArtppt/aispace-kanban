@@ -39,6 +39,7 @@ export function CaptureBar({
   actionLabel,
   scopeNote,
   status,
+  extraAction,
 }: {
   plane: CapturePlane;
   control: CaptureControl;
@@ -49,6 +50,8 @@ export function CaptureBar({
   scopeNote: ReactNode;
   /** 同一排左侧的状态文字（最近更新等） */
   status?: ReactNode;
+  /** 链接输入右侧的可选动作（参考 tab 的收件箱刷新）。原型 tab 不传，布局不变。 */
+  extraAction?: ReactNode;
 }) {
   const [url, setUrl] = useState('');
   const [open, setOpen] = useState(false);
@@ -149,6 +152,7 @@ export function CaptureBar({
             </div>
           </HeaderTooltip>
         </form>
+        {extraAction}
       </div>
 
       {unsupported ? (
