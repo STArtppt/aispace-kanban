@@ -18,6 +18,7 @@ import remarkGfm from 'remark-gfm';
 import { MarkdownCodeBlock } from '@/components/MarkdownCodeBlock';
 import { MermaidBlock } from '@/components/MermaidBlock';
 import { useScrollActivity } from '@/hooks/useScrollActivity';
+import { hoistLargeDataUris, shouldPassthroughUrl } from '@/lib/markdownUrls';
 import { pickSourceAttrs, rehypeSourcePos, rehypeStripTableWhitespace } from '@/lib/sourceAnchor';
 import { cn } from '@/lib/utils';
 
@@ -355,16 +356,22 @@ export function Markdown({
   // 所以这里把它收进 ref，对外只暴露一个身份恒定的包装。
   const urlTransformRef = useRef(urlTransform);
   urlTransformRef.current = urlTransform;
-  const stableUrlTransform = useCallback(
+  const stableUrlTransform = useCallback((url: string) => {
+    // data: / blob: / http(s): 已经是可用地址。调用方（阅读器）会把相对路径
+    // 拼成 /file?path=…；这些协议若也走那条路，几 MB 的 data URI 会变成
+    // `/file?path=data%3A…`，点开卡死且图裂开。
+    if (shouldPassthroughUrl(url)) return url;
     // 没传时必须退回 react-markdown 自己的实现：它会挡 javascript: 之类的协议，
     // 直接原样返回等于把这道消毒去掉了。
-    (url: string) => (urlTransformRef.current ?? defaultUrlTransform)(url),
-    [],
-  );
+    return (urlTransformRef.current ?? defaultUrlTransform)(url);
+  }, []);
+
+  // 超大 data URI 抽成 blob:，再交给 micromark。原文仍用来盖锚点。
+  const hoisted = useMemo(() => hoistLargeDataUris(children), [children]);
 
   const renderKey = useMemo(
-    () => `${children.length}:${children.slice(0, 64)}:${sourceFile ?? ''}:${sourceByteOffset}`,
-    [children, sourceFile, sourceByteOffset],
+    () => `${children.length}:${children.slice(0, 64)}:${sourceFile ?? ''}:${sourceByteOffset}:${hoisted.replaced}`,
+    [children, sourceFile, sourceByteOffset, hoisted.replaced],
   );
 
   const rehypePlugins: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = useMemo(() => {
@@ -375,10 +382,18 @@ export function Markdown({
       rehypeStripTableWhitespace,
     ];
     if (sourceFile) {
-      plugins.push([rehypeSourcePos, { file: sourceFile, source: children, byteOffset: sourceByteOffset }]);
+      plugins.push([
+        rehypeSourcePos,
+        {
+          file: sourceFile,
+          source: children,
+          byteOffset: sourceByteOffset,
+          mapCharOffset: hoisted.mapToOriginal,
+        },
+      ]);
     }
     return plugins;
-  }, [sourceFile, children, sourceByteOffset]);
+  }, [sourceFile, children, sourceByteOffset, hoisted.mapToOriginal]);
 
   /**
    * 整棵正文按「源码 + 锚点参数」memo。
@@ -403,10 +418,10 @@ export function Markdown({
         components={mdComponents}
         urlTransform={stableUrlTransform}
       >
-        {children}
+        {hoisted.text}
       </ReactMarkdown>
     ),
-    [children, renderKey, rehypePlugins, stableUrlTransform],
+    [hoisted.text, renderKey, rehypePlugins, stableUrlTransform],
   );
 
   // 布局后根据真实 DOM 打 id，再回传目录 —— 彻底避开 render 期序号问题

@@ -44,6 +44,7 @@ import { type IngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
 import { collectBlocks, createSearchJumper, type SearchJumper } from '@/lib/blockIndex';
 import { queryTokens, searchBlocks, toSnippetParts } from '@/lib/fuzzySearch';
+import { shouldPassthroughUrl } from '@/lib/markdownUrls';
 import { utf8Len } from '@/lib/sourceAnchor';
 import {
   api,
@@ -99,8 +100,16 @@ function dirOf(path: string) {
 
 /** 把 markdown 里的相对图片路径解析成后端的文件接口地址。 */
 function resolveRelative(base: string, url: string) {
-  if (/^(https?:|data:|#)/.test(url)) return url;
-  const segments = `${base}/${url}`.split('/');
+  if (shouldPassthroughUrl(url)) return url;
+  // micromark 会把目标里的非 ASCII 编成 %E6…；这里先解开，再交给
+  // encodeURIComponent 做查询参数。不解的话中文文件名会编两次，图 404。
+  let decoded = url;
+  try {
+    decoded = decodeURI(url);
+  } catch {
+    decoded = url;
+  }
+  const segments = `${base}/${decoded}`.split('/');
   const stack: string[] = [];
   for (const seg of segments) {
     if (!seg || seg === '.') continue;
@@ -1257,7 +1266,11 @@ export function Reader({
                       key={item.path}
                       sourceFile={annotateFile}
                       sourceByteOffset={sourceByteOffset}
-                      urlTransform={(url) => api.fileUrl(projectId, resolveRelative(base, url))}
+                      urlTransform={(url) =>
+                        shouldPassthroughUrl(url)
+                          ? url
+                          : api.fileUrl(projectId, resolveRelative(base, url))
+                      }
                       onHeadingsChange={(items) => setTocState({ path: item.path, items })}
                     >
                       {body}

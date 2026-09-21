@@ -6,13 +6,14 @@
  */
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildAnnotationPrompt } from '../src/app/lib/annotationPrompt.ts';
+import { hoistLargeDataUris, shouldPassthroughUrl } from '../src/app/lib/markdownUrls.ts';
 import {
   a2FromProps,
   anchorFromLeaves,
@@ -23,6 +24,7 @@ import {
   rehypeStripTableWhitespace,
   renderedText,
   sliceUtf8,
+  utf8Len,
   type AnchorOk,
 } from '../src/app/lib/sourceAnchor.ts';
 
@@ -359,6 +361,63 @@ function main() {
   assert(prompt.includes('先按批注意见修改，改完后做好全文口径同步'), '要先改批注、再同步全文口径');
   assert(!prompt.includes('不要改动未提及的部分'), '不再用“未提及一律不动”这种会卡死关联改动的说法');
   console.log('  ok  后段批注排在前面，编号与页面一致');
+
+  console.log('8. 超大 data URI 抽走后再解析，锚点仍对原文');
+  assert(shouldPassthroughUrl('data:image/png;base64,xx'), 'data: 应放行');
+  assert(shouldPassthroughUrl('blob:http://localhost:5180/abc'), 'blob: 应放行');
+  assert(shouldPassthroughUrl('https://example.com/a.png'), 'https: 应放行');
+  assert(shouldPassthroughUrl('mailto:a@b.c'), 'mailto: 应放行');
+  assert(!shouldPassthroughUrl('./x.png'), '相对路径不应放行');
+  const smallUri = `![小](data:image/png;base64,${'A'.repeat(32)})`;
+  const smallHoist = hoistLargeDataUris(smallUri, { createUrl: () => 'blob:test' });
+  assert(smallHoist.replaced === 0 && smallHoist.text === smallUri, '短 data URI 应原样留下');
+  const payload = 'A'.repeat(20_000);
+  const huge = `前面一段。\n\n![头像](data:image/webp;base64,${payload})\n\n后面一段。`;
+  const hoisted = hoistLargeDataUris(huge, { createUrl: () => 'blob:test' });
+  assert(hoisted.replaced === 1, `应抽走 1 处，实际 ${hoisted.replaced}`);
+  assert(hoisted.text.includes('blob:test'), '解析文本应换成短地址');
+  assert(!hoisted.text.includes(payload.slice(0, 80)), '解析文本不应再带大段 base64');
+  const map = hoisted.mapToOriginal;
+  assert(map, '抽过之后要有偏移映射');
+  assert(map(0) === 0, '文首偏移应不变');
+  const afterRewritten = hoisted.text.indexOf('后面一段');
+  const afterOriginal = huge.indexOf('后面一段');
+  assert(afterRewritten >= 0 && afterOriginal >= 0, '前后文都在');
+  assert(
+    map(afterRewritten) === afterOriginal,
+    `「后面一段」映射应对回原文：rewritten ${afterRewritten} → ${map(afterRewritten)}，原文 ${afterOriginal}`,
+  );
+  const tHuge0 = performance.now();
+  const hugeHtml = renderToStaticMarkup(
+    createElement(
+      ReactMarkdown,
+      {
+        remarkPlugins: remarkPlugins as never,
+        rehypePlugins: [
+          rehypeRaw,
+          rehypeStripTableWhitespace,
+          [rehypeSourcePos, { file: FILE, source: huge, byteOffset: 0, mapCharOffset: map }],
+        ] as never,
+        urlTransform: (url: string) => (shouldPassthroughUrl(url) ? url : defaultUrlTransform(url)),
+      },
+      hoisted.text,
+    ),
+  );
+  const tHuge = performance.now() - tHuge0;
+  assert(hugeHtml.includes('后面一段'), `抽走后正文丢了：${hugeHtml.slice(0, 200)}`);
+  assert(hugeHtml.includes('blob:test'), `短地址没进 img src：${hugeHtml.slice(-200)}`);
+  const afterStart = utf8Len(huge.slice(0, afterOriginal));
+  const afterEnd = afterStart + utf8Len('后面一段');
+  assert(
+    [...hugeHtml.matchAll(/data-source-range="(\d+),(\d+)"/g)].some((m) => {
+      const start = Number(m[1]);
+      const end = Number(m[2]);
+      return start <= afterStart && end >= afterEnd;
+    }),
+    `锚点没有盖住原文「后面一段」(${afterStart},${afterEnd})：${hugeHtml}`,
+  );
+  assert(tHuge < 80, `抽走后解析仍慢 ${tHuge.toFixed(0)}ms`);
+  console.log(`  ok  2 万字符 data URI 抽走后管线 ${tHuge.toFixed(0)}ms，后面一段锚点仍对原文`);
 
   console.log('\n全部通过');
 }

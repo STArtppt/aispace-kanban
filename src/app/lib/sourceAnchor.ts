@@ -151,6 +151,11 @@ export type SourcePosOptions = {
   source: string;
   /** 该字符串在源文件里的 UTF-8 字节起点 */
   byteOffset?: number;
+  /**
+   * 解析用的是抽过 data URI 的短文本时，把 HAST 里的字符偏移映射回 `source`。
+   * 不传就当解析文本与 `source` 是同一份。
+   */
+  mapCharOffset?: (offset: number) => number;
 };
 
 export type StructureHint = '段落' | '表格行' | '列表项' | '跨块';
@@ -184,14 +189,21 @@ export type AnchorFail = {
 
 export type AnchorResult = AnchorOk | AnchorFail;
 
-function rangeFromPosition(node: HastNode, index: Uint32Array, byteOffset: number): SourceRange | null {
+function rangeFromPosition(
+  node: HastNode,
+  index: Uint32Array,
+  byteOffset: number,
+  mapCharOffset?: (offset: number) => number,
+): SourceRange | null {
   const startOff = node.position?.start?.offset;
   const endOff = node.position?.end?.offset;
   if (startOff == null || endOff == null) return null;
+  const startChar = mapCharOffset ? mapCharOffset(startOff) : startOff;
+  const endChar = mapCharOffset ? mapCharOffset(endOff) : endOff;
   // 位置越界(理论上不该有)时钳到表尾，行为与原先 charToByte 的两头夹取一致
   const last = index.length - 1;
-  const start = byteOffset + index[Math.max(0, Math.min(startOff, last))];
-  const end = byteOffset + index[Math.max(0, Math.min(endOff, last))];
+  const start = byteOffset + index[Math.max(0, Math.min(startChar, last))];
+  const end = byteOffset + index[Math.max(0, Math.min(endChar, last))];
   if (end < start) return null;
   return { start, end };
 }
@@ -224,8 +236,14 @@ function shouldWrapText(parent: HastNode, child: HastNode): boolean {
   return true;
 }
 
-function wrapText(child: HastNode, file: string, index: Uint32Array, byteOffset: number): HastNode {
-  const range = rangeFromPosition(child, index, byteOffset);
+function wrapText(
+  child: HastNode,
+  file: string,
+  index: Uint32Array,
+  byteOffset: number,
+  mapCharOffset?: (offset: number) => number,
+): HastNode {
+  const range = rangeFromPosition(child, index, byteOffset, mapCharOffset);
   const span: HastNode = {
     type: 'element',
     tagName: 'span',
@@ -237,18 +255,24 @@ function wrapText(child: HastNode, file: string, index: Uint32Array, byteOffset:
   return span;
 }
 
-function walk(node: HastNode, file: string, index: Uint32Array, byteOffset: number) {
+function walk(
+  node: HastNode,
+  file: string,
+  index: Uint32Array,
+  byteOffset: number,
+  mapCharOffset?: (offset: number) => number,
+) {
   if (node.type === 'element' && !isTextWrapper(node)) {
-    const range = rangeFromPosition(node, index, byteOffset);
+    const range = rangeFromPosition(node, index, byteOffset, mapCharOffset);
     if (range) stamp(node, file, range);
   }
   if (!node.children) return;
   const next: HastNode[] = [];
   for (const child of node.children) {
     if (shouldWrapText(node, child)) {
-      next.push(wrapText(child, file, index, byteOffset));
+      next.push(wrapText(child, file, index, byteOffset, mapCharOffset));
     } else {
-      walk(child, file, index, byteOffset);
+      walk(child, file, index, byteOffset, mapCharOffset);
       next.push(child);
     }
   }
@@ -277,10 +301,11 @@ export function rehypeSourcePos(options: SourcePosOptions) {
   const file = options.file;
   const source = options.source;
   const byteOffset = options.byteOffset ?? 0;
+  const mapCharOffset = options.mapCharOffset;
   return (tree: HastNode) => {
     if (!file) return;
     // 前缀表跟着这一次调用建，不跨文档缓存：source 变了表就作废
-    walk(tree, file, buildByteIndex(source), byteOffset);
+    walk(tree, file, buildByteIndex(source), byteOffset, mapCharOffset);
   };
 }
 
