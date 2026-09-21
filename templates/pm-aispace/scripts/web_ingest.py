@@ -24,6 +24,10 @@ defuddle 自己去抓只能拿到初始 HTML，SPA 站点会变成空壳。
 虚拟的 `input/raw/web/...` 路径只用来算落点，**不会往 raw/ 写任何东西**。
 没有 URL 时 host 用 `dropped`，标题用参考 slug。
 
+正文里的 `data:image`（SingleFile / defuddle 常把整张图内联成几 MB 的 base64）
+抽到 `input/assets/<标题>/`，markdown 改成相对产物目录的 `![](...)`。
+这和 docx 抽图同一套落点；不抽的话看板点开预览会把几 MB 字符串塞进 markdown 管线。
+
 front-matter 字段名沿用既有转换脚本：`source` / `source_sha256` / `converted_by` / `converted_at`。
 `source` 能读到 `http`/`https` 就记这个地址（**含 fragment**，SPA 路由经常在 hash 里）；
 读不到就记参考路径。摘要值记**提取出的正文**（不是整页 HTML）。
@@ -46,6 +50,7 @@ front-matter 字段名沿用既有转换脚本：`source` / `source_sha256` / `c
 from __future__ import annotations
 
 import argparse
+import base64
 import datetime as dt
 import hashlib
 import json
@@ -56,7 +61,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from layout import (  # noqa: E402
@@ -64,6 +69,8 @@ from layout import (  # noqa: E402
     add_ignore_flags,
     ignore_patterns,
     is_ignored,
+    md_link,
+    rel_path,
     repo_rel,
     safe_component,
     single_target,
@@ -74,6 +81,25 @@ HERE = Path(__file__).resolve().parent
 WS = HERE.parent
 REF_ROOT = WS / "visualization" / "references"
 CONVERTED = WS / "input" / "converted"
+ASSETS = WS / "input" / "assets"
+
+EXT_BY_MIME = {
+    "image/png": ".png",
+    "image/jpeg": ".jpg",
+    "image/jpg": ".jpg",
+    "image/gif": ".gif",
+    "image/webp": ".webp",
+    "image/bmp": ".bmp",
+    "image/tiff": ".tiff",
+    "image/svg+xml": ".svg",
+    "image/x-icon": ".ico",
+    "image/vnd.microsoft.icon": ".ico",
+}
+
+DATA_IMAGE_HEADER = re.compile(
+    r"data:(image/[a-zA-Z0-9.+-]+)((?:;[a-zA-Z0-9.+-]+=[^;,]+)*)?(;base64)?,",
+    re.I,
+)
 
 DEFUDDLE_INSTALL = "npm install -g defuddle"
 SINGLE_FILE_INSTALL = "npm i -g single-file-cli"
@@ -357,6 +383,119 @@ def unique_slug(base: str) -> str:
         n += 1
 
 
+def _scan_base64_payload(source: str, from_idx: int) -> int:
+    i = from_idx
+    n = len(source)
+    while i < n:
+        c = source[i]
+        if (
+            ("A" <= c <= "Z")
+            or ("a" <= c <= "z")
+            or ("0" <= c <= "9")
+            or c in "+/=\n\r\t "
+        ):
+            i += 1
+            continue
+        break
+    return i
+
+
+def _scan_delimited_payload(source: str, from_idx: int) -> int:
+    i = from_idx
+    n = len(source)
+    while i < n and source[i] not in ')"\'> \n\r\t<':
+        i += 1
+    return i
+
+
+def _decode_data_image(mime: str, payload: str, is_base64: bool) -> bytes | None:
+    try:
+        if is_base64:
+            compact = re.sub(r"\s+", "", payload)
+            pad = (-len(compact)) % 4
+            return base64.b64decode(compact + ("=" * pad))
+        return unquote(payload).encode("utf-8")
+    except (ValueError, UnicodeError):
+        return None
+
+
+def _image_ext(mime: str) -> str:
+    return EXT_BY_MIME.get(mime.lower().split(";", 1)[0].strip(), ".bin")
+
+
+def _image_stem(markdown: str, uri_start: int, fallback: str) -> str:
+    window = markdown[max(0, uri_start - 200) : uri_start]
+    alt = re.search(r"!\[([^\]]{1,80})\]\($", window)
+    if alt and alt.group(1).strip():
+        return safe_component(alt.group(1).strip())[:60]
+    html_alt = re.search(r'alt="([^"]{1,80})"[^>]*src=["\']?$', window, re.I)
+    if html_alt and html_alt.group(1).strip():
+        return safe_component(html_alt.group(1).strip())[:60]
+    return fallback
+
+
+def extract_inline_images(markdown: str, link_prefix: str) -> tuple[str, list[tuple[str, bytes]]]:
+    """把 `data:image` 抽成文件名 + 字节，markdown 改成相对产物目录的链接。
+
+    不落盘：调用方在确定要写产物之后再写 `input/assets/<标题>/`。
+    同一份正文里相同字节只留一个文件。
+    """
+    matches: list[tuple[int, int, str, bytes]] = []
+    pos = 0
+    while True:
+        header = DATA_IMAGE_HEADER.search(markdown, pos)
+        if not header:
+            break
+        start = header.start()
+        payload_start = header.end()
+        is_base64 = bool(header.group(3))
+        end = (
+            _scan_base64_payload(markdown, payload_start)
+            if is_base64
+            else _scan_delimited_payload(markdown, payload_start)
+        )
+        blob = _decode_data_image(header.group(1), markdown[payload_start:end], is_base64)
+        pos = end
+        if not blob:
+            continue
+        matches.append((start, end, header.group(1), blob))
+
+    if not matches:
+        return markdown, []
+
+    files: list[tuple[str, bytes]] = []
+    digest_to_name: dict[str, str] = {}
+    used_names: set[str] = set()
+    replacements: list[tuple[int, int, str]] = []
+    n = 0
+    for start, end, mime, blob in matches:
+        digest = hashlib.sha256(blob).hexdigest()
+        name = digest_to_name.get(digest)
+        if name is None:
+            n += 1
+            stem = _image_stem(markdown, start, f"image{n}")
+            ext = _image_ext(mime)
+            name = f"{stem}{ext}"
+            if name in used_names:
+                k = 2
+                while f"{stem}-{k}{ext}" in used_names:
+                    k += 1
+                name = f"{stem}-{k}{ext}"
+            used_names.add(name)
+            digest_to_name[digest] = name
+            files.append((name, blob))
+        replacements.append((start, end, name))
+
+    out: list[str] = []
+    cursor = 0
+    for start, end, name in replacements:
+        out.append(markdown[cursor:start])
+        out.append(f"{link_prefix}{md_link(name)}")
+        cursor = end
+    out.append(markdown[cursor:])
+    return "".join(out), files
+
+
 def sanitize_markdown(md: str) -> str:
     """剥除或规整提取结果里的禁用语法，并把多余 H1 降一层。围栏代码块原样保留。"""
     lines: list[str] = []
@@ -507,25 +646,6 @@ def convert_html(
     body = sanitize_markdown(markdown)
     if not body.strip():
         raise RuntimeError("规整之后正文是空的，没有写入。")
-    digest = sha256_text(body)
-
-    existing = find_existing_products(source)
-    if existing:
-        same = [p for p in existing if read_digest(p) == digest]
-        if same and not as_new:
-            shown = ", ".join(repo_rel(p) for p in same)
-            return f"同一来源正文未变（source_sha256={digest[:12]}…），已存在：{shown}。跳过，不覆盖。"
-        if not overwrite and not as_new:
-            shown = ", ".join(repo_rel(p) for p in existing)
-            msg = (
-                f"同一来源的正文已经变了。旧产物：{shown}\n"
-                f"旧摘要 {read_digest(existing[0])[:12]}… / 新摘要 {digest[:12]}…\n"
-                "默认不覆盖（旧产物可能已被分析文档引用）。"
-                "要覆盖加 --overwrite，要另存加 --as-new。"
-            )
-            if skip_changed:
-                return msg
-            raise RuntimeError(msg)
 
     fake_raw = virtual_raw(source, title)
     if is_ignored(fake_raw, patterns):
@@ -534,12 +654,54 @@ def convert_html(
             "这条网页资料如果确实要进分析链路，从忽略清单里拿掉对应规则。"
         )
 
-    target = single_target(fake_raw, ".md")
-    if overwrite and existing:
+    planned = single_target(fake_raw, ".md")
+    img_dir = ASSETS / safe_component(title)
+    link_prefix = md_link(f"{rel_path(img_dir, planned.parent)}/")
+    if not link_prefix.endswith("/"):
+        link_prefix += "/"
+    body, images = extract_inline_images(body, link_prefix)
+    digest = sha256_text(body)
+
+    existing = find_existing_products(source)
+    upgrade_inline = False
+    if existing:
+        same = [p for p in existing if read_digest(p) == digest]
+        if same and not as_new:
+            shown = ", ".join(repo_rel(p) for p in same)
+            return f"同一来源正文未变（source_sha256={digest[:12]}…），已存在：{shown}。跳过，不覆盖。"
+        if not overwrite and not as_new:
+            old_has_data = any("data:image" in _read_text(p) for p in existing)
+            if old_has_data and images:
+                upgrade_inline = True
+            else:
+                shown = ", ".join(repo_rel(p) for p in existing)
+                msg = (
+                    f"同一来源的正文已经变了。旧产物：{shown}\n"
+                    f"旧摘要 {read_digest(existing[0])[:12]}… / 新摘要 {digest[:12]}…\n"
+                    "默认不覆盖（旧产物可能已被分析文档引用）。"
+                    "要覆盖加 --overwrite，要另存加 --as-new。"
+                )
+                if skip_changed:
+                    return msg
+                raise RuntimeError(msg)
+
+    target = planned
+    if (overwrite or upgrade_inline) and existing:
         target = existing[0]
     elif as_new or target.exists():
-        if target.exists() and not overwrite:
+        if target.exists() and not overwrite and not upgrade_inline:
             target = unique_target(target)
+
+    if images:
+        img_dir.mkdir(parents=True, exist_ok=True)
+        written = set()
+        for name, blob in images:
+            (img_dir / name).write_bytes(blob)
+            written.add(name)
+        if overwrite or upgrade_inline:
+            for leftover in img_dir.iterdir():
+                if leftover.is_file() and leftover.name not in written:
+                    leftover.unlink()
 
     now = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     meta = {
@@ -551,9 +713,23 @@ def convert_html(
     if ref_dir is not None:
         meta["reference"] = repo_rel(ref_dir)
     meta["title"] = title.replace("\n", " ").strip()
+    if images:
+        meta["extracted_images"] = str(len(images))
 
     atomic_write(target, render(meta, body))
-    return f"已写入 {repo_rel(target)}"
+    msg = f"已写入 {repo_rel(target)}"
+    if images:
+        msg += f"，抽出 {len(images)} 张图到 {repo_rel(img_dir)}"
+    if upgrade_inline:
+        msg += "（把内联 data URI 抽成文件）"
+    return msg
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
 
 
 def loose_html_files() -> list[Path]:

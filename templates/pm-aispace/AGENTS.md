@@ -337,7 +337,9 @@ python3 scripts/db_ingest.py query 仓库库 \
 
 政策文件、公开标准、友商文档站这类网页，**没有** `input/raw/` 下的原件，
 走 `scripts/web_ingest.py` 转成 Markdown 落进 `input/converted/`，
-落点与 docx / PDF 同一套规则（`scripts/layout.py`）。给人看的页面快照仍走看板
+落点与 docx / PDF 同一套规则（`scripts/layout.py`）。页面里的图抽到
+`input/assets/<标题>/`，正文只留相对路径，不把几 MB 的 `data:image` 内联进 Markdown。
+给人看的页面快照仍走看板
 `visualization/references/` 采集——两条链路共用同一份抓下来的 HTML，职责不同
 （可分析文本 vs 页面快照），详见 [`skills/pm-doc-ingest`](skills/pm-doc-ingest/SKILL.md)。
 

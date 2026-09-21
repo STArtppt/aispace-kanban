@@ -64,6 +64,9 @@ python3 scripts/web_ingest.py --inbox   # 丢进 visualization/references/ 根�
 
 产物落 `input/converted/web/<host>/`，落点规则与 docx / PDF 相同（`scripts/layout.py`），
 front-matter 用 URL（或读不到地址时用参考路径）充当 `source`、用抽出正文的摘要充当 `source_sha256`。
+页面里的图（SingleFile 常内联成 `data:image/...;base64`）抽到 `input/assets/<标题>/`，
+markdown 改成相对产物目录的 `![](...)`，和 docx 抽图同一套规矩。旧产物还内联着 data URI 时，
+再跑一次会自动抽出并覆盖这一份（不是正文改写，是格式升级）。
 
 **和看板「采集为参考」怎么分：**
 
