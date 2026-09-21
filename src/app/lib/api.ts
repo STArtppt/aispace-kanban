@@ -606,6 +606,99 @@ export interface NoteHistoryBatch {
   notes: NoteHistoryItem[];
 }
 
+/**
+ * 未决问题的四态 + 一个脏数据态。字段契约的事实源是工作空间里的
+ * `output/analysis/questions/README.md`（模板在 templates/pm-aispace/ 下）。
+ *
+ * `conflict` 不是流程里的一步：它是迁移时识别出的存量脏数据（正文写着「已解决」、
+ * 编号却没划掉），摆在界面上等人裁定，而不是替它遮掩。
+ *
+ * 用 `string & {}` 兜住枚举之外的值 —— 工作空间里的文件是人和 agent 手写的，
+ * 写错一个词不该让前端崩，界面上当作未知状态显示出来即可。
+ */
+export type QuestionStatus = 'open' | 'pending_ai' | 'answered' | 'dropped' | 'conflict' | (string & {});
+
+/** 凭据四值。只有前三种能关闭问题，`我方推断` 不能 —— 见 README 的「推断不能关闭问题」。 */
+export type QuestionEvidence = '客户确认' | '资料实证' | '我方决策' | '我方推断' | (string & {});
+
+/** 四个标准答案。看板写它（人写区），agent 不写。 */
+export type QuestionAnswer = 'verify' | 'decide' | 'drop' | 'ask' | (string & {});
+
+/**
+ * 清单索引里的一条问题：只有 front-matter，**没有正文**（正文走 `api.question`）。
+ *
+ * 除 `id` / `path` / `name` 外的字段都可能是空串 —— 迁移出来的条目 `blocks` 与
+ * `evidence` 一律留空（迁移不推断），前端要对空值有明确呈现（凭据空 = 「未标注」），
+ * 不能当成必填用。
+ */
+export interface QuestionItem {
+  /** 问题编号，如 `Q0134`。外部引用的锚点，只增不减、不复用 */
+  id: string;
+  /** 文件名，`Q0134.md`。解析不出来的条目靠它显示 */
+  name: string;
+  /** 工作空间内相对路径。复制 prompt 时贴的就是它 —— 贴路径不贴正文 */
+  path: string;
+  mtime: string;
+  /** 一句话问题。清单行只显示它 */
+  title: string;
+  status: QuestionStatus;
+  /** 阻塞哪个在途交付物。`backlog` = 不阻塞任何在途交付物，主视图不显示；空 = 还没归类 */
+  blocks: string;
+  asked_of: string;
+  /** 触发这条问题的文档路径 */
+  source: string;
+  context: string;
+  created: string;
+  updated: string;
+  human_answer: QuestionAnswer;
+  /** 最迟答复日期 `YYYY-MM-DD`。`human_answer: ask` 时才有意义 */
+  due: string;
+  evidence: QuestionEvidence;
+  /** 结论的一句话摘要；展开的结论在正文里 */
+  ai_conclusion: string;
+  /** 这条结论该回流到哪份正文的哪一节。空 = 知识还没收敛回去 */
+  flows_to: string[];
+  /**
+   * 这份文件的 front-matter 缺失或读不出来。**不是错误** ——
+   * 一条坏数据不能拖垮整个接口，也不该悄悄消失，所以它照样在清单里，只是标成无法解析。
+   */
+  broken?: boolean;
+  reason?: string;
+}
+
+/**
+ * 问题索引。`available: false` = 这个工作空间还没有 `output/analysis/questions/` 目录
+ * （旧工作空间不会自动获得新结构），不是错误，界面走空态说明。
+ */
+export interface QuestionIndex {
+  dir: string;
+  available: boolean;
+  items: QuestionItem[];
+}
+
+/** 单条详情：索引的全部字段，外加正文与两个只在卡片上用的字段。 */
+export interface QuestionDetail extends QuestionItem {
+  /** 结论的依据出处，可以是多条 */
+  ai_source: string[];
+  human_note: string;
+  /** front-matter 之后的 markdown 正文 */
+  body: string;
+}
+
+/**
+ * 人工反馈的载荷。**只有人写区这四个键** —— 服务端对载荷里出现任何 AI 写区字段
+ * （`evidence` / `ai_conclusion` / `ai_source` / `flows_to`）一律 400 且不落盘。
+ * 人和 agent 的写区物理隔开，这就是并发方案本身（不用锁，见 questions/README.md）。
+ */
+export interface QuestionPatch {
+  status?: QuestionStatus;
+  human_answer?: QuestionAnswer;
+  /** 一两句补充。服务端限长，超了 400 —— 要写长文说明这条该拆 */
+  human_note?: string;
+  /** `YYYY-MM-DD`。`human_answer: ask` 时必填，缺了服务端 400 */
+  due?: string;
+}
+
 export interface NoteHistory {
   file: string;
   batches: NoteHistoryBatch[];
@@ -692,6 +785,34 @@ export const api = {
    * 老服务没有这个接口（404），调用方要自己兜住。
    */
   references: (id: string) => request<References>(`/api/projects/${id}/references`),
+  /**
+   * 未决问题索引：服务端扫 `output/analysis/questions/` 现算，只读 front-matter 不读正文。
+   * 没有索引文件可依赖 —— 生成物会漂，而「索引和正文对不上」正是这套结构要消除的病根。
+   *
+   * **老服务进程没有这个接口（404），调用方必须兜住**：显示「服务端未提供未决问题接口，
+   * 请重启服务」，不要白屏、不要弹错误、更不要当成空列表（空列表会被读成「这个工作空间
+   * 没有未决问题」，那是假消息）。
+   */
+  questions: (id: string) => request<QuestionIndex>(`/api/projects/${id}/questions`),
+  /**
+   * 单条问题的全字段 + 正文。卡片展开时才取，清单不带正文。
+   * 只传编号（`Q0134`），**不接受任何路径** —— 带路径片段的一律 400，落盘路径由服务端拼。
+   */
+  question: (id: string, questionId: string) =>
+    request<QuestionDetail>(`/api/projects/${id}/questions/${encodeURIComponent(questionId)}`),
+  /**
+   * 保存一条人工反馈。**看板唯一一处自己写工作空间的接口**
+   * （AGENTS.md 不变量 1 的第四条窄例外，六条约束写在那里）。
+   *
+   * 只改已存在文件的人写区四个字段与正文「## 人工反馈」小节；不新建、不删除、不改名。
+   * 返回保存后的整条详情 —— 前端据此立刻更新，不等 SSE 绕一圈回来。
+   * 老服务进程没有这个接口（404 「未知接口」），调用方要兜住并提示重启服务。
+   */
+  saveQuestion: (id: string, questionId: string, patch: QuestionPatch) =>
+    request<QuestionDetail>(`/api/projects/${id}/questions/${encodeURIComponent(questionId)}`, {
+      method: 'POST',
+      body: JSON.stringify(patch),
+    }),
   file: (id: string, path: string) =>
     request<{ path: string; size: number; mtime: string; content: string }>(
       `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,

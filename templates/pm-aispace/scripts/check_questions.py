@@ -48,7 +48,7 @@ TITLE_MAX = 60
 # 同类问题在文本输出里最多点名几份文件。刚迁移完会有两百多条同类，逐条打没人看。
 SHOW_FILES = 6
 # 这两份是问题目录里名正言顺的非问题文件，不要当成拼错的编号来警告。
-SKIP_FILES = {"README.md", "MIGRATION-REVIEW.md"}
+SKIP_FILES = {"README.md", "MIGRATION-REVIEW.md", "TRIAGE.md"}
 
 
 class Report:

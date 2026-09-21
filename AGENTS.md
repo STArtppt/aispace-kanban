@@ -57,6 +57,25 @@
         工作空间内只允许脚本写 `visualization/prototypes/<slug>/`(整份覆盖
         `spec/` `docs/` `annotations/` `comments/` `meta.json` `SYNC.md` `sync.json`)
         与同级 `<slug>-html.zip`;工作空间外只写原型目录的 `.workspace-inbox.md`
+   - 保存未决问题的人工反馈时写 `output/analysis/questions/Q<编号>.md`
+     (`src/server/questions.mjs` 的 `writeQuestion`)——
+     **这是第四条窄例外,范围就是下面六条,越界即为 bug**。
+     它与前三条**形状不同**:前三条都是「看板只 `spawn`,工作空间自己的脚本写盘」,
+     **这一条是看板服务端自己写**。之所以破例:人工反馈没有现成的工作空间脚本可以承接,
+     为它造一个子进程入口只是绕路;而且它是高频小写入(消解十条就是十次),
+     每次起一个进程的延迟会让交互变钝。作为交换,写入面被压到下面六条:
+     ① 只允许**改已存在**的问题文件,不新建、不删除、不改名;文件不存在一律 404;
+     ② 只允许写**人写区**字段(`status` / `human_answer` / `human_note` / `due`)
+     与正文的「## 人工反馈」小节;载荷里出现任何 **AI 写区**字段
+     (`evidence` / `ai_conclusion` / `ai_source` / `flows_to`)一律 400 且不落盘 ——
+     人和 agent 的写区物理隔开,这就是并发方案本身(不用锁,见 `questions/README.md`);
+     ③ 必须用户在看板上点「保存」明确发起,没有后台任务、没有定时、没有自动补全;
+     ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`);
+     ⑤ 请求**只带编号**(`Q0134` 这种形态),**不接受任何路径**;
+     落盘路径由服务端用 `resolveInside()` 自己拼;
+     ⑥ `input/`、`output/` 下的其它一切与 `project.yaml` 仍然只读;
+     `output/decisions/` 的草稿由 agent 生成,看板不写。
+     写入走「先写临时文件再原子替换」,失败不留半截文件
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。

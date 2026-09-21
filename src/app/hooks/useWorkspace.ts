@@ -45,6 +45,9 @@ export function useScan(projectId: string) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [refreshedAt, setRefreshedAt] = useState('');
+  // 工作空间目录变动的计数器。扫描自己会刷新，但不走 scan 的数据（未决问题清单）
+  // 也要跟着动 —— 与其各开一条 EventSource，不如把这一路变动广播出去。
+  const [changeToken, setChangeToken] = useState(0);
 
   const load = useCallback(
     async (silent = false) => {
@@ -75,9 +78,12 @@ export function useScan(projectId: string) {
   useEffect(() => {
     if (!projectId) return undefined;
     const source = new EventSource(`/api/projects/${projectId}/events`);
-    source.addEventListener('change', () => void load(true));
+    source.addEventListener('change', () => {
+      setChangeToken((n) => n + 1);
+      void load(true);
+    });
     return () => source.close();
   }, [projectId, load]);
 
-  return { scan, loading, error, reload: load, refreshedAt };
+  return { scan, loading, error, reload: load, refreshedAt, changeToken };
 }

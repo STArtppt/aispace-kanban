@@ -171,6 +171,32 @@ python3 scripts/migrate_questions.py --write    # 确认后落盘
 
 原 `open-questions.md` 只在开头加一句指向说明，**正文一个字不删**，留着回滚。
 
+### 迁移之后：补 `blocks` 与 `evidence`
+
+刚迁完这两个字段全是空的，两百多条逐个开文件改没人改得完。走工作表：
+
+```bash
+python3 scripts/triage_questions.py --plan             # 出 questions/TRIAGE.md
+#   —— 用户在表上填 ——
+python3 scripts/triage_questions.py --apply            # 预演
+python3 scripts/triage_questions.py --apply --write    # 落盘
+```
+
+**表要用户填，不是你填。** 你负责的是：解释每一节大概是什么、手头在做的交付物叫什么、
+以及把 B 段那些闭包原句念给用户听帮他判。**不要替他把空的凭据填上** ——
+这个字段存在的全部意义就是防止「自动填出来的确定性」。
+
+两件事分开，都不用逐条看两百多遍：
+
+- **A 段按分节定 `blocks`**，一节一个交付物名。旧表格的分节本来就是按交付物攒的，
+  大半看名字就知道。手头没在做的整片写 `backlog`，**这是决定不是偷懒** ——
+  它们搜得到、能拉回来，只是不在主视图占位置。
+- **B 段只有已关闭的缺 `evidence`**，当初为什么关的就引在每条下面，一条扫两秒。
+  填 `我方推断` 的，落盘时 `status` 会被退回 `open`。
+
+`--apply` 只逐行替换 `blocks` / `evidence`（和被退回的 `status`），
+正文与其它字段一个字节不动；已有值的默认跳过，重跑安全。
+
 ## 上下游
 
 - 上游（会来落问题的）：`pm-project-meta`、`pm-project-handover`、`pm-doc-ingest`、

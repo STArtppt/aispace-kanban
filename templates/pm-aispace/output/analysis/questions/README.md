@@ -206,3 +206,14 @@ python3 scripts/migrate_questions.py --write     # 确认后再落盘
 疑似根本不是问题的条目、以及分叉编号（`16b`）这类需要人看一眼的条目。
 
 原 `open-questions.md` **正文不删**，只在开头加一句指向本目录的说明 —— 留着回滚。
+
+迁完 `blocks` 与 `evidence` 还是空的（迁移不推断），用工作表批量补：
+
+```bash
+python3 scripts/triage_questions.py --plan          # 出 TRIAGE.md，按分节填 blocks、按条填 evidence
+python3 scripts/triage_questions.py --apply --write # 落盘
+```
+
+`blocks` 按分节整片填（几十个决定，不是几百个），手头没在做的写 `backlog`；
+`evidence` 只有已关闭的那些缺，表里会把当初的闭包原句引出来供判断。
+`MIGRATION-REVIEW.md` 与 `TRIAGE.md` 都是过程件，裁定完可以删。

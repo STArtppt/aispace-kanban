@@ -21,11 +21,14 @@ import { HelpPanel } from '@/components/HelpPanel';
 import { InputPanel } from '@/components/InputPanel';
 import { OutputPanel } from '@/components/OutputPanel';
 import { OverviewPanel } from '@/components/OverviewPanel';
+import { QuestionsDialog, QuestionsFab, countPending } from '@/components/QuestionsDialog';
 import { Reader } from '@/components/Reader';
 import { SidebarRail } from '@/components/SidebarRail';
 import { UnavailableWorkspace, WorkspaceDialog } from '@/components/WorkspaceSettings';
 import { VisualPanel } from '@/components/VisualPanel';
 import { useBoardSession, type View } from '@/hooks/useBoardSession';
+import { useGlobalHotkey } from '@/hooks/useGlobalHotkey';
+import { useQuestions } from '@/hooks/useQuestions';
 import { useIngestJob } from '@/hooks/useIngestJob';
 import { useProjects, useScan } from '@/hooks/useWorkspace';
 import { api, type FileItem, type Project } from '@/lib/api';
@@ -319,7 +322,7 @@ function SidebarBody({
 
 export default function App() {
   const { projects, activeId, select, reload: reloadProjects } = useProjects();
-  const { scan, loading, error, reload, refreshedAt } = useScan(activeId);
+  const { scan, loading, error, reload, refreshedAt, changeToken } = useScan(activeId);
   const { view, setView, openFile, selectFile } = useBoardSession(activeId, scan);
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [settingsFor, setSettingsFor] = useState<Project | null>(null);
@@ -329,6 +332,11 @@ export default function App() {
   const { dark, toggle } = useTheme();
   const version = useAppVersion();
   const [helpOpen, setHelpOpen] = useState(false);
+  const [questionsOpen, setQuestionsOpen] = useState(false);
+  // 索引在 App 级预取，不挂任何视图的生命周期上：弹窗打开要瞬时，不等网络
+  const questions = useQuestions(activeId, changeToken);
+  // 本仓第一个 App 级快捷键。⌘K / Ctrl+K 开关，Esc 由 Dialog 自己收（见 useGlobalHotkey）
+  useGlobalHotkey('k', () => setQuestionsOpen((v) => !v));
   // 帮助和文件共用预览位，所以互斥：开帮助时先把文件预览关掉，关帮助就回到看板。
   // useMemo 稳住对象身份，否则每次渲染都是新对象，进出场动画会被反复重放。
   const preview = useMemo<Preview | null>(
@@ -353,6 +361,7 @@ export default function App() {
   useEffect(() => {
     setPreviewExpanded(false);
     setHelpOpen(false);
+    setQuestionsOpen(false);
   }, [activeId]);
 
   // 预览卸载后再清展开态，避免离场途中侧栏/看板突然弹回
@@ -662,6 +671,27 @@ export default function App() {
           onRemoved={() => void reloadProjects()}
         />
       ) : null}
+      {/*
+        未决问题：弹窗 + 右下角悬浮入口，都在布局最外层 ——
+        任意视图下都能唤出，关掉后原视图状态不变。
+      */}
+      <QuestionsFab
+        count={countPending(questions.index)}
+        onClick={() => setQuestionsOpen(true)}
+      />
+      <QuestionsDialog
+        open={questionsOpen}
+        onOpenChange={setQuestionsOpen}
+        projectId={activeId}
+        projectName={activeProject?.name || ''}
+        index={questions.index}
+        loading={questions.loading}
+        error={questions.error}
+        unsupported={questions.unsupported}
+        changeToken={changeToken}
+        reload={questions.reload}
+        workspaceAvailable={scan?.available !== false}
+      />
       <Toaster />
     </div>
   );
