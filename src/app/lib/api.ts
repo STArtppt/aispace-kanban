@@ -608,7 +608,7 @@ export interface NoteHistoryBatch {
 
 /**
  * 未决问题的四态 + 一个脏数据态。字段契约的事实源是工作空间里的
- * `output/analysis/questions/README.md`（模板在 templates/pm-aispace/ 下）。
+ * `output/questions/README.md`（模板在 templates/pm-aispace/ 下）。
  *
  * `conflict` 不是流程里的一步：它是迁移时识别出的存量脏数据（正文写着「已解决」、
  * 编号却没划掉），摆在界面上等人裁定，而不是替它遮掩。
@@ -667,7 +667,7 @@ export interface QuestionItem {
 }
 
 /**
- * 问题索引。`available: false` = 这个工作空间还没有 `output/analysis/questions/` 目录
+ * 问题索引。`available: false` = 这个工作空间还没有 `output/questions/` 目录
  * （旧工作空间不会自动获得新结构），不是错误，界面走空态说明。
  */
 export interface QuestionIndex {
@@ -786,7 +786,7 @@ export const api = {
    */
   references: (id: string) => request<References>(`/api/projects/${id}/references`),
   /**
-   * 未决问题索引：服务端扫 `output/analysis/questions/` 现算，只读 front-matter 不读正文。
+   * 未决问题索引：服务端扫 `output/questions/` 现算，只读 front-matter 不读正文。
    * 没有索引文件可依赖 —— 生成物会漂，而「索引和正文对不上」正是这套结构要消除的病根。
    *
    * **老服务进程没有这个接口（404），调用方必须兜住**：显示「服务端未提供未决问题接口，

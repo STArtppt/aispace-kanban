@@ -1421,7 +1421,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return json(res, 200, scanReferences(project.root, project.id));
   }
 
-  // 未决问题：扫 output/analysis/questions/ 现算索引（只读 front-matter，不读正文），
+  // 未决问题：扫 output/questions/ 现算索引（只读 front-matter，不读正文），
   // 带第四段编号时取那一条的全字段 + 正文。**不生成也不读取任何索引文件** ——
   // 生成物会漂，而「索引和正文对不上」正是这套结构要消除的病根。
   // 编号只接受 `Q0134` 这种形态，任何路径片段在触达文件系统前就被 readQuestion 拒掉。

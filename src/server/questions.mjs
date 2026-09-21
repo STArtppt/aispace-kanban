@@ -1,5 +1,5 @@
 /**
- * 未决问题清单：扫 `output/analysis/questions/`，把每份 `Q<编号>.md` 的 front-matter
+ * 未决问题清单：扫 `output/questions/`，把每份 `Q<编号>.md` 的 front-matter
  * 拼成一份索引。**不生成任何索引文件** —— 生成物会漂，而「索引和正文对不上」正是这套结构
  * 要消除的病根（见 openspec changes/open-questions-workbench 的 design 决策 1）。
  *
@@ -8,7 +8,7 @@
  * 只改已存在问题文件的人写区四个字段与正文「## 人工反馈」小节，六条约束写在本文件下半部分
  * 的分隔线之后与 AGENTS.md 里。**别在这个模块里加第二个写入口。**
  *
- * 字段契约的唯一事实源是工作空间里的 `output/analysis/questions/README.md`
+ * 字段契约的唯一事实源是工作空间里的 `output/questions/README.md`
  * （模板在 templates/pm-aispace/ 下），校验脚本 `scripts/check_questions.py` 与本文件
  * 都按它来。这里**不做校验**：非法组合由校验脚本报，看板只负责如实呈现，
  * 把 `conflict` 这类脏数据显示出来，而不是替它遮掩。
@@ -18,15 +18,41 @@ import path from 'node:path';
 import { parseFrontmatter } from './frontmatter.mjs';
 import { resolveInside } from './paths.mjs';
 
-/** 问题目录，相对工作空间根。改这里要同步 README.md 与两个脚本。 */
-export const QUESTIONS_DIR = 'output/analysis/questions';
+/** 问题目录，相对工作空间根。改这里要同步 README.md 与三个脚本。 */
+export const QUESTIONS_DIR = 'output/questions';
+
+/**
+ * 迁移前的旧位置。问题清单原本挂在 `analysis/` 下，但两百多份问题文件会把
+ * 「分析中间产物」那份清单整个淹掉 —— 那份清单是给人扫现状基线、需求拆解的，
+ * 问题清单有自己的入口（本弹窗），不该在文件列表里再占一遍位置。所以提到了 `output/` 同级。
+ *
+ * 旧工作空间不会因为模板更新就自动搬家，这里认两个位置：新的在就用新的，
+ * 否则退回旧的。**只读回退，不自动搬** —— 搬目录是用户的决定（`pm-open-questions` 会提议）。
+ */
+const LEGACY_QUESTIONS_DIR = 'output/analysis/questions';
+
+/**
+ * 解析这个工作空间的问题目录，返回相对路径。
+ * 两个都不存在时返回新路径 —— 空态提示要指向现在该用的位置，不是迁移前的那个。
+ */
+export function questionsDir(root) {
+  for (const rel of [QUESTIONS_DIR, LEGACY_QUESTIONS_DIR]) {
+    try {
+      const abs = resolveInside(root, rel);
+      if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) return rel;
+    } catch {
+      // 解析不出来（越界之类）就当这个位置没有，接着试下一个
+    }
+  }
+  return QUESTIONS_DIR;
+}
 
 /** 文件名即编号：四位数字，末尾允许一个小写字母（迁移出来的分叉编号 `Q0016b`） */
-const FILE_RE = /^(Q\d{4}[a-z]?)\.md$/;
+export const FILE_RE = /^(Q\d{4}[a-z]?)\.md$/;
 const ID_RE = /^Q\d{4}[a-z]?$/;
 
 /** 目录里的过程件，不是问题。与 check_questions.py 的 SKIP_FILES 同一份名单。 */
-const SKIP_FILES = new Set(['README.md', 'MIGRATION-REVIEW.md', 'TRIAGE.md']);
+const SKIP_FILES = new Set(['README.md', 'MIGRATION-REVIEW.md', 'TRIAGE.md', '_原表快照.md']);
 
 /** front-matter 缺了这些键就算解析不出来（与 check_questions.py 的 REQUIRED 同源） */
 const REQUIRED = ['id', 'title', 'status', 'blocks', 'asked_of', 'source'];
@@ -154,9 +180,10 @@ function brokenItem({ id, name, relPath, mtime, reason }) {
  * @returns {{ dir: string, available: boolean, items: object[] }}
  */
 export function scanQuestions(root) {
-  const dir = resolveInside(root, QUESTIONS_DIR);
+  const relDir = questionsDir(root);
+  const dir = resolveInside(root, relDir);
   if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) {
-    return { dir: QUESTIONS_DIR, available: false, items: [] };
+    return { dir: relDir, available: false, items: [] };
   }
 
   const items = [];
@@ -165,7 +192,7 @@ export function scanQuestions(root) {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {
     // 目录读不动（权限之类）当作没有，前端走空态，不让整个接口挂掉
-    return { dir: QUESTIONS_DIR, available: false, items: [] };
+    return { dir: relDir, available: false, items: [] };
   }
 
   for (const entry of entries) {
@@ -174,7 +201,7 @@ export function scanQuestions(root) {
     if (!matched) continue;
     const id = matched[1];
     const abs = path.join(dir, entry.name);
-    const relPath = `${QUESTIONS_DIR}/${entry.name}`;
+    const relPath = `${relDir}/${entry.name}`;
 
     let stats;
     try {
@@ -212,7 +239,7 @@ export function scanQuestions(root) {
 
   // 编号是定长的，字符串序就是编号序（Q0016b 紧跟在 Q0016 后面）
   items.sort((a, b) => a.id.localeCompare(b.id));
-  return { dir: QUESTIONS_DIR, available: true, items };
+  return { dir: relDir, available: true, items };
 }
 
 /**
@@ -232,7 +259,8 @@ export function readQuestion(root, id) {
     err.statusCode = 400;
     throw err;
   }
-  const abs = resolveInside(root, `${QUESTIONS_DIR}/${wanted}.md`);
+  const relDir = questionsDir(root);
+  const abs = resolveInside(root, `${relDir}/${wanted}.md`);
   if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
     const err = new Error(`找不到这条问题：${wanted}`);
     err.statusCode = 404;
@@ -241,7 +269,7 @@ export function readQuestion(root, id) {
   const stats = fs.statSync(abs);
   const text = fs.readFileSync(abs, 'utf8');
   const { meta, body } = parseFrontmatter(text);
-  const relPath = `${QUESTIONS_DIR}/${wanted}.md`;
+  const relPath = `${relDir}/${wanted}.md`;
   const base = Object.keys(meta).length
     ? describe(meta, { id: wanted, name: `${wanted}.md`, relPath, mtime: stats.mtime.toISOString() })
     : brokenItem({
@@ -393,7 +421,8 @@ export function writeQuestion(root, id, payload) {
   }
 
   // ② 只改已存在的文件：不新建、不删除、不改名
-  const relPath = `${QUESTIONS_DIR}/${wanted}.md`;
+  //    写回的是读出来的那个目录 —— 没迁移的工作空间原地改，绝不顺手搬家
+  const relPath = `${questionsDir(root)}/${wanted}.md`;
   const abs = resolveInside(root, relPath);
   if (!fs.existsSync(abs) || fs.statSync(abs).isDirectory()) {
     const err = new Error(`找不到这条问题：${wanted}。看板不新建问题文件，提问由技能负责。`);

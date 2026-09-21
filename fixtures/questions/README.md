@@ -8,7 +8,7 @@
 下面这些条目里的电站名、指标、日期都是照着真实工作空间的**形状**编的，内容全是假的。
 
 字段契约本身在
-[`templates/pm-aispace/output/analysis/questions/README.md`](../../templates/pm-aispace/output/analysis/questions/README.md)。
+[`templates/pm-aispace/output/questions/README.md`](../../templates/pm-aispace/output/questions/README.md)。
 **契约变了，这里的语料和 `scripts/check-questions.mjs` 里的 `EXPECTED_BAD` 要一起改。**
 
 ## `valid/` —— 八份，覆盖全部取值

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""校验 `output/analysis/questions/` 下的问题文件。
+"""校验 `output/questions/` 下的问题文件。
 
-字段契约在 [`output/analysis/questions/README.md`](../output/analysis/questions/README.md)，
+字段契约在 [`output/questions/README.md`](../output/questions/README.md)，
 本脚本是那份契约的可执行版本。**契约变了这里要跟着变**，否则脚本会一直给过期的绿灯。
 
 为什么值得有这个脚本
@@ -12,7 +12,7 @@ agent 直接改文件，谁也拦不住它把 `我方推断` 和 `answered` 写�
 
 用法
 ----
-    python3 scripts/check_questions.py               # 默认查 output/analysis/questions/
+    python3 scripts/check_questions.py               # 默认查 output/questions/
     python3 scripts/check_questions.py <目录>         # 查指定目录（回归语料用）
     python3 scripts/check_questions.py --json        # 给程序用
 
@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from questions_fm import as_text, is_blank, parse_frontmatter  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_DIR = HERE.parent / "output" / "analysis" / "questions"
+DEFAULT_DIR = HERE.parent / "output" / "questions"
 
 REQUIRED = ["id", "title", "status", "blocks", "asked_of", "source"]
 STATUSES = ["open", "pending_ai", "answered", "dropped", "conflict"]
@@ -48,7 +48,7 @@ TITLE_MAX = 60
 # 同类问题在文本输出里最多点名几份文件。刚迁移完会有两百多条同类，逐条打没人看。
 SHOW_FILES = 6
 # 这两份是问题目录里名正言顺的非问题文件，不要当成拼错的编号来警告。
-SKIP_FILES = {"README.md", "MIGRATION-REVIEW.md", "TRIAGE.md"}
+SKIP_FILES = {"README.md", "MIGRATION-REVIEW.md", "TRIAGE.md", "_原表快照.md"}
 
 
 class Report:

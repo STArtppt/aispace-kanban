@@ -35,7 +35,7 @@
 
 ## 4. 服务端读取（二期，只读）
 
-- [x] 4.1 新建 `src/server/questions.mjs`：扫 `output/analysis/questions/`、
+- [x] 4.1 新建 `src/server/questions.mjs`：扫 `output/questions/`、
       只读每个文件的 front-matter 段（不读正文）拼出索引；路径过 `resolveInside()`；
       **不生成也不读取任何索引文件**
 - [x] 4.2 加按 id 取单条详情（front-matter 全字段 + 正文）；id 含路径分隔符或 `../` 一律拒绝
@@ -120,3 +120,29 @@
       216 沉 backlog，卡片、分组、未回流计数都对）。消解哪几条是对项目的判断、
       agent 那一步要读真实资料出真结论 —— 这两件事留给用户自己走，看板侧已就位
 - [x] 10.7 跑一遍 1.3 的校验脚本，确认闭环走完之后数据里没有非法组合
+
+## 11. 问题目录提到 `output/` 同级（收尾）
+
+问题清单挂在 `analysis/` 下时，231 份问题文件把「分析中间产物」那份清单整个淹掉——
+那份清单本来是给人扫现状基线、需求拆解的。问题清单已经有自己的入口（⌘K 弹窗），
+不该在文件列表里再占一遍位置。
+
+- [x] 11.1 目录从 `output/analysis/questions/` 提到 `output/questions/`（工作空间与模板源各一次 `git mv`）
+- [x] 11.2 `questions.mjs` 的 `QUESTIONS_DIR` 改新路径，加 `questionsDir(root)` 解析：
+      新位置在就用新的，否则退回 `output/analysis/questions/`。
+      **只读回退、不自动搬家**——搬目录是用户的决定，`pm-open-questions` 负责提议
+- [x] 11.3 读写两条路径都走同一个解析结果：没迁移的工作空间原地改，不会被顺手搬走
+- [x] 11.4 `scan.mjs` 不再把问题文件收进 `analysis` 分组（提到同级后自然落在扫描范围外），
+      但**正文仍喂给溯源反链**——一份资料被某条问题引着就是「被产出引用」，
+      不能在资料视图里显示成「还没有产出引用它」
+- [x] 11.5 没迁移的工作空间问题仍在 `analysis/` 递归范围内，补扫那轮加守卫跳过，避免反链数翻倍
+- [x] 11.6 路径引用一路改到底：两边 `AGENTS.md`、`output/README.md`、`questions/README.md`、
+      九个技能里的形态判断段落、三个脚本的 `DEFAULT_DIR` / `DEFAULT_TARGET`、fixtures、本 change 的 spec
+- [x] 11.7 迁移前的原表快照跟着搬进 `output/questions/_原表快照.md`：
+      它是**被引用的溯源终点**（没有更深来源的条目 `source` 直接指向它，
+      每条正文还有一句「来自原表第 N 行」），删掉等于一次弄断上百处引用；
+      留在 `analysis/` 又一直占着分析产物清单的位置。`migrate_questions.py`
+      改成落盘时直接搬家，后续工作空间迁移不会再重犯
+- [x] 11.8 过程件名单加 `_原表快照.md`（`check_questions.py` 与 `questions.mjs` 两边同步），
+      反链补扫收紧成只认 `Q*.md` —— README / TRIAGE / MIGRATION-REVIEW / 快照里抄着
+      大量问题原文与资料引用，喂进去会把「被 N 篇产出引用」顶虚高

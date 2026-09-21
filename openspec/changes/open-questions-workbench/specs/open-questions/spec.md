@@ -2,7 +2,7 @@
 
 ### Requirement: 一问一文件的布局
 
-未决问题 SHALL 以「一问一文件」存放在 `<工作空间>/output/analysis/questions/` 下，
+未决问题 SHALL 以「一问一文件」存放在 `<工作空间>/output/questions/` 下，
 文件名为 `Q<四位编号>.md`（如 `Q0134.md`）。编号在一个工作空间内唯一且只增不减，
 关闭的问题保留文件，不删除、不复用编号。
 
@@ -12,7 +12,7 @@
 #### Scenario: 新增一条问题
 
 - **WHEN** 技能需要记录一条新的待澄清问题
-- **THEN** 它在 `output/analysis/questions/` 下新建一个 `Q<编号>.md`，编号取当前最大编号加一
+- **THEN** 它在 `output/questions/` 下新建一个 `Q<编号>.md`，编号取当前最大编号加一
 - **AND** 不往任何既有文件追加表格行
 
 #### Scenario: 关闭一条问题

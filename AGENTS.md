@@ -57,7 +57,7 @@
         工作空间内只允许脚本写 `visualization/prototypes/<slug>/`(整份覆盖
         `spec/` `docs/` `annotations/` `comments/` `meta.json` `SYNC.md` `sync.json`)
         与同级 `<slug>-html.zip`;工作空间外只写原型目录的 `.workspace-inbox.md`
-   - 保存未决问题的人工反馈时写 `output/analysis/questions/Q<编号>.md`
+   - 保存未决问题的人工反馈时写 `output/questions/Q<编号>.md`
      (`src/server/questions.mjs` 的 `writeQuestion`)——
      **这是第四条窄例外,范围就是下面六条,越界即为 bug**。
      它与前三条**形状不同**:前三条都是「看板只 `spawn`,工作空间自己的脚本写盘」,

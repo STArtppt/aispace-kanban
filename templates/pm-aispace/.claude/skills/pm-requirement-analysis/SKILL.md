@@ -16,7 +16,7 @@ description: 把项目资料和现状基线拆解成结构化的需求条目：�
 先读 `output/analysis/现状基线.md`。没有基线就先走 `pm-project-handover`——
 跳过盘点直接拆需求，会把推断当事实拆进条目里，后面全要返工。
 
-再读未决问题（新工作空间在 `output/analysis/questions/`，旧的在 `output/analysis/open-questions.md`）。
+再读未决问题（新工作空间在 `output/questions/`，旧的在 `output/analysis/open-questions.md`）。
 **被未决问题阻塞的需求不要硬拆**，标记 `⛔ 阻塞于 Q0003` 留空，不要用你的猜测填满它。
 
 拆解过程中新冒出来的问题，按下面这节落盘。
@@ -101,10 +101,10 @@ P0 占比超过一半时要警惕——通常意味着优先级根本没排，�
 ### 发现未决问题怎么落
 
 **走 [`pm-open-questions`](../pm-open-questions/SKILL.md)，不要自己发明格式。**
-先看一眼 `output/analysis/`：
+先看一眼 `output/`：
 
-- 有 `questions/` 目录 → **一问一文件**，新建 `questions/Q<四位编号>.md`（编号取当前最大加一）
-- 只有 `open-questions.md` → 旧工作空间，照旧往表格里追加，**不要擅自迁移结构**
+- 有 `output/questions/` 目录 → **一问一文件**，新建 `output/questions/Q<四位编号>.md`（编号取当前最大加一；**目录空不等于从 Q0001 起**，先查 git 历史用过的最大编号）
+- 只有 `output/analysis/open-questions.md` → 旧工作空间，照旧往表格里追加，**不要擅自迁移结构**
 
 新结构下每条必须填 `source`（触发这条问题的文档路径）与 `context`
 （触发时在做什么，一句话）—— 溯源锚点挂在**条目**上，不挂在分节上。

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """把旧的 `output/analysis/open-questions.md` 表格拆成一问一文件。
 
-字段契约见 [`output/analysis/questions/README.md`](../output/analysis/questions/README.md)。
+字段契约见 [`output/questions/README.md`](../output/questions/README.md)。
 
 这个脚本**只搬运和标记，不推断**
 --------------------------------
@@ -27,9 +27,14 @@
     python3 scripts/migrate_questions.py              # 预演，不落盘（默认）
     python3 scripts/migrate_questions.py --write      # 确认后落盘
 
-落盘时做三件事：写 `output/analysis/questions/Q*.md`、写一份
-`output/analysis/questions/MIGRATION-REVIEW.md` 待人工裁定清单、
-在原 `open-questions.md` 开头加一句指向新目录的说明（**正文一个字不删**，留着回滚）。
+落盘时做三件事：写 `output/questions/Q*.md`、写一份
+`output/questions/MIGRATION-REVIEW.md` 待人工裁定清单、
+把原表**整份搬进** `output/questions/_原表快照.md` 并在开头加一句指向说明
+（**正文一个字不删**，留着回滚）。
+
+快照跟着搬，是因为它是**被引用的溯源终点**：没有更深来源的那些条目，`source`
+直接指向它，每条正文里还有一句「来自原表第 N 行」。留在 `analysis/` 会一直占着
+分析产物清单的位置，删掉则一次弄断上百处引用 —— 搬进 `questions/` 两头都解决。
 
 已存在的问题文件一律跳过不覆盖，所以重跑是安全的。
 """
@@ -45,14 +50,15 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 WS = HERE.parent
 DEFAULT_SOURCE = WS / "output" / "analysis" / "open-questions.md"
-DEFAULT_TARGET = WS / "output" / "analysis" / "questions"
+DEFAULT_TARGET = WS / "output" / "questions"
 
 # 这些词出现在**行内任何一格**（问题列、为什么需要列、甚至优先级列都真实出现过）
 # = 这条其实已经有结论了。序号没划掉的，置 conflict 等人裁。
 # 只看「为什么需要」那一格会漏掉一多半 —— 真实数据里三个列都藏过结论。
 # 「已确认」不收：问句本身常写「XX 是否已确认？」，收了会大面积误判。
 CLOSED_WORDS = ["已解决", "已关闭", "已定案", "不再阻塞", "✅"]
-POINTER = "> **问题清单已迁移到 [`questions/`](questions/) —— 一问一文件。**"
+ARCHIVE_NAME = "_原表快照.md"
+POINTER = "> **问题清单已迁移到本目录下的 `Q<编号>.md` —— 一问一文件。**"
 
 
 class Row:
@@ -225,7 +231,7 @@ def extract_source(row: Row) -> str:
     m = re.search(r"((?:input|output|visualization)/[^\s`）)，,、]+)", note)
     if m:
         return m.group(1)
-    return f"output/analysis/open-questions.md#{row.section}"
+    return f"output/questions/_原表快照.md#{row.section}"
 
 
 def render(row: Row, today: str) -> str:
@@ -262,7 +268,7 @@ def render(row: Row, today: str) -> str:
         "",
         "## 原始条目（迁移保留，一个字没改）",
         "",
-        f"> 来自 `output/analysis/open-questions.md` 第 {row.lineno} 行，"
+        f"> 来自 `output/questions/_原表快照.md` 第 {row.lineno} 行，"
         f"「{_one_line(row.section)}」一节，原序号 `{_clean(row.num_raw)}`"
         + (f"，原优先级「{row.priority}」" if row.priority and row.priority not in ("—", "-") else "")
         + "。原优先级已废弃，排序轴换成 `blocks`。",
@@ -372,8 +378,15 @@ def render_review(rows: list[Row], today: str, source: Path) -> str:
     return "\n".join(out)
 
 
-def add_pointer(source: Path, write: bool) -> str:
-    """在原表格开头加一句指向新目录的说明。**正文不删**，留着回滚。"""
+def archive_source(source: Path, target_dir: Path, write: bool) -> str:
+    """把原表格搬进问题目录存成 `_原表快照.md`，开头加一句指向说明。
+
+    **正文一个字不删**，留着回滚。搬家而不是留在原地，是因为它既是溯源终点
+    （没有更深来源的条目 `source` 直接指向它），又不该一直占着分析产物清单的位置。
+    """
+    archived = target_dir / ARCHIVE_NAME
+    if archived.exists():
+        return f"{ARCHIVE_NAME} 已存在，跳过"
     text = source.read_text(encoding="utf-8")
     if POINTER in text:
         return "原表格开头已有指向说明，跳过"
@@ -384,13 +397,14 @@ def add_pointer(source: Path, write: bool) -> str:
         POINTER,
         ">",
         "> 下面的表格是**迁移前的原样快照**，一个字没删，留着回滚用；**不要再往里追加新问题**。",
-        "> 字段契约见 [`questions/README.md`](questions/README.md)。",
+        "> 字段契约见 [`README.md`](README.md)。",
         "",
     ]
     lines[insert_at:insert_at] = block
     if write:
-        source.write_text("\n".join(lines), encoding="utf-8")
-    return "已在原表格开头加指向说明（正文未改动）"
+        archived.write_text("\n".join(lines), encoding="utf-8")
+        source.unlink()
+    return f"原表已搬进 {archived.parent.name}/{ARCHIVE_NAME} 并加指向说明（正文未改动）"
 
 
 def main() -> int:
@@ -444,7 +458,7 @@ def main() -> int:
     review.write_text(render_review(rows, today, source), encoding="utf-8")
     print(f"\n已写入 {len(todo)} 份问题文件")
     print(f"待裁定清单：{review}")
-    print(add_pointer(source, True))
+    print(archive_source(source, target, True))
     print("\n下一步：python3 scripts/check_questions.py")
     return 0
 

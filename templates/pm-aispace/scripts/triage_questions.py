@@ -44,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from questions_fm import as_text, is_blank, parse_frontmatter  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_DIR = HERE.parent / "output" / "analysis" / "questions"
+DEFAULT_DIR = HERE.parent / "output" / "questions"
 SHEET = "TRIAGE.md"
 
 EVIDENCES = ["客户确认", "资料实证", "我方决策", "我方推断"]

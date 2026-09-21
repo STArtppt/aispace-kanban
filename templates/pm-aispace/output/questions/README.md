@@ -1,6 +1,6 @@
 # questions/ —— 未决问题，一问一文件
 
-这个目录取代了旧的 `output/analysis/open-questions.md` 单表格。
+这个目录取代了旧的 `output/questions/_原表快照.md` 单表格。
 **本文件是问题文件的唯一字段契约**，技能、迁移脚本、校验脚本、看板都以它为准。
 
 ## 为什么不再用一张表
@@ -20,7 +20,7 @@
 ## 文件布局
 
 ```
-output/analysis/questions/
+output/questions/
 ├── README.md        ← 本文件
 ├── Q0001.md
 ├── Q0002.md
@@ -30,7 +30,16 @@ output/analysis/questions/
 - 文件名 `Q<四位编号>.md`，编号在一个工作空间内**唯一且只增不减**。
 - 关闭的问题**保留文件**，不删除、不复用编号 —— 编号是外部引用的锚点
   （会议纪要、决策记录、别的分析文档都会写「见 Q0134」）。
-- 新增时取当前最大编号加一。目录为空则从 `Q0001` 开始。
+- 新增时取当前最大编号加一。
+- **目录为空不等于从 `Q0001` 开始。** 整批问题随阶段结束归档（删文件）之后目录就是空的，
+  这时候从头编号会让此前所有外部引用指向一条内容无关的新问题 —— 那比悬空引用危险得多，
+  因为它看起来完全正常。**编号只增不复用**，空目录先查历史用过的最大编号：
+
+  ```bash
+  git log --all --name-only --pretty=format: -- 'output/questions' 'output/analysis/questions' | grep -o 'Q[0-9]\{4\}' | sort -u | tail -1
+  ```
+
+  查不到（真的是新工作空间）才从 `Q0001` 开始。
 - **分叉编号**：末尾允许一个小写字母（`Q0016b`），**只有迁移脚本会用** ——
   旧表格里存在 `16b` 这种「从第 16 条分叉出来的」编号，重新编号会让别处写着「见 Q16b」的
   引用全部指错。新问题一律用纯数字编号，不要自己造分叉。
@@ -183,7 +192,7 @@ flows_to:
 ## 校验
 
 ```bash
-python3 scripts/check_questions.py            # 默认查 output/analysis/questions/
+python3 scripts/check_questions.py            # 默认查 output/questions/
 python3 scripts/check_questions.py --json     # 给程序用
 ```
 
@@ -205,7 +214,14 @@ python3 scripts/migrate_questions.py --write     # 确认后再落盘
 正文写着「已解决 / 不再阻塞 / 已定案」但编号没划掉的条目（置 `conflict`）、
 疑似根本不是问题的条目、以及分叉编号（`16b`）这类需要人看一眼的条目。
 
-原 `open-questions.md` **正文不删**，只在开头加一句指向本目录的说明 —— 留着回滚。
+原 `open-questions.md` **正文不删**：整份搬进本目录改名 `_原表快照.md`，
+开头加一句指向新结构的说明 —— 留着回滚。
+
+**为什么快照要跟进本目录，而不是留在 `analysis/` 或者删掉。** 它不是可丢的残渣：
+41 条问题的 `source` 直接指向它（那些问题的出处**就是**原表，没有更深的来源），
+231 条正文里都有一句「来自原表第 N 行」。删掉等于一次弄断 272 处引用，
+正好踩中「溯源是硬要求」。留在 `analysis/` 又会一直占着分析产物清单的位置 ——
+搬进来两头都解决：引用照样点得到，列表里看不见它。
 
 迁完 `blocks` 与 `evidence` 还是空的（迁移不推断），用工作表批量补：
 
@@ -216,4 +232,8 @@ python3 scripts/triage_questions.py --apply --write # 落盘
 
 `blocks` 按分节整片填（几十个决定，不是几百个），手头没在做的写 `backlog`；
 `evidence` 只有已关闭的那些缺，表里会把当初的闭包原句引出来供判断。
-`MIGRATION-REVIEW.md` 与 `TRIAGE.md` 都是过程件，裁定完可以删。
+`MIGRATION-REVIEW.md` 与 `TRIAGE.md` 都是过程件，裁定完可以删；
+`_原表快照.md` 不一样，**它是被引用的溯源终点，不要删**。
+
+本目录里这四份过程件都不是问题：文件名不匹配 `Q<四位编号>.md` 的一律不进弹窗，
+`check_questions.py` 与看板 `questions.mjs` 共用同一份跳过名单，改一处要同步另一处。

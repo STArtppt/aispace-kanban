@@ -11,6 +11,7 @@ import { countAnnotations, linkReferences } from './citations.mjs';
 import { countWords, parseFrontmatter } from './frontmatter.mjs';
 import { readMeta } from './meta.mjs';
 import { scanPrototypes } from './prototypes.mjs';
+import { FILE_RE as QUESTION_FILE_RE, questionsDir } from './questions.mjs';
 import { scanReferences } from './references.mjs';
 
 const SKIP = new Set(['.git', 'node_modules', '.DS_Store', '.gitkeep']);
@@ -786,6 +787,23 @@ function scanOutput(root) {
       })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
   }
+  // 未决问题**不进任何分组** —— 两百多份问题文件会把「分析中间产物」那份清单整个淹掉，
+  // 它有自己的入口（⌘K 弹窗）。但正文照样喂给溯源反链：一份资料被某条问题引着，
+  // 那就是「被产出引用」，不该在资料视图里显示成「还没有产出引用它」。
+  //
+  // 没迁移的工作空间问题还在 `output/analysis/questions/` 下，上面那轮递归已经收过了，
+  // 这里再收一遍会让反链数翻倍 —— 所以只补扫落在 analysis/ 之外的那个位置。
+  const questionsRel = questionsDir(root);
+  if (!questionsRel.startsWith('output/analysis/')) {
+    for (const abs of listFiles(path.join(root, questionsRel))) {
+      // 只喂问题本身。目录里的过程件（README / TRIAGE / MIGRATION-REVIEW / 原表快照）
+      // 抄着大量问题原文与资料引用，喂进去会把「被 N 篇产出引用」顶虚高。
+      if (!QUESTION_FILE_RE.test(path.basename(abs))) continue;
+      const { item, body } = describeOutput(root, abs);
+      if (body) docs.push({ path: item.path, text: body });
+    }
+  }
+
   const all = Object.values(groups).flat();
   const annotated = all.filter((f) => f.annotations);
   return {

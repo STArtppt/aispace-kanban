@@ -63,9 +63,20 @@ export function useQuestions(projectId: string, changeToken: number) {
  * 两百多条的正文一次拉下来没人看得完，也会把弹窗打开的那一下拖慢。
  *
  * 取过的留在缓存里：方向键连着翻页时来回走是常态，不该每次都打一趟网络。
+ * **这个 hook 必须挂在翻页时不重挂的组件上** —— 挂在按 `key={id}` 重挂的卡片里，
+ * 缓存会跟着卡片一起被扔掉，等于没有缓存，每翻一条都闪一下「正在读正文…」。
+ *
+ * `prefetch` 是「下一步可能翻到哪几条」（通常是上一条与下一条）：先悄悄取回来放缓存，
+ * 落上去的时候就没有空白期。取失败不报错 —— 它只是预读，真落上去时主流程会再取一次。
  */
-export function useQuestionDetail(projectId: string, questionId: string, changeToken: number) {
+export function useQuestionDetail(
+  projectId: string,
+  questionId: string,
+  changeToken: number,
+  prefetch: string[] = [],
+) {
   const cacheRef = useRef(new Map<string, QuestionDetail>());
+  const inflightRef = useRef(new Set<string>());
   const [detail, setDetail] = useState<QuestionDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -74,6 +85,25 @@ export function useQuestionDetail(projectId: string, questionId: string, changeT
   useEffect(() => {
     cacheRef.current.clear();
   }, [projectId, changeToken]);
+
+  // 预读相邻两条。只填缓存，不碰任何 state —— 它不该让界面闪一下
+  useEffect(() => {
+    if (!projectId) return;
+    for (const id of prefetch) {
+      if (!id || id === questionId) continue;
+      if (cacheRef.current.has(id) || inflightRef.current.has(id)) continue;
+      inflightRef.current.add(id);
+      void api
+        .question(projectId, id)
+        .then((data) => {
+          cacheRef.current.set(id, data);
+        })
+        .catch(() => {})
+        .finally(() => {
+          inflightRef.current.delete(id);
+        });
+    }
+  }, [projectId, questionId, prefetch, changeToken]);
 
   useEffect(() => {
     if (!projectId || !questionId) {
@@ -120,5 +150,12 @@ export function useQuestionDetail(projectId: string, questionId: string, changeT
     setDetail((cur) => (cur && cur.id === next.id ? next : cur));
   }, []);
 
-  return { detail, loading, error, put };
+  /*
+   * 渲染期就从缓存里取当前这条，不等 effect 里的 setState。
+   * 等一轮的话，切过去的那一帧显示的还是上一条的正文（或者一片空白），
+   * 方向键连着按时那就是肉眼可见的闪烁。命中缓存也就不该有「正在读正文…」。
+   */
+  const shown = detail && detail.id === questionId ? detail : cacheRef.current.get(questionId) || null;
+
+  return { detail: shown, loading: shown ? false : loading, error: shown ? '' : error, put };
 }

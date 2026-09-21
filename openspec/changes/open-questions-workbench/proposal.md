@@ -36,7 +36,7 @@
 
 ### 一期：数据契约（落在 `templates/`，不碰看板）
 
-- **一问一文件**：`output/analysis/questions/Q<编号>.md`，扁平 YAML front-matter + markdown 正文。
+- **一问一文件**：`output/questions/Q<编号>.md`，扁平 YAML front-matter + markdown 正文。
   字段形状迁就 `src/server/frontmatter.mjs` 现有的扁平解析器（`key: value` 与 `key:` + `- item`，
   **不支持嵌套**）—— 这个限制反而是好事，它强制 `title` 是一句话、`blocks` 是一个交付物名，
   **条目长度由结构管住，不靠自觉**。
@@ -106,7 +106,7 @@
 
 | 写哪里 | 谁写 | 范围 |
 | --- | --- | --- |
-| `<工作空间>/output/analysis/questions/Q*.md` | 看板服务端 | **只改 front-matter 的人写字段区 + 追加一个「人工反馈」小节**；正文与 AI 写字段区不碰 |
+| `<工作空间>/output/questions/Q*.md` | 看板服务端 | **只改 front-matter 的人写字段区 + 追加一个「人工反馈」小节**；正文与 AI 写字段区不碰 |
 
 约束（越界即为 bug）：
 

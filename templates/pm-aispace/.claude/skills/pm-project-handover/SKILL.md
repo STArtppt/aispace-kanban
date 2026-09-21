@@ -6,7 +6,7 @@ description: 产品经理接手既有项目时的系统性盘点：从已转换�
 # 项目现状盘点
 
 阶段二的第一步。产出 `output/analysis/现状基线.md`，以及一批未决问题
-（新工作空间落在 `output/analysis/questions/` 下，一问一文件；旧工作空间仍是
+（新工作空间落在 `output/questions/` 下，一问一文件；旧工作空间仍是
 `output/analysis/open-questions.md` 单表格，见下文「第四步」）。
 
 接手项目的本质困难不是资料多，而是**你不知道自己不知道什么**。
@@ -43,10 +43,10 @@ xlsx 先读 `_manifest.md` 判断哪些 sheet 值得细看，别一头扎进几�
 ### 发现未决问题怎么落
 
 **走 [`pm-open-questions`](../pm-open-questions/SKILL.md)，不要自己发明格式。**
-先看一眼 `output/analysis/`：
+先看一眼 `output/`：
 
-- 有 `questions/` 目录 → **一问一文件**，新建 `questions/Q<四位编号>.md`（编号取当前最大加一）
-- 只有 `open-questions.md` → 旧工作空间，照旧往表格里追加，**不要擅自迁移结构**
+- 有 `output/questions/` 目录 → **一问一文件**，新建 `output/questions/Q<四位编号>.md`（编号取当前最大加一；**目录空不等于从 Q0001 起**，先查 git 历史用过的最大编号）
+- 只有 `output/analysis/open-questions.md` → 旧工作空间，照旧往表格里追加，**不要擅自迁移结构**
 
 新结构下每条必须填 `source`（触发这条问题的文档路径）与 `context`
 （触发时在做什么，一句话）—— 溯源锚点挂在**条目**上，不挂在分节上。

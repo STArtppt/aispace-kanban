@@ -20,12 +20,20 @@
 
 ### Requirement: 扫目录现算索引的读取接口
 
-服务端 SHALL 提供一个接口，扫 `output/analysis/questions/` 目录、逐个读取问题文件的
+服务端 SHALL 提供一个接口，扫 `output/questions/` 目录、逐个读取问题文件的
 front-matter，现算出清单索引返回。MUST NOT 依赖任何生成的索引文件 ——
 生成物会漂，而「索引与正文对不上」正是这套机制要消除的病根。
 
 读取时 SHALL 只读每个文件的 front-matter 部分，不读正文。卡片正文由单独的按 id 取详情的接口提供。
 一切路径 MUST 过 `resolveInside()`。
+
+问题目录 SHALL 认两个位置：`output/questions/` 在就用它，否则退回迁移前的
+`output/analysis/questions/`。服务端 MUST NOT 自动搬家 —— 搬目录是用户的决定。
+读和写 MUST 落在同一个解析结果上：没迁移的工作空间原地读、原地写。
+
+问题文件 MUST NOT 出现在任何视图的文件清单里（它们提到 `output/` 同级后自然落在
+产出扫描范围外），但正文 SHALL 继续参与溯源反链计算 —— 一份资料被某条问题引着
+就是「被产出引用」。
 
 #### Scenario: 取清单索引
 
@@ -41,7 +49,7 @@ front-matter，现算出清单索引返回。MUST NOT 依赖任何生成的索�
 
 #### Scenario: 问题目录不存在
 
-- **WHEN** 工作空间里还没有 `output/analysis/questions/` 目录
+- **WHEN** 工作空间里 `output/questions/` 和 `output/analysis/questions/` 都不存在
 - **THEN** 接口返回空列表而不是报错
 - **AND** 弹窗显示空态，说明这个工作空间还没有结构化问题清单
 

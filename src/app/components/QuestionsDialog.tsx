@@ -203,7 +203,10 @@ function EvidenceBadge({ value }: { value: string }) {
   );
 }
 
-/** 卡片上的折叠区。收起时标题行仍带一行摘要，**单张卡片上不超过两个**。 */
+/**
+ * 卡片上的折叠区。收起时标题行仍带一行摘要。
+ * 整张卡片上**只有「依据」一处** —— 折叠等于默认不读，多一个就多一块没人看的内容。
+ */
 function CardSection({
   label,
   summary,
@@ -233,13 +236,29 @@ function CardSection({
   );
 }
 
-/** 一行「字段名 + 值」，值空时整行不出现（空字段不该占版面） */
+/**
+ * 卡片上的只读标签。与 `EvidenceBadge` **同一个壳** —— 「该问谁」「阻塞」「最迟答复」
+ * 和凭据是同一类东西（一眼扫过的事实），长成两样只会让人以为它们不是一回事。
+ */
+function Tag({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">
+      {label} · {value}
+    </span>
+  );
+}
+
+/**
+ * 一行「字段名 + 值」，值空时整行不出现（空字段不该占版面）。
+ * 字段名定宽（`w-16`，够放最长的「触发时在做」），**值才能左对齐成一列** ——
+ * 不定宽的话每行的值各起各的头，一堆路径挤在一起就没法扫了。
+ */
 function MetaLine({ label, value }: { label: string; value: ReactNode }) {
   if (!value) return null;
   return (
     <div className="flex gap-2 text-xs">
-      <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span className="min-w-0 break-all">{value}</span>
+      <span className="w-16 shrink-0 text-muted-foreground">{label}</span>
+      <span className="min-w-0 flex-1 break-all">{value}</span>
     </div>
   );
 }
@@ -257,13 +276,9 @@ function splitSections(body: string): Map<string, string> {
   return out;
 }
 
-/** markdown 段落的第一行纯文本，给折叠区的摘要用 */
-function firstLine(text: string): string {
-  const line = text
-    .split('\n')
-    .map((l) => l.replace(/^[#>*\-\s]+/, '').trim())
-    .find(Boolean);
-  return (line || '').replace(/[*`]/g, '');
+/** 清单行只有一行，markdown 记号（`**`、反引号）在那儿只是噪声 —— 剥掉再截断 */
+function plainText(text: string): string {
+  return text.replace(/[*`]/g, '').replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -459,15 +474,24 @@ function AnswerPanel({
 function QuestionCard({
   projectId,
   item,
-  changeToken,
+  detail,
+  loading,
+  error,
+  onWritten,
   onSaved,
 }: {
   projectId: string;
   item: QuestionItem;
-  changeToken: number;
+  /**
+   * 正文由外面取。卡片按 `key={id}` 重挂，取正文的 hook 要是挂在这里，
+   * 缓存就会跟着卡片一起被扔掉 —— 翻回刚看过的那条也得重打一趟网络。
+   */
+  detail: QuestionDetail | null;
+  loading: boolean;
+  error: string;
+  onWritten: (detail: QuestionDetail) => void;
   onSaved: (id: string) => void;
 }) {
-  const { detail, loading, error, put } = useQuestionDetail(projectId, item.id, changeToken);
   const sections = useMemo(() => splitSections(detail?.body || ''), [detail?.body]);
 
   const why = sections.get('为什么需要') || '';
@@ -477,6 +501,10 @@ function QuestionCard({
   const aiSource = detail?.ai_source || [];
 
   // 「依据」折叠区收起时的摘要：凭据已经常驻在上面了，这里说清有几条出处
+  // 人写区的两行：先算出来，好让「两行都空就整块不渲染」判得掉
+  const humanAnswer = ANSWER_LABEL[item.human_answer] || item.human_answer || '';
+  const humanNote = detail?.human_note || '';
+
   const evidenceSummary = [
     aiSource.length ? `出处 ${aiSource.length} 条` : '未标注出处',
     rounds ? '有轮次记录' : '',
@@ -486,48 +514,57 @@ function QuestionCard({
 
   return (
     <div className="flex flex-col gap-4 px-5 py-4">
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-xs text-muted-foreground">{item.id}</span>
-        <StatusDot item={item} />
-        <span className="text-xs text-muted-foreground">
-          {item.broken ? '无法解析' : STATUS_LABEL[item.status] || item.status || '未知状态'}
-        </span>
-      </div>
-
-      {item.broken ? (
-        <div className="rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive">
-          {item.reason || '这份问题文件解析不出来'}
-          <p className="mt-1 font-mono text-xs opacity-80">{item.path}</p>
+      {/*
+        编号、标题、副本、标签讲的是同一件事，收成一块、内部行距比块与块之间紧。
+        摊成同一个 `gap-4` 就没有层次了 —— 截图上那两道空档正是这么来的。
+      */}
+      <header className="flex flex-col gap-2.5">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-xs text-muted-foreground">{item.id}</span>
+          <StatusDot item={item} />
+          <span className="text-xs text-muted-foreground">
+            {item.broken ? '无法解析' : STATUS_LABEL[item.status] || item.status || '未知状态'}
+          </span>
         </div>
-      ) : null}
 
-      <h2 className="font-display text-lg leading-snug">{item.title || item.name}</h2>
-
-      {why ? (
-        <CardSection label="为什么需要" summary={firstLine(why)}>
-          <Markdown>{why}</Markdown>
-        </CardSection>
-      ) : null}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <EvidenceBadge value={item.evidence} />
-        {item.blocks && item.blocks !== BACKLOG ? (
-          <span className="rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">
-            阻塞 · {item.blocks}
-          </span>
+        {item.broken ? (
+          <div className="rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive">
+            {item.reason || '这份问题文件解析不出来'}
+            <p className="mt-1 font-mono text-xs opacity-80">{item.path}</p>
+          </div>
         ) : null}
-        {item.due ? (
-          <span className="rounded-md border border-border px-2 py-0.5 text-xs text-muted-foreground">
-            最迟答复 · {item.due}
-          </span>
-        ) : null}
-      </div>
 
-      <div className="flex flex-col gap-1">
-        <MetaLine label="该问谁" value={item.asked_of} />
-        <MetaLine label="标准答案" value={ANSWER_LABEL[item.human_answer] || item.human_answer} />
-        <MetaLine label="人工补充" value={detail?.human_note} />
-      </div>
+        {/*
+          「为什么需要」是问题的**副本**，不是附录：不知道为什么问，就只能照着标题瞎猜。
+          折叠等于默认不读，所以它直接当段落摊在标题下面。
+        */}
+        <div className="flex flex-col gap-1.5">
+          <h2 className="font-display text-lg leading-snug">{plainText(item.title || item.name)}</h2>
+          {why ? (
+            <div className="text-muted-foreground [&_p:first-child]:mt-0 [&_p:last-child]:mb-0">
+              <Markdown>{why}</Markdown>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <EvidenceBadge value={item.evidence} />
+          {item.asked_of ? <Tag label="该问谁" value={item.asked_of} /> : null}
+          {item.blocks && item.blocks !== BACKLOG ? <Tag label="阻塞" value={item.blocks} /> : null}
+          {item.due ? <Tag label="最迟答复" value={item.due} /> : null}
+        </div>
+
+        {/*
+          人写区两行空着是常态（绝大多数问题还没分派过）。
+          `MetaLine` 自己会返回 null，但外层容器照样会吃掉一道 gap —— 所以整块一起不渲染。
+        */}
+        {humanAnswer || humanNote ? (
+          <div className="flex flex-col gap-1">
+            <MetaLine label="标准答案" value={humanAnswer} />
+            <MetaLine label="人工补充" value={humanNote} />
+          </div>
+        ) : null}
+      </header>
 
       {loading && !detail ? <p className="text-xs text-muted-foreground">正在读正文…</p> : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
@@ -537,7 +574,7 @@ function QuestionCard({
         服务端也会拒。这种条目先去编辑器里修文件。
       */}
       {item.broken ? null : (
-        <AnswerPanel projectId={projectId} item={item} onSaved={onSaved} onWritten={put} />
+        <AnswerPanel projectId={projectId} item={item} onSaved={onSaved} onWritten={onWritten} />
       )}
 
       {conclusion || item.ai_conclusion ? (
@@ -602,6 +639,7 @@ function QuestionsBody({
   const [selectedId, setSelectedId] = useState('');
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const rowRefs = useRef(new Map<string, HTMLButtonElement>());
+  const cardPaneRef = useRef<HTMLDivElement>(null);
 
   // 四个筛选各自的计数：全量算一次，切筛选不重算
   const counts = useMemo(() => {
@@ -664,6 +702,18 @@ function QuestionsBody({
   const position = flat.findIndex((i) => i.id === selectedId);
   const current = position >= 0 ? flat[position] : null;
 
+  // 预读上一条与下一条：方向键是连着按的，等落上去再取就一定看得见空白
+  const neighbors = useMemo(
+    () => [flat[position - 1]?.id, flat[position + 1]?.id].filter((id): id is string => Boolean(id)),
+    [flat, position],
+  );
+  const {
+    detail,
+    loading: detailLoading,
+    error: detailError,
+    put,
+  } = useQuestionDetail(projectId, current?.id || '', changeToken, neighbors);
+
   // 切筛选、或选中的那条被消解掉之后，落到当前结果的第一条上，不让焦点悬空
   useEffect(() => {
     if (flat.some((i) => i.id === selectedId)) return;
@@ -682,6 +732,17 @@ function QuestionsBody({
     });
   }, [currentGroup]);
 
+  /**
+   * 方向键翻页时把焦点收到卡片栏的滚动视口上。
+   * 不收的话焦点还留在刚点过的那个控件上（关闭按钮、「显示 backlog」、清单行都算），
+   * 浏览器一收到按键就判定成键盘操作，给那个控件描一圈 focus-visible ——
+   * 框在哪和翻到哪毫无关系，只会误导。视口自己的 ring 已经关掉了。
+   */
+  const focusCardPane = () => {
+    const pane = cardPaneRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (pane && document.activeElement !== pane) pane.focus({ preventScroll: true });
+  };
+
   // 翻页后把选中行滚进可视区
   useEffect(() => {
     if (!selectedId) return;
@@ -697,6 +758,7 @@ function QuestionsBody({
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       event.preventDefault();
       event.stopPropagation();
+      focusCardPane();
       const step = event.key === 'ArrowDown' ? 1 : -1;
       setSelectedId((id) => {
         const at = flat.findIndex((i) => i.id === id);
@@ -709,6 +771,7 @@ function QuestionsBody({
   }, [flat]);
 
   const go = (step: number) => {
+    focusCardPane();
     const next = Math.min(flat.length - 1, Math.max(0, position + step));
     setSelectedId(flat[next]?.id || '');
   };
@@ -733,106 +796,114 @@ function QuestionsBody({
   };
 
   return (
-    <>
-      {/* 四个筛选入口，各带计数。「待 AI 更新」是闭环的枢纽，必须点得进去 */}
-      <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
-        {FILTERS.map(({ key, label }) => (
+    <div className="flex min-h-0 flex-1">
+      {/* ── 左：筛选 + 按 blocks 分组的清单。每行只出「编号 + 一句话 + 状态点」 ── */}
+      <div className="flex w-[21rem] shrink-0 flex-col border-r border-border">
+        {/*
+          四个筛选入口，各带计数。「待 AI 更新」是闭环的枢纽，必须点得进去。
+          它们只管左栏这一列，所以**不横跨整个弹窗** —— 横跨会把右边的单条卡片
+          说成是筛选的下游。装不下就横向滚，不换行、不挤字，栏宽才不会被字数推着走。
+        */}
+        <div className="flex h-11 shrink-0 items-center gap-0.5 overflow-x-auto overscroll-x-contain border-b border-border px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => pickFilter(key)}
+              aria-pressed={filter === key}
+              className={cn(
+                'relative h-11 shrink-0 px-2 text-sm whitespace-nowrap transition-colors',
+                filter === key
+                  ? 'font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {label}
+              <span className={cn('ml-1 text-xs', key === 'conflict' && counts[key] > 0 && 'text-destructive')}>
+                ({counts[key]})
+              </span>
+            </button>
+          ))}
+        </div>
+
+        {/*
+          已消解视图里的「N 条结论尚未回流正文」。问题关掉了但知识没收敛回去，
+          下一个人读到的仍然是过期信息 —— 所以它必须是可点的筛选，不是一句提示。
+        */}
+        {filter === 'resolved' && unflowedCount ? (
           <button
-            key={key}
             type="button"
-            onClick={() => pickFilter(key)}
-            aria-pressed={filter === key}
+            onClick={() => setOnlyUnflowed((v) => !v)}
+            aria-pressed={onlyUnflowed}
             className={cn(
-              'relative h-11 px-3 text-sm transition-colors',
-              filter === key
-                ? 'font-medium text-foreground after:absolute after:inset-x-3 after:bottom-0 after:h-0.5 after:bg-foreground'
-                : 'text-muted-foreground hover:text-foreground',
+              'flex shrink-0 items-start gap-2 border-b border-border px-3 py-2 text-left text-xs transition-colors hover:bg-accent',
+              onlyUnflowed ? 'bg-muted text-foreground' : 'text-muted-foreground',
             )}
           >
-            {label}
-            <span className={cn('ml-1 text-xs', key === 'conflict' && counts[key] > 0 && 'text-destructive')}>
-              ({counts[key]})
+            <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden />
+            <span className="min-w-0">
+              {unflowedCount} 条结论尚未回流正文（flows_to 还空着）
+              <span className="text-muted-foreground">{onlyUnflowed ? ' · 点此看全部已消解' : ' · 点此筛出'}</span>
             </span>
           </button>
-        ))}
-      </div>
+        ) : null}
 
-      {/*
-        已消解视图里的「N 条结论尚未回流正文」。问题关掉了但知识没收敛回去，
-        下一个人读到的仍然是过期信息 —— 所以它必须是可点的筛选，不是一句提示。
-      */}
-      {filter === 'resolved' && unflowedCount ? (
-        <button
-          type="button"
-          onClick={() => setOnlyUnflowed((v) => !v)}
-          aria-pressed={onlyUnflowed}
-          className={cn(
-            'flex shrink-0 items-center gap-2 border-b border-border px-3 py-2 text-left text-xs transition-colors hover:bg-accent',
-            onlyUnflowed ? 'bg-muted text-foreground' : 'text-muted-foreground',
-          )}
-        >
-          <span className="size-1.5 shrink-0 rounded-full bg-destructive" aria-hidden />
-          {unflowedCount} 条结论尚未回流正文（flows_to 还空着）
-          <span className="text-muted-foreground">{onlyUnflowed ? '· 点此看全部已消解' : '· 点此筛出'}</span>
-        </button>
-      ) : null}
-
-      <div className="flex min-h-0 flex-1">
-        {/* ── 左：按 blocks 分组的清单。每行只出「编号 + 一句话 + 状态点」 ── */}
-        <div className="flex w-[20rem] shrink-0 flex-col border-r border-border">
-          <ScrollArea className="min-h-0 flex-1" viewportClassName="py-1">
-            {groups.length ? (
-              groups.map((group) => {
-                const isOpen = !collapsed.has(group.name);
-                const batch = batchOf(group.name);
-                return (
-                  <div key={group.name}>
-                    <div className="flex items-center border-b border-border hover:bg-accent">
-                      <button
-                        type="button"
-                        aria-expanded={isOpen}
-                        onClick={() =>
-                          setCollapsed((prev) => {
-                            const next = new Set(prev);
-                            if (next.has(group.name)) next.delete(group.name);
-                            else next.add(group.name);
-                            return next;
-                          })
-                        }
-                        className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left text-sm"
-                      >
-                        <ChevronRight
-                          className={cn('size-3.5 shrink-0 transition-transform', isOpen && 'rotate-90')}
-                        />
-                        <span className="min-w-0 flex-1 truncate">{group.name}</span>
-                        <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                          {group.items.length}
-                        </span>
-                      </button>
-                      {/*
-                        批量复制，范围**就是这一组**，不是全局待更新 ——
-                        跨交付物的批量会把 agent 的上下文打散，那正是这套东西要消除的问题，
-                        不能从 200 条缩到 10 条就当解决了。分组本来就是注意力单元。
-                      */}
-                      <button
-                        type="button"
-                        disabled={!batch.length}
-                        title={
-                          batch.length
-                            ? `复制「${group.name}」待 AI 更新的 ${batch.length} 条 prompt`
-                            : '这一组没有待 AI 更新的问题'
-                        }
-                        aria-label={`复制「${group.name}」的批量 prompt`}
-                        onClick={() =>
-                          void copyPrompt('batch', batch.map((i) => i.path), `「${group.name}」`)
-                        }
-                        className="mr-1 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                      >
-                        <Copy className="size-3.5" />
-                      </button>
-                    </div>
-                    {isOpen
-                      ? group.items.map((item) => (
+        <ScrollArea className="min-h-0 flex-1" viewportClassName="py-1 focus-visible:ring-0">
+          {groups.length ? (
+            groups.map((group) => {
+              const isOpen = !collapsed.has(group.name);
+              const batch = batchOf(group.name);
+              return (
+                <div key={group.name}>
+                  <div className="flex items-center border-b border-border hover:bg-accent">
+                    <button
+                      type="button"
+                      aria-expanded={isOpen}
+                      onClick={() =>
+                        setCollapsed((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(group.name)) next.delete(group.name);
+                          else next.add(group.name);
+                          return next;
+                        })
+                      }
+                      className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left text-sm"
+                    >
+                      <ChevronRight
+                        className={cn('size-3.5 shrink-0 transition-transform', isOpen && 'rotate-90')}
+                      />
+                      <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                      <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                        {group.items.length}
+                      </span>
+                    </button>
+                    {/*
+                      批量复制，范围**就是这一组**，不是全局待更新 ——
+                      跨交付物的批量会把 agent 的上下文打散，那正是这套东西要消除的问题，
+                      不能从 200 条缩到 10 条就当解决了。分组本来就是注意力单元。
+                    */}
+                    <button
+                      type="button"
+                      disabled={!batch.length}
+                      title={
+                        batch.length
+                          ? `复制「${group.name}」待 AI 更新的 ${batch.length} 条 prompt`
+                          : '这一组没有待 AI 更新的问题'
+                      }
+                      aria-label={`复制「${group.name}」的批量 prompt`}
+                      onClick={() =>
+                        void copyPrompt('batch', batch.map((i) => i.path), `「${group.name}」`)
+                      }
+                      className="mr-1 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
+                    >
+                      <Copy className="size-3.5" />
+                    </button>
+                  </div>
+                  {isOpen
+                    ? group.items.map((item) => {
+                        // 一行一条：截断的是描述，编号永远看得见 —— 它是跟 agent 对话时的口令
+                        const text = plainText(item.title || item.name);
+                        return (
                           <button
                             key={item.id}
                             type="button"
@@ -841,89 +912,90 @@ function QuestionsBody({
                               else rowRefs.current.delete(item.id);
                             }}
                             onClick={() => setSelectedId(item.id)}
+                            title={`${item.id} · ${text}`}
                             className={cn(
-                              'flex w-full items-start gap-2 border-l-2 border-transparent py-1.5 pr-3 pl-4 text-left transition-colors hover:bg-accent',
+                              'flex w-full items-center gap-2 border-l-2 border-transparent py-1.5 pr-3 pl-4 text-left transition-colors hover:bg-accent',
                               item.id === selectedId && 'border-l-foreground bg-muted hover:bg-muted',
                             )}
                           >
-                            <span className="mt-1.5">
-                              <StatusDot item={item} />
-                            </span>
-                            <span className="min-w-0 flex-1">
+                            <StatusDot item={item} />
+                            <span className="min-w-0 flex-1 truncate text-xs">
                               <span className="mr-1.5 font-mono text-[11px] text-muted-foreground">
                                 {item.id}
                               </span>
-                              <span className="line-clamp-2 align-middle text-xs">
-                                {item.title || item.name}
-                              </span>
+                              {text}
                             </span>
                           </button>
-                        ))
-                      : null}
-                  </div>
-                );
-              })
-            ) : (
-              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-                这个筛选下没有问题
-              </p>
-            )}
-          </ScrollArea>
+                        );
+                      })
+                    : null}
+                </div>
+              );
+            })
+          ) : (
+            <p className="px-3 py-6 text-center text-xs text-muted-foreground">这个筛选下没有问题</p>
+          )}
+        </ScrollArea>
 
-          {/*
-            backlog 默认不占版面（它不阻塞任何在途交付物），但也不能凭空消失 ——
-            两百多条沉在里面，用户得有一条路看见它们。
-          */}
-          {backlogCount ? (
-            <button
-              type="button"
-              onClick={() => setShowBacklog((v) => !v)}
-              aria-pressed={showBacklog}
-              className="shrink-0 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-            >
-              {showBacklog ? '隐藏' : '显示'} backlog（{backlogCount} 条不阻塞在途交付物）
-            </button>
-          ) : null}
-        </div>
-
-        {/* ── 右：单条卡片 + 方向键翻页 ── */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
-            <HeaderIconButton label="上一条（↑）" disabled={position <= 0} onClick={() => go(-1)}>
-              <ArrowUp className="size-4" />
-            </HeaderIconButton>
-            <HeaderIconButton
-              label="下一条（↓）"
-              disabled={position < 0 || position >= flat.length - 1}
-              onClick={() => go(1)}
-            >
-              <ArrowDown className="size-4" />
-            </HeaderIconButton>
-            <span
-              className="ml-1 font-mono text-xs text-muted-foreground"
-              title={flat.length ? `第 ${position + 1} 条，共 ${flat.length} 条` : '这个筛选下没有问题'}
-            >
-              {flat.length ? `${position + 1} / ${flat.length}` : '— / 0'}
-            </span>
-          </div>
-          <ScrollArea className="min-h-0 flex-1">
-            {current ? (
-              <QuestionCard
-                key={current.id}
-                projectId={projectId}
-                item={current}
-                changeToken={changeToken}
-                onSaved={handleSaved}
-              />
-            ) : (
-              <p className="px-5 py-10 text-center text-sm text-muted-foreground">
-                这个筛选下没有问题
-              </p>
-            )}
-          </ScrollArea>
-        </div>
+        {/*
+          backlog 默认不占版面（它不阻塞任何在途交付物），但也不能凭空消失 ——
+          两百多条沉在里面，用户得有一条路看见它们。
+        */}
+        {backlogCount ? (
+          <button
+            type="button"
+            onClick={() => setShowBacklog((v) => !v)}
+            aria-pressed={showBacklog}
+            className="shrink-0 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+          >
+            {showBacklog ? '隐藏' : '显示'} backlog（{backlogCount} 条不阻塞在途交付物）
+          </button>
+        ) : null}
       </div>
-    </>
+
+      {/* ── 右：单条卡片 + 方向键翻页 ── */}
+      <div ref={cardPaneRef} className="flex min-w-0 flex-1 flex-col">
+        <div className="flex h-11 shrink-0 items-center gap-1 border-b border-border px-3">
+          <HeaderIconButton label="上一条（↑）" disabled={position <= 0} onClick={() => go(-1)}>
+            <ArrowUp className="size-4" />
+          </HeaderIconButton>
+          <HeaderIconButton
+            label="下一条（↓）"
+            disabled={position < 0 || position >= flat.length - 1}
+            onClick={() => go(1)}
+          >
+            <ArrowDown className="size-4" />
+          </HeaderIconButton>
+          <span
+            className="ml-1 font-mono text-xs text-muted-foreground"
+            title={flat.length ? `第 ${position + 1} 条，共 ${flat.length} 条` : '这个筛选下没有问题'}
+          >
+            {flat.length ? `${position + 1} / ${flat.length}` : '— / 0'}
+          </span>
+        </div>
+        {/*
+          `focus-visible:ring-0`：方向键翻页是我们自己接管的（见上面的 keydown），
+          但按键会让浏览器给已聚焦的滚动视口打上 focus-visible，于是右半边凭空框一圈黑边。
+          翻页的落点在卡片和左栏选中行上，那圈框只是噪声。
+        */}
+        <ScrollArea className="min-h-0 flex-1" viewportClassName="focus-visible:ring-0">
+          {current ? (
+            <QuestionCard
+              key={current.id}
+              projectId={projectId}
+              item={current}
+              detail={detail}
+              loading={detailLoading}
+              error={detailError}
+              onWritten={put}
+              onSaved={handleSaved}
+            />
+          ) : (
+            <p className="px-5 py-10 text-center text-sm text-muted-foreground">这个筛选下没有问题</p>
+          )}
+        </ScrollArea>
+      </div>
+    </div>
   );
 }
 

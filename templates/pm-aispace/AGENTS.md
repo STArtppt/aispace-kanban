@@ -24,9 +24,9 @@ input/  →  （分析）  →  output/  →  visualization/
 | `input/assets/` | 图片资料：`<文档名>/` 是那份文档抽出的图，`未分类/` 是直接放进 raw/ 的单图 | 脚本生成。看图请直接读图片文件 |
 | `input/INDEX.md` | 资料台账 | 表格由脚本生成；人工判断写在「人工批注」区 |
 | `output/analysis/` | 分析中间产物（现状基线、需求拆解） | 自由写 |
-| `output/analysis/questions/` | 未决问题，**一问一文件** `Q<四位编号>.md` | 走 `pm-open-questions`；字段契约见该目录的 `README.md` |
 | `output/docs/` | 对外交付文档（PRD、需求规格、评审材料）；**演示/汇报用的 HTML 也放这里** | 自由写，见下文 |
 | `output/decisions/` | 决策记录：一个决策一个文件 | 只追加，不要改历史决策 |
+| `output/questions/` | 未决问题，**一问一文件** `Q<四位编号>.md`；**和 `analysis/` 平级，不进任何视图的文件列表**，只在看板 ⌘K 弹窗里看和处理 | 走 `pm-open-questions`；字段契约见该目录的 `README.md` |
 | `visualization/references/` | 收下来的**别人的**页面：竞品、友商后台、公开文档站 | **一份参考一个目录，入口必须叫 `index.html`**；这是收来的原样材料，不要改它的内容 |
 | `visualization/prototypes/` | 可预览原型库：Axhub Make 客户端、zip 导出包、自己写的单页 HTML | **一个东西一个子目录，入口必须叫 `index.html`**，见下文 |
 
@@ -87,7 +87,7 @@ PM 接手项目最大的风险是**把自己的推断当成项目事实**，然�
 - 陈述项目现状的每一条结论，都要能指回来源：`（来源：input/converted/需求规格.md，"3.2 计费规则"）`。
 - 你自己的推断必须显式标注 `[推断]`，来自会议口述的标 `[口述待确认]`。
 - 资料里没有答案的，不要猜着填。落成一条未决问题
-  （`output/analysis/questions/` 下一问一文件，走 [`skills/pm-open-questions`](skills/pm-open-questions/SKILL.md)），
+  （`output/questions/` 下一问一文件，走 [`skills/pm-open-questions`](skills/pm-open-questions/SKILL.md)），
   作为要向对方团队确认的问题清单——**没有答案本身就是重要产出**。
 - 查证之后仍然只能推断的，凭据写 `我方推断`，**这种条目不许标成「已解决」**。
   把推断和实证混在一栏里、长得一模一样，是「未知被伪装成确定事实」最常见的入口。

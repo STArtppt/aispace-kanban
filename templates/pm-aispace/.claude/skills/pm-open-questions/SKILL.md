@@ -14,19 +14,20 @@ description: 管理工作空间里的未决问题清单——落新问题、按�
 
 ## 先认工作空间的形态
 
-动手前先看一眼 `output/analysis/`：
+动手前先看一眼 `output/`：
 
 | 看到什么 | 这是什么形态 | 怎么做 |
 | --- | --- | --- |
-| 有 `questions/` 目录 | 新结构，一问一文件 | 照本技能往下做 |
-| 只有 `open-questions.md`，没有 `questions/` | 旧结构，单表格 | 先问用户要不要迁移（见最后一节）。**用户不迁就别擅自迁**，照旧往表格里追加 |
-| 两个都有 | 已迁移 | 只动 `questions/`。`open-questions.md` 是留着回滚的快照，**不要再往里加行** |
+| 有 `output/questions/` 目录 | 新结构，一问一文件 | 照本技能往下做 |
+| 只有 `analysis/open-questions.md` | 旧结构，单表格 | 先问用户要不要迁移（见最后一节）。**用户不迁就别擅自迁**，照旧往表格里追加 |
+| 两个都有 | 已迁移 | 只动 `output/questions/`。`open-questions.md` 是留着回滚的快照，**不要再往里加行** |
+| 只有 `analysis/questions/` 目录 | 迁过、但还在旧位置 | 提议 `git mv output/analysis/questions output/questions`。留在 `analysis/` 下会把分析产物清单淹掉 |
 
 旧工作空间不会因为模板更新就自动获得新结构，这个判断每次都要做。
 
 ## 字段契约
 
-**唯一事实源是 [`output/analysis/questions/README.md`](../../../output/analysis/questions/README.md)。**
+**唯一事实源是 [`output/questions/README.md`](../../../output/questions/README.md)。**
 下面只是够你干活的摘要，取值和边界以那份为准，有出入按那份走。
 
 ```markdown
@@ -67,7 +68,9 @@ flows_to:                 # 你写：这条结论该回流到哪份正文的哪�
 
 别的技能发现待澄清问题时走这一步。**这是入口的唯一形状**，不要自己另发明一套。
 
-1. 取当前最大编号加一：`ls output/analysis/questions/Q*.md | tail -1`。目录空就从 `Q0001` 开始。
+1. 取当前最大编号加一：`ls output/questions/Q*.md | tail -1`。
+   **目录空不等于从 `Q0001` 开始** —— 整批归档过的工作空间目录就是空的，
+   先查历史：`git log --all --name-only --pretty=format: -- 'output/questions' 'output/analysis/questions' | grep -o 'Q[0-9]\{4\}' | sort -u | tail -1`，查不到才从 `Q0001` 起。编号只增不复用，理由见契约。
 2. 按上面的骨架写一个文件。`evidence` / `ai_*` 一律留空 —— 问题刚提出来时你还没查证。
 3. **`source` 和 `context` 必须填。** 溯源锚点挂在**条目**上，不挂在分节上 ——
    挂在分节上正是存量条目「每条 200 字」的成因：条目找不到自己的上下文，
@@ -89,7 +92,7 @@ flows_to:                 # 你写：这条结论该回流到哪份正文的哪�
 用户要跟对方对齐时用这个。**按 `blocks` 分组，一次只给一个交付物的几条** ——
 跨交付物混在一起，对方和你的注意力都会散掉。
 
-1. 扫 `output/analysis/questions/`，读每份的 front-matter。
+1. 扫 `output/questions/`，读每份的 front-matter。
 2. 只取 `human_answer: ask` 且 `status` 不是 `answered` / `dropped` 的（这些是确需对方答复的）。
    用户要更宽的范围就把 `status: open` 的也带上，但**要说清楚哪些是还没定要不要问的**。
 3. 按 `blocks` 分组，`backlog` 一组放最后或直接不出。

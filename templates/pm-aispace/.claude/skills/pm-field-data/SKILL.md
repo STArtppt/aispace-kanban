@@ -127,10 +127,10 @@ python3 scripts/realdata.py --force     # 强制重建
 ### 发现未决问题怎么落
 
 **走 [`pm-open-questions`](../pm-open-questions/SKILL.md)，不要自己发明格式。**
-先看一眼 `output/analysis/`：
+先看一眼 `output/`：
 
-- 有 `questions/` 目录 → **一问一文件**，新建 `questions/Q<四位编号>.md`（编号取当前最大加一）
-- 只有 `open-questions.md` → 旧工作空间，照旧往表格里追加，**不要擅自迁移结构**
+- 有 `output/questions/` 目录 → **一问一文件**，新建 `output/questions/Q<四位编号>.md`（编号取当前最大加一；**目录空不等于从 Q0001 起**，先查 git 历史用过的最大编号）
+- 只有 `output/analysis/open-questions.md` → 旧工作空间，照旧往表格里追加，**不要擅自迁移结构**
 
 新结构下每条必须填 `source`（触发这条问题的文档路径）与 `context`
 （触发时在做什么，一句话）—— 溯源锚点挂在**条目**上，不挂在分节上。

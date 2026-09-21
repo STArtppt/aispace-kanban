@@ -13,7 +13,7 @@ description: 撰写可直接交付评审的 PRD、需求规格说明书、功能
 ## 写之前
 
 读齐三份输入：`output/analysis/现状基线.md`、`output/analysis/需求拆解.md`、
-以及未决问题（新工作空间在 `output/analysis/questions/`，旧的在 `output/analysis/open-questions.md`）。
+以及未决问题（新工作空间在 `output/questions/`，旧的在 `output/analysis/open-questions.md`）。
 缺需求拆解就先走 `pm-requirement-analysis`。
 
 然后问用户两件事，不要自己假设：
