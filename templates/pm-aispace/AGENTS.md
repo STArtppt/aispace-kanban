@@ -20,7 +20,7 @@ input/  →  （分析）  →  output/  →  visualization/
 | --- | --- | --- |
 | `project.yaml` | 项目元信息：背景目标、干系人、里程碑、成果要求、约束 | 由 `pm-project-meta` 增量维护，见下文 |
 | `input/raw/` | 人类给的原始资料（docx / PDF / xlsx / pptx） | **只读**。永不改动、永不删除，它是溯源的终点。**默认禁止读取**（见下文） |
-| `input/converted/` | 转换后的 `.md` / `.csv`；**目录结构镜像 `input/raw/`**，见下文 | 由 `scripts/ingest.py` / `pointtable.py` / `realdata.py` 生成，**不要手改**（重跑会覆盖） |
+| `input/converted/` | 转换后的 `.md` / `.csv`；**目录结构镜像 `input/raw/`**，见下文 | 由 `scripts/ingest.py` / `pointtable.py` / `realdata.py` / `web_ingest.py` 生成，**不要手改**（重跑会覆盖） |
 | `input/assets/` | 图片资料：`<文档名>/` 是那份文档抽出的图，`未分类/` 是直接放进 raw/ 的单图 | 脚本生成。看图请直接读图片文件 |
 | `input/INDEX.md` | 资料台账 | 表格由脚本生成；人工判断写在「人工批注」区 |
 | `output/analysis/` | 分析中间产物（现状基线、需求拆解） | 自由写 |
@@ -333,6 +333,22 @@ python3 scripts/db_ingest.py query 仓库库 \
 源怎么配、凭据放哪儿、为什么样例行默认不抽，见 [`input/sources/README.md`](input/sources/README.md)。
 用户把 jdbc / 主机端口 / 账号口令丢过来时，走 [`skills/pm-env-config`](skills/pm-env-config/SKILL.md) 落文件，不要把口令写进 yaml。
 
+## 阶段一之五：网页资料
+
+政策文件、公开标准、友商文档站这类网页，**没有** `input/raw/` 下的原件，
+走 `scripts/web_ingest.py` 转成 Markdown 落进 `input/converted/`，
+落点与 docx / PDF 同一套规则（`scripts/layout.py`）。给人看的页面快照仍走看板
+`visualization/references/` 采集——两条链路共用同一份抓下来的 HTML，职责不同
+（可分析文本 vs 页面快照），详见 [`skills/pm-doc-ingest`](skills/pm-doc-ingest/SKILL.md)。
+
+```bash
+python3 scripts/web_ingest.py <URL>          # 公开页：抽出可分析文本（不写 visualization/）
+python3 scripts/web_ingest.py --inbox        # 根上散装 HTML：收成参考目录并抽出正文
+```
+
+浏览器另存 / 剪藏丢进 `visualization/references/` 根上的自包含 HTML，走 `--inbox`。
+看板参考 tab 的刷新按钮调的就是这一条。何时用哪条入口见 [`skills/pm-doc-ingest`](skills/pm-doc-ingest/SKILL.md)。
+
 **写操作由数据库自己拒绝。** 脚本在发任何一条用户语句之前先把会话置为只读
 （PG `SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY` / MySQL `SET SESSION TRANSACTION READ ONLY`），
 即便配的是 root，INSERT / UPDATE / DELETE 也由服务端打回。设置失败就中止，不降级。
@@ -426,6 +442,82 @@ Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也�
 - 中文名可以直接用，IDE 和工具链都能处理，不用转拼音。
 - 分析产物加日期前缀便于排序：`2026-07-30-计费模块需求拆解.md`。
 - 决策记录：`output/decisions/0001-短标题.md`，四位序号递增。
+
+## Markdown 写法
+
+工作空间里的 Markdown 写法**只写在这一节**。各技能只留一句指向这里的引用，不要在技能里复述条目。
+
+这是一份 **Obsidian 与看板渲染器同时支持** 的语法子集：现在按它写的文档，
+将来看板补上 wikilink / callout 插件、逐条解禁下面的禁用项时，**存量一份都不用改**。
+
+可执行版本是 [`scripts/check_markdown.py`](scripts/check_markdown.py)
+（只读、只报告）和 [`scripts/migrate_markdown.py`](scripts/migrate_markdown.py)
+（默认预演，落盘要显式加 `--write`）。**契约变了那两个脚本要跟着变。**
+
+### 适用范围
+
+| 目录 | 本节约束吗 | 原因 |
+| --- | --- | --- |
+| `output/analysis/`、`output/decisions/` | **管** | 人或 agent 手写的分析 / 决策 |
+| `output/docs/` | 语法管、front-matter **不强制** | 要发出去的文档，YAML 头对收件人是噪音；写了的话必须扁平 |
+| `output/questions/` | 语法管；字段以该目录 README 为准 | 未决问题有自己的字段契约，扁平约束与这里是同一条 |
+| 各目录下的 `README.md` | 语法管、front-matter **不强制** | 目录说明，不是分析产物 |
+| `input/converted/` | **不管** | 由转换脚本生成，重跑即覆盖；要改形态就改脚本 |
+| `input/raw/` | **不碰** | 人类给的原件，只读 |
+
+校验脚本只扫 `output/**` 下的 `.md`，显式不读 `input/converted/` 与 `input/raw/`。
+
+### 现在可用
+
+- **扁平 YAML front-matter**：只允许 `key: value` 与 `key:` + `  - item` 两种形态。
+  看板的解析器（`src/server/frontmatter.mjs`）只认这两种；
+  内联数组 `tags: [a, b]` 会被整体当成一个字符串，语义静默丢掉。
+  这条与 [`output/questions/README.md`](output/questions/README.md) 已有的扁平约束是**同一条**，
+  现在从 `questions/` 扩到全部手写 Markdown。
+- **唯一 H1，正文从 H2 起**。标题可以写在 front-matter 的 `title` 里、正文从 H2 起；
+  也可以正文留一个 H1 当标题。两个 H1 会把看板的文档目录搅乱。
+- **文档间相对路径链接**：`[文本](../analysis/xxx.md)`。
+  这是目前 Obsidian 与看板（`Reader.tsx` 会把它转成可点开的文件地址）**同时支持**的引用形态。
+  不要写裸文件名，看板里点不开。
+- GFM 表格、围栏代码块（含 mermaid）。
+
+`output/analysis/` 与 `output/decisions/` 的 front-matter 最小形态：
+
+```markdown
+---
+title: 文档标题
+created: 2026-07-30
+updated: 2026-07-30
+---
+```
+
+缺字段时 `scripts/migrate_markdown.py` 会按文件名 / 首个 H1 / 文件日期补齐；它**不改正文措辞、不调标题层级**。
+
+### 现在禁用
+
+禁用是因为**看板暂不渲染**，不是永久排除。将来插件到位后逐条从本表挪到「现在可用」，
+按子集写的存量文档不用回头翻修。
+
+| 语法 | 现在写成 | 看板里会怎样 |
+| --- | --- | --- |
+| `[[wikilink]]` | `[文本](相对路径.md)` | 原样显示成裸文本，点不开 |
+| `![[embed]]` | 相对路径链接，或把内容抄过来 | 原样显示成裸文本 |
+| `> [!note]` 这类 callout | 普通引用块，需要强调就加粗 | 退化成普通引用，`[!note]` 标记露出来 |
+| 行首 `#标签`（`#` 后紧跟非空格） | 写进 front-matter 的块状 list | **被当成 H1 混进文档目录** |
+| `%%注释%%` | HTML 注释 `<!-- -->`，或干脆不写 | 原样露在正文里 |
+| 块引用锚点 `^id` | 不用；要定位就靠标题 | 原样露在段尾 |
+| `$...$` / `$$...$$` 数学公式 | 能用文字或代码块说清就说清 | 原样显示，不渲染 |
+
+### 违约怎么被看见
+
+```bash
+python3 scripts/check_markdown.py            # 只读，只报告
+python3 scripts/migrate_markdown.py          # 预演，不落盘
+python3 scripts/migrate_markdown.py --write  # 确认后落盘
+```
+
+校验闸的作用不是阻止违约——agent 直接改文件谁也拦不住——是**让违约可见，不要静默生效**。
+这两个脚本是工作空间自己的工具，看板既不调用也不 spawn。
 
 ## 不要做的事
 

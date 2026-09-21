@@ -49,6 +49,8 @@ output/questions/
 front-matter **必须是扁平的**：只用 `key: value` 与 `key:` + `  - item` 两种形态，
 **不用嵌套对象**。这不只是为了迁就解析器 —— 扁平限制强制 `title` 是一句话、
 `blocks` 是一个交付物名，**条目长度由结构管住，不靠自觉**。长文一律进正文。
+这条扁平约束已扩到工作空间全部手写 Markdown，写法子集的唯一事实源是
+[AGENTS.md](../../AGENTS.md) 的「Markdown 写法」一节；**本文件只保留问题字段契约**，不复述那边的语法允许项或禁用项。
 
 ```markdown
 ---

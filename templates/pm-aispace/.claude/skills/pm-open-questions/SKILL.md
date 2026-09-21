@@ -12,6 +12,8 @@ description: 管理工作空间里的未决问题清单——落新问题、按�
 
 这个技能是那个缺失的出口。它管四件事：**落一条**、**取出来问**、**关掉**、**体检**。
 
+手写 Markdown 的写法（front-matter 形态、标题层级、文档间链接、哪些语法现在先别用）见工作空间 `AGENTS.md` 的「Markdown 写法」一节，这里不复述。问题字段契约仍以 [`output/questions/README.md`](../../../output/questions/README.md) 为准。
+
 ## 先认工作空间的形态
 
 动手前先看一眼 `output/`：

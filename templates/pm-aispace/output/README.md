@@ -2,6 +2,9 @@
 
 所有分析结论和交付文档都落在这里。`input/` 是别人给你的，`output/` 是你交出去的。
 
+手写 Markdown 的写法见工作空间根目录 [AGENTS.md](../AGENTS.md) 的「Markdown 写法」一节。
+`analysis/` 与 `decisions/` 要带最小 front-matter；`docs/` 是要发出去的，front-matter 不强制。
+
 ## 四个子目录
 
 ### `analysis/` — 想清楚的过程
