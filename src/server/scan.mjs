@@ -804,6 +804,17 @@ function scanOutput(root) {
     }
   }
 
+  // 产出物记录（`output/records/`）**两样都不进**：不进上面三个分组，也不喂溯源反链。
+  //
+  // 不进分组的理由与问题清单同一条：三类合计的记录数会把「分析中间产物」那份清单整个淹掉，
+  // 它有自己的入口（⌘K 工作台的「产出物」页）。这里不需要额外的排除逻辑 ——
+  // 上面那轮只遍历三个组名，`records/` 天然不在其中。
+  //
+  // **不喂反链这一点与 `questions/` 相反**，理由与上面跳过问题目录里过程件的理由是同一条：
+  // 状态流水会抄产出物原文与资料引用，喂进去会把「被 N 篇产出引用」顶虚高，
+  // 让「转换好了却没人用」这个缺口提示失真。附带好处是扫描不必读记录正文
+  // （`records.mjs` 只 stat 一次 + 解析一次 front-matter）。
+
   const all = Object.values(groups).flat();
   const annotated = all.filter((f) => f.annotations);
   return {

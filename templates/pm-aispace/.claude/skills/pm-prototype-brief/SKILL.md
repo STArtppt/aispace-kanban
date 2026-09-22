@@ -7,6 +7,8 @@ description: 把 PRD 和需求拆解收敛成一份原型输入说明（页面�
 
 阶段四。两步：先产出 `output/analysis/原型输入说明.md`，再启动 Axhub Make。
 
+原型输入说明落盘之后**一并建一份产出物记录**（`kind: analysis`），走 [`pm-output-record`](../pm-output-record/SKILL.md)——它被原型吸收之后要能标成 `absorbed`，否则下一轮分不清哪份说明还作数。
+
 手写 Markdown 的写法（front-matter 形态、标题层级、文档间链接、哪些语法现在先别用）见工作空间 `AGENTS.md` 的「Markdown 写法」一节，这里不复述。
 
 **顺序不能颠倒。** 原型工具的产出质量完全取决于喂进去的需求描述有多具体。

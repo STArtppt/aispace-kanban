@@ -27,6 +27,7 @@ input/  →  （分析）  →  output/  →  visualization/
 | `output/docs/` | 对外交付文档（PRD、需求规格、评审材料）；**演示/汇报用的 HTML 也放这里** | 自由写，见下文 |
 | `output/decisions/` | 决策记录：一个决策一个文件 | 只追加，不要改历史决策 |
 | `output/questions/` | 未决问题，**一问一文件** `Q<四位编号>.md`；**和 `analysis/` 平级，不进任何视图的文件列表**，只在看板 ⌘K 弹窗里看和处理 | 走 `pm-open-questions`；字段契约见该目录的 `README.md` |
+| `output/records/` | 产出物记录，**一份产出物一个** `I<四位编号>.md`；和 `analysis/` 平级，**不进任何视图的文件列表**，只在看板 ⌘K 工作台的「产出物」页里看和处理 | 走 `pm-output-record`；字段契约见该目录的 `README.md` |
 | `visualization/references/` | 收下来的**别人的**页面：竞品、友商后台、公开文档站 | **一份参考一个目录，入口必须叫 `index.html`**；这是收来的原样材料，不要改它的内容 |
 | `visualization/prototypes/` | 可预览原型库：Axhub Make 客户端、zip 导出包、自己写的单页 HTML | **一个东西一个子目录，入口必须叫 `index.html`**，见下文 |
 
@@ -135,6 +136,7 @@ python3 /path/to/aispace-kanban/templates/init_workspace.py \
 | [`skills/pm-project-meta`](skills/pm-project-meta/SKILL.md) | 阶段一之后：从合同 / 招标 / 立项文件提取元信息，补 `project.yaml` |
 | [`skills/pm-project-handover`](skills/pm-project-handover/SKILL.md) | 阶段二：摸清项目现状，产出现状基线和澄清问题清单 |
 | [`skills/pm-open-questions`](skills/pm-open-questions/SKILL.md) | 贯穿全程：未决问题的入口与出口——落新问题、按交付物生成对齐会议清单、关闭归档、体检、迁移旧表格 |
+| [`skills/pm-output-record`](skills/pm-output-record/SKILL.md) | 贯穿全程：产出物记录的建立与维护——建产出物时一并建记录、按 `kind` 选状态机、产出物改名时跟进 `target`、给存量决策补记录 |
 | [`skills/pm-requirement-analysis`](skills/pm-requirement-analysis/SKILL.md) | 阶段二：需求拆解、优先级、验收标准、追溯矩阵 |
 | [`skills/pm-field-data`](skills/pm-field-data/SKILL.md) | 阶段二之外：现场真实运行数据进来时，核验数据可用性、拿场景可行性的证据 |
 | [`skills/pm-list-diff`](skills/pm-list-diff/SKILL.md) | 阶段二之外：两份清单（甲方给的 vs 我方已接入的）交叉比对，产出对外可回填核对件 |
@@ -463,6 +465,7 @@ Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也�
 | `output/analysis/`、`output/decisions/` | **管** | 人或 agent 手写的分析 / 决策 |
 | `output/docs/` | 语法管、front-matter **不强制** | 要发出去的文档，YAML 头对收件人是噪音；写了的话必须扁平 |
 | `output/questions/` | 语法管；字段以该目录 README 为准 | 未决问题有自己的字段契约，扁平约束与这里是同一条 |
+| `output/records/` | 语法管；字段以该目录 README 为准 | 产出物记录有自己的字段契约（含按 `kind` 分化的三套状态机），扁平约束与这里是同一条 |
 | 各目录下的 `README.md` | 语法管、front-matter **不强制** | 目录说明，不是分析产物 |
 | `input/converted/` | **不管** | 由转换脚本生成，重跑即覆盖；要改形态就改脚本 |
 | `input/raw/` | **不碰** | 人类给的原件，只读 |

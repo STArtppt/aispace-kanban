@@ -122,3 +122,5 @@ context: 盘点业务规则维度时，两份资料对计费周期的说法不�
 基线不是终稿。随着澄清问题被回答，要回来更新对应条目并把标注从 `[推断]` 改成带来源。
 基线稳定后进 `pm-requirement-analysis` 做需求拆解。
 盘点过程中定下来的决策，一条一档记进 `output/decisions/`。
+
+基线与决策落盘之后**一并建一份产出物记录**（基线是 `kind: analysis`，决策是 `kind: decisions`），走 [`pm-output-record`](../pm-output-record/SKILL.md)——没有记录的产出物在看板上只有一个修改时间，看不出还作不作数。

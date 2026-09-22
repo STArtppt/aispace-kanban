@@ -10,8 +10,14 @@
 或 `tags: [a, b]`。这个脚本的作用不是阻止违约，是**让违约可见**，不要静默生效。
 
 它**不管** `input/converted/`（转换脚本的产物，重跑即覆盖）和 `input/raw/`（原件，不碰）。
-`output/questions/` 的字段契约仍由 `check_questions.py` 负责；本脚本只查写法子集
+`output/questions/` 的字段契约仍由 `check_questions.py` 负责；对那个目录本脚本只查写法子集
 （扁平 front-matter、禁用语法、标题层级），不重复检查问题字段。
+
+`output/records/` 是例外：产出物记录的字段契约由本脚本查，没有单独的脚本。
+理由是记录文件本来就在 `output/**` 的扫描范围里，而要查的东西
+（`kind` 决定 `status` 的合法取值、终态必须有 `resolved_by`、`status` 与正文流水末条一致）
+只有几十行，再开一个脚本会让「两份契约实现」的老问题多一处。
+契约的事实源是 [`output/records/README.md`](../output/records/README.md)。
 
 用法
 ----
@@ -31,7 +37,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from questions_fm import parse_frontmatter  # noqa: E402
+from questions_fm import as_text, is_blank, parse_frontmatter  # noqa: E402
 
 HERE = Path(__file__).resolve().parent
 WS = HERE.parent
@@ -42,6 +48,33 @@ SHOW_FILES = 6
 
 # 这些路径即使被扫到也跳过：转换产物与原件不在本规范范围内。
 SKIP_PARTS = {"input/converted", "input/raw"}
+
+# ── 产出物记录（output/records/）─────────────────────────────────────────────
+# 契约事实源：output/records/README.md。**那份变了这里要跟着变。**
+# 看板服务端的同一份映射表在 src/shared/recordStatus.mjs，三处不能分叉。
+RECORD_DIR = "records"
+RECORD_FILE_RE = re.compile(r"^I\d{4}\.md$")
+RECORD_REQUIRED = ("id", "kind", "title", "target", "status", "created")
+
+# kind → 合法状态值。三类不共用一套：分析中间产物不存在「发给对方」，
+# 决策不存在「待修订」—— 硬套一套会让每类都带着两三个永远用不上的状态。
+RECORD_STATUS = {
+    "analysis": ("drafting", "absorbed", "stale"),
+    "docs": ("draft", "delivered", "revising", "final", "superseded"),
+    "decisions": ("pending", "confirmed", "overturned"),
+}
+# 产出物落在哪个子目录，由 kind 决定
+RECORD_TARGET_DIR = {"analysis": "output/analysis/", "docs": "output/docs/", "decisions": "output/decisions/"}
+# 这三个终态必须说清被谁消解，否则外部引用无处可去
+RECORD_NEEDS_RESOLVED_BY = {"absorbed", "superseded", "overturned"}
+# front-matter 单个值的长度上限。超了说明该写进正文的状态流水 —— 扁平限制管的就是这个
+RECORD_FIELD_LIMIT = 120
+# `title` 超过这个长度只警告：它仍然是一句话，但清单行会被挤爆
+RECORD_TITLE_WARN = 60
+# 状态流水的小节标题与条目：`## 状态流水` 下的 `### 2026-09-02 · revising`
+RECORD_FLOW_HEADING_RE = re.compile(r"^##[ \t]+状态流水[ \t]*$", re.M)
+RECORD_FLOW_ENTRY_RE = re.compile(r"^###[ \t]+(\S+)[ \t]*·[ \t]*(\S+)[ \t]*$", re.M)
+DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # 行首 `#标签`：`#` 后紧跟非空格、非 `#`。`# 标题`（有空格）是合法 H1，不算。
 TAG_RE = re.compile(r"^#[^#\s]")
@@ -212,6 +245,136 @@ def check_headings(body: str, body_start: int, where: str, report: Report) -> No
         )
 
 
+def is_record(path: Path, output_root: Path) -> bool:
+    """这份文件是不是 `output/records/` 下的一条记录（README 与别的过程件不算）。"""
+    try:
+        rel = path.resolve().relative_to(output_root.resolve())
+    except ValueError:
+        return False
+    parts = rel.parts
+    return len(parts) == 2 and parts[0] == RECORD_DIR and bool(RECORD_FILE_RE.match(parts[1]))
+
+
+def _last_flow_entry(body: str) -> tuple[str, str] | None:
+    """取「## 状态流水」下最后一条 `### 日期 · 状态` 的（日期, 状态）。没有就 None。"""
+    heading = RECORD_FLOW_HEADING_RE.search(body)
+    if not heading:
+        return None
+    start = heading.end()
+    after = re.compile(r"^##[ \t]+", re.M).search(body, start)
+    section = body[start : after.start() if after else len(body)]
+    entries = RECORD_FLOW_ENTRY_RE.findall(section)
+    if not entries:
+        return None
+    date, status = entries[-1]
+    return date, status
+
+
+def check_record(path: Path, meta: dict, body: str, where: str, report: Report) -> None:
+    """产出物记录的字段契约。事实源是 output/records/README.md。
+
+    这里**只报告，不修**：记录是人和 agent 共写的文件，替它猜一个状态填进去
+    正是这套结构要防的事（自动推导出来的状态是虚假确定性）。
+    """
+    for key in RECORD_REQUIRED:
+        if key not in meta or is_blank(meta[key]):
+            report.error(
+                f"记录缺 `{key}`",
+                where,
+                f"缺必填字段 `{key}`。六个必填字段见 output/records/README.md 的「front-matter 字段」",
+            )
+
+    # `id` 与文件名一致 —— 编号是外部引用的锚点，对不上就等于引用指错
+    wanted = path.name[:-3]
+    if not is_blank(meta.get("id")) and as_text(meta["id"]) != wanted:
+        report.error(
+            "记录编号与文件名不符",
+            where,
+            f"`id: {as_text(meta['id'])}` 与文件名 `{path.name}` 不一致。改 `id`，不要改文件名",
+        )
+
+    kind = as_text(meta.get("kind"))
+    status = as_text(meta.get("status"))
+    if kind and kind not in RECORD_STATUS:
+        report.error(
+            "记录 `kind` 不在三值内",
+            where,
+            f"`kind: {kind}` 不认识。只能是 {' / '.join(RECORD_STATUS)}，它决定 `status` 的合法取值",
+        )
+    elif kind and status and status not in RECORD_STATUS[kind]:
+        report.error(
+            "记录 `status` 不属于该 `kind`",
+            where,
+            f"`kind: {kind}` 的 `status` 只能是 {' / '.join(RECORD_STATUS[kind])}，"
+            f"现在写的是 `{status}`。三类不共用一套状态机",
+        )
+
+    # 终态必须说清被谁消解，否则外部引用无处可去
+    if status in RECORD_NEEDS_RESOLVED_BY and is_blank(meta.get("resolved_by")):
+        report.error(
+            "终态没写 `resolved_by`",
+            where,
+            f"`status: {status}` 是终态，必须填 `resolved_by`（被哪个编号吸收 / 取代 / 推翻）",
+        )
+
+    # `target` 要落在 `kind` 对应的子目录下；指向的文件不在了只警告 ——
+    # 看板会把它标成「指向丢失」照常列出，删改产出物是用户的正常动作，不是记录写错了
+    target = as_text(meta.get("target"))
+    if kind in RECORD_TARGET_DIR and target and not target.startswith(RECORD_TARGET_DIR[kind]):
+        report.error(
+            "`target` 与 `kind` 不匹配",
+            where,
+            f"`kind: {kind}` 的 `target` 应当落在 `{RECORD_TARGET_DIR[kind]}` 下，现在指向 `{target}`",
+        )
+    if target and not (WS / target).exists():
+        report.warn(
+            "`target` 指向的产出物不在了",
+            where,
+            f"`{target}` 不存在。产出物改名或移走时要跟进 `target`（走 pm-output-record）；"
+            "看板会把这条标成「指向丢失」照常列出",
+        )
+
+    # `status` 必须等于流水最后一条 —— 不一致只会来自手工编辑
+    last = _last_flow_entry(body)
+    if last and status and last[1] != status:
+        report.error(
+            "`status` 与流水末条不一致",
+            where,
+            f"front-matter 是 `{status}`，「## 状态流水」最后一条是 `{last[1]}`（{last[0]}）。"
+            "看板按 `status` 分组，两者必须一致",
+        )
+    elif not last and status:
+        report.warn(
+            "没有状态流水",
+            where,
+            "正文缺「## 状态流水」小节或里面没有 `### 日期 · 状态` 条目。"
+            "每次状态变更都该留一条，说清为什么变成这个状态",
+        )
+
+    for key in ("created", "status_changed", "updated"):
+        value = as_text(meta.get(key))
+        if value and not DATE_RE.match(value):
+            report.error(f"记录 `{key}` 不是日期", where, f"`{key}: {value}` 要写成 YYYY-MM-DD")
+
+    # 长文进正文：扁平限制管的就是条目长度，front-matter 里塞几百字等于绕过它
+    for key, value in meta.items():
+        text = as_text(value)
+        if len(text) > RECORD_FIELD_LIMIT:
+            report.error(
+                "front-matter 里有长文",
+                where,
+                f"`{key}` 有 {len(text)} 字，超过 {RECORD_FIELD_LIMIT}。"
+                "长文写进正文（状态变更的说明写进「## 状态流水」），front-matter 只放短字段",
+            )
+    title = as_text(meta.get("title"))
+    if len(title) > RECORD_TITLE_WARN:
+        report.warn(
+            "记录 `title` 偏长",
+            where,
+            f"`title` 有 {len(title)} 字，超过 {RECORD_TITLE_WARN}。清单行只显示它，一句话说清就够",
+        )
+
+
 def requires_frontmatter(path: Path, output_root: Path) -> bool:
     """analysis/ 与 decisions/ 下的非 README 才强制最小 front-matter。"""
     try:
@@ -223,7 +386,8 @@ def requires_frontmatter(path: Path, output_root: Path) -> bool:
     parts = rel.parts
     if not parts:
         return False
-    if parts[0] in {"docs", "questions"}:
+    # records/ 有自己的六个必填字段（见 check_record），不走 title/created/updated 这套
+    if parts[0] in {"docs", "questions", RECORD_DIR}:
         return False
     return parts[0] in {"analysis", "decisions"}
 
@@ -261,6 +425,17 @@ def check_file(path: Path, output_root: Path, report: Report) -> None:
 
     check_disabled(body, body_start, where, report)
     check_headings(body, body_start, where, report)
+
+    if is_record(path, output_root):
+        if not raw:
+            report.error(
+                "记录没有 front-matter",
+                where,
+                "产出物记录必须有扁平 front-matter（id / kind / title / target / status / created）。"
+                "看板读不出 front-matter 的记录只能标成「读不出」",
+            )
+        else:
+            check_record(path, meta, body, where, report)
 
 
 def scan(directory: Path) -> list[Path]:

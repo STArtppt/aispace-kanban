@@ -60,8 +60,9 @@
    - 保存未决问题的人工反馈时写 `output/questions/Q<编号>.md`
      (`src/server/questions.mjs` 的 `writeQuestion`)——
      **这是第四条窄例外,范围就是下面六条,越界即为 bug**。
-     它与前三条**形状不同**:前三条都是「看板只 `spawn`,工作空间自己的脚本写盘」,
-     **这一条是看板服务端自己写**。之所以破例:人工反馈没有现成的工作空间脚本可以承接,
+     它与 `spawn` 那几条**形状不同**:第二、三、五条都是「看板只 `spawn`,工作空间自己的脚本写盘」,
+     **这一条是看板服务端自己写**(下面第六条是同一个形状,两条各有自己的六条边界,
+     不要因为「反正已经能写了」再加第三条)。之所以破例:人工反馈没有现成的工作空间脚本可以承接,
      为它造一个子进程入口只是绕路;而且它是高频小写入(消解十条就是十次),
      每次起一个进程的延迟会让交互变钝。作为交换,写入面被压到下面六条:
      ① 只允许**改已存在**的问题文件,不新建、不删除、不改名;文件不存在一律 404;
@@ -89,6 +90,29 @@
         把根上散装文件收成新目录 `visualization/references/<slug>/`(`index.html` + `meta.json`),
         以及把抽出的 Markdown 写入 `input/converted/`(落点复用 `layout.py`)。
         URL 模式(`web_ingest.py <URL>`)仍然不向 `visualization/` 写入,看板也不得 spawn 带 URL 的调用
+   - 保存产出物记录的状态变更时写 `output/records/I<编号>.md`
+     (`src/server/records.mjs` 的 `writeRecordStatus`)——
+     **这是第六条窄例外,范围就是下面六条,越界即为 bug**。
+     它与第四条(人工反馈)**同形**:看板服务端自己写盘,不 `spawn`。破例的理由逐条对得上 ——
+     状态变更加一句说明是高频小写入(三类产出物、每份多次流转),没有现成的工作空间脚本能承接,
+     为它造一个子进程入口只是绕路,每次起进程的延迟会让交互变钝。作为交换,写入面压到下面六条:
+     ① 只允许**改已存在**的记录文件,不新建、不删除、不改名;编号不存在一律 404 ——
+     建记录是工作空间技能(`pm-output-record`)的活;
+     ② 只允许写**人写区**字段(`status` / `resolved_by` / `status_changed`)
+     与正文的「## 状态流水」小节(只追加 `###` 子节,不改写已有条目);
+     载荷里出现任何 **AI 写区**字段(`target` / `updated`)或建立时写定的字段
+     (`id` / `kind` / `title` / `created`)一律 400 且不落盘 —— 人和 agent 的写区物理隔开,
+     这就是并发方案本身(不用锁,见 `records/README.md`);
+     ③ 必须用户在看板上点「保存」明确发起,没有后台任务、没有定时、没有自动推导状态;
+     ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`);
+     ⑤ 请求**只带编号**(`I0007` 这种形态),**不接受任何路径**;
+     落盘路径由服务端用 `resolveInside()` 自己拼;
+     ⑥ `output/analysis/`、`output/docs/`、`output/decisions/` 下的产出物本身、
+     `output/` 下的其它一切、`input/`、`project.yaml`、`visualization/` 仍然只读 ——
+     记录是**旁挂**的元数据,产出物文件一个字节都不因为改状态而变。
+     写入走「先写临时文件再原子替换」,失败不留半截文件。
+     状态值必须属于该记录 `kind` 的状态机(三套表在 `src/shared/recordStatus.mjs`),
+     终态(`absorbed` / `superseded` / `overturned`)必须带 `resolved_by`,补充说明为空一律 400
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
@@ -140,9 +164,11 @@ aispace-kanban/
 │   │   ├── scan.mjs        #   工作空间扫描 → 结构化 JSON(只读)
 │   │   ├── meta.mjs        #   project.yaml 解析 + 完整度统计
 │   │   ├── frontmatter.mjs #   frontmatter / 标题 / 字数
+│   │   ├── records.mjs     #   扫 output/records/ → 产出物记录索引 + 状态写入(不变量 1 第六条例外)
 │   │   ├── prototypes.mjs  #   扫 visualization/prototypes/ → 原型清单(index.html / zip / url 形态)
 │   │   ├── references.mjs  #   扫 visualization/references/ → 参考清单(子目录 index.html)
-│   │   ├── capture.mjs     #   ★ 唯一的工作空间写入收口:贴 URL 采集 → visualization/ 之下
+│   │   ├── questions.mjs   #   扫 output/questions/ → 未决问题索引 + 人工反馈写入(第四条例外)
+│   │   ├── capture.mjs     #   ★ 采集写入的唯一收口:贴 URL 采集 → visualization/ 之下(第二条例外)
 │   │   ├── paths.mjs       #   ★ resolveInside 的唯一实现(不变量 2 的载体)
 │   │   └── platform.mjs    #   ★ 三平台差异只写在这:开浏览器 / 定位文件 / 找 python
 │   ├── app/                # 平面 3 · 前端 SPA(TS,`@/` 指向这里)
@@ -154,7 +180,8 @@ aispace-kanban/
 │   │   └── styles/globals.css  # ★ 设计令牌唯一源头
 │   └── shared/             # 平面 2 与 3 共用的**纯函数**(.mjs + JSDoc)
 │       ├── textMatch.mjs   #   归一 + 分词:整表检索在服务端判定、片段加粗在前端,口径必须同源
-│       └── codeLang.mjs    #   代码扩展名 → 语言:扫描标 text、预览高亮,口径必须同源
+│       ├── codeLang.mjs    #   代码扩展名 → 语言:扫描标 text、预览高亮,口径必须同源
+│       └── recordStatus.mjs #  产出物记录的三套状态机:服务端校验、前端下拉,口径必须同源
 ├── scripts/                # 平面外 · 仓库工具
 │   ├── build-npm-package.mjs  #   组 npm 包(pnpm build:npm),产出 npm-package/
 │   └── smoke-package.mjs      #   ★ 装包冒烟(pnpm smoke:npm),CI 三平台跑的就是它

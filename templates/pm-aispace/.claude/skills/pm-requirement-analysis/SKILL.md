@@ -13,6 +13,8 @@ description: 把项目资料和现状基线拆解成结构化的需求条目：�
 
 手写 Markdown 的写法（front-matter 形态、标题层级、文档间链接、哪些语法现在先别用）见工作空间 `AGENTS.md` 的「Markdown 写法」一节，这里不复述。
 
+产出之后**一并建一份产出物记录**（`kind: analysis`），走 [`pm-output-record`](../pm-output-record/SKILL.md)——没有记录的产出物在看板上只有一个修改时间，看不出还作不作数。
+
 ## 输入
 
 先读 `output/analysis/现状基线.md`。没有基线就先走 `pm-project-handover`——

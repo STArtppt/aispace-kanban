@@ -90,7 +90,7 @@ function renameGitignores(dir) {
   }
 }
 renameGitignores(path.join(OUT, 'templates'));
-// src/shared 是前端与服务端共用的纯函数内核（归一分词）。服务端 import 它，
+// src/shared 是前端与服务端共用的纯函数内核（归一分词、语言表、产出物记录的状态机）。服务端 import 它，
 // 漏拷这一份，npm 装出来的服务一起手就是 ERR_MODULE_NOT_FOUND。
 for (const dir of ['server', 'shared']) {
   fs.cpSync(path.join(ROOT, 'src', dir), path.join(OUT, 'src', dir), {

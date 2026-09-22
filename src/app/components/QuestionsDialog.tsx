@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ArrowDown, ArrowUp, ChevronRight, Copy, ListChecks, RotateCcw, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronRight, Copy, ListChecks, RotateCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Markdown } from '@/components/Markdown';
 import { HeaderIconButton, HeaderTooltip, writeClipboard } from '@/components/Primitives';
@@ -11,14 +11,6 @@ import {
   CollapsiblePanel,
   CollapsibleTrigger,
 } from '@/components/ui/collapsible';
-import {
-  Dialog,
-  DialogBackdrop,
-  DialogClose,
-  DialogPopup,
-  DialogPortal,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import {
   FeatureBlock,
   FeatureBlockContent,
@@ -34,7 +26,8 @@ import { ApiError, api, type QuestionDetail, type QuestionIndex, type QuestionIt
 import { cn } from '@/lib/utils';
 
 /**
- * 未决问题弹窗：左边按「阻塞了谁」分组的清单，右边单条卡片 + 消解闭环。
+ * 未决问题这一页（⌘K 工作台的第一页）：左边按「阻塞了谁」分组的清单，
+ * 右边单条卡片 + 消解闭环。Dialog 容器与两页切换在 `Workbench.tsx`。
  *
  * 排序轴是「阻塞了谁」不是优先级 —— 清单按 `blocks` 分组，`backlog`（不阻塞任何在途
  * 交付物）跟其它组一样按状态出现在对应筛选里。四个筛选与状态机一一对应，
@@ -748,11 +741,18 @@ function QuestionsBody({
   index,
   changeToken,
   reload,
+  active,
 }: {
   projectId: string;
   index: QuestionIndex;
   changeToken: number;
   reload: (silent?: boolean) => void;
+  /**
+   * 这一页现在露在前面吗。工作台化之后本页在切到产出物页时**仍然挂着**
+   * （切回来要保持原样：筛选、卡片位置都不重置），
+   * 但 document 上的方向键监听必须跟着让位，否则人在另一页按方向键会悄悄翻动这一页。
+   */
+  active: boolean;
 }) {
   const [filter, setFilter] = useState<FilterKey>('open');
   /** 只看「结论还没回流正文」的那些。只在「已消解」筛选下有意义，切走就关掉 */
@@ -866,6 +866,7 @@ function QuestionsBody({
   // 方向键翻页。**焦点在输入框里时不劫持** —— 那时方向键属于输入框。
   // capture 阶段：Base UI 的 Popup 会在冒泡阶段拦掉方向键（同 ImageLightbox 的做法）。
   useEffect(() => {
+    if (!active) return undefined;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
       if (isTypingTarget(event.target)) return;
@@ -882,7 +883,7 @@ function QuestionsBody({
     };
     document.addEventListener('keydown', onKeyDown, true);
     return () => document.removeEventListener('keydown', onKeyDown, true);
-  }, [flat]);
+  }, [flat, active]);
 
   const go = (step: number) => {
     focusCardPane();
@@ -1098,11 +1099,13 @@ function QuestionsBody({
   );
 }
 
-export function QuestionsDialog({
-  open,
-  onOpenChange,
+/**
+ * 未决问题这一页。**只是内容区** —— Dialog 容器、标题栏、两页切换都在
+ * [`Workbench`](Workbench.tsx) 那层（design 决策 8：提壳，不动内脏）。
+ * 内部的分组、筛选、卡片、写入、prompt 复制与工作台化之前逐条一致。
+ */
+export function QuestionsPane({
   projectId,
-  projectName,
   index,
   loading,
   error,
@@ -1110,11 +1113,9 @@ export function QuestionsDialog({
   changeToken,
   reload,
   workspaceAvailable = true,
+  active,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   projectId: string;
-  projectName: string;
   index: QuestionIndex | null;
   loading: boolean;
   error: string;
@@ -1127,89 +1128,90 @@ export function QuestionsDialog({
    * 但那不是「还没迁移」—— 照着说会让人去跑一个根本跑不了的迁移脚本。
    */
   workspaceAvailable?: boolean;
+  /** 这一页露在前面吗。切走时内部状态照旧留着，只是不再接管方向键 */
+  active: boolean;
 }) {
+  if (unsupported) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6 text-center">
+        <div>
+          <p className="text-sm">服务端未提供未决问题接口，请重启服务。</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            看板服务是常驻进程、不热更。在终端里重跑
+            <code className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono">pnpm serve</code>
+            （开发时是 <code className="rounded bg-muted px-1.5 py-0.5 font-mono">pnpm dev</code>）再打开这里。
+          </p>
+        </div>
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-destructive">
+        {error}
+      </div>
+    );
+  }
+  if (!projectId) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        还没有选中工作空间。
+      </div>
+    );
+  }
+  if (!workspaceAvailable) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6 text-center">
+        <div>
+          <p className="text-sm">这个工作空间的目录现在读不到。</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            目录可能被改名或移走了。先在「概览」里重新指到它，问题清单会跟着回来 ——
+            看板不动你本地的任何文件。
+          </p>
+        </div>
+      </div>
+    );
+  }
+  if (index && !index.available) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6 text-center">
+        <div>
+          <p className="text-sm">这个工作空间还没有结构化问题清单。</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            问题文件放在
+            <code className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono">{index.dir}</code>
+            下，一问一文件。旧工作空间要先在终端里跑一次迁移脚本
+            <code className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono">
+              scripts/migrate_questions.py
+            </code>
+            。
+          </p>
+        </div>
+      </div>
+    );
+  }
+  if (index && !index.items.length) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        这个工作空间暂时没有未决问题。
+      </div>
+    );
+  }
+  if (index) {
+    return (
+      <QuestionsBody
+        projectId={projectId}
+        index={index}
+        changeToken={changeToken}
+        reload={reload}
+        active={active}
+      />
+    );
+  }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPortal>
-        <DialogBackdrop />
-        <DialogPopup className="h-[min(78vh,780px)] w-[min(1100px,94vw)] max-w-none gap-0 p-0 max-sm:max-w-none">
-          <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-5">
-            <DialogTitle className="font-display text-base">待澄清问题清单</DialogTitle>
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-              {projectName}
-            </span>
-            <DialogClose
-              render={
-                <Button variant="ghost" size="icon" aria-label="关闭" className="shrink-0">
-                  <X className="size-4" />
-                </Button>
-              }
-            />
-          </header>
-
-          {unsupported ? (
-            <div className="flex flex-1 items-center justify-center px-6 text-center">
-              <div>
-                <p className="text-sm">服务端未提供未决问题接口，请重启服务。</p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  看板服务是常驻进程、不热更。在终端里重跑
-                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono">pnpm serve</code>
-                  （开发时是 <code className="rounded bg-muted px-1.5 py-0.5 font-mono">pnpm dev</code>）再打开这里。
-                </p>
-              </div>
-            </div>
-          ) : error ? (
-            <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-destructive">
-              {error}
-            </div>
-          ) : !projectId ? (
-            <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-              还没有选中工作空间。
-            </div>
-          ) : !workspaceAvailable ? (
-            <div className="flex flex-1 items-center justify-center px-6 text-center">
-              <div>
-                <p className="text-sm">这个工作空间的目录现在读不到。</p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  目录可能被改名或移走了。先在「概览」里重新指到它，问题清单会跟着回来 ——
-                  看板不动你本地的任何文件。
-                </p>
-              </div>
-            </div>
-          ) : index && !index.available ? (
-            <div className="flex flex-1 items-center justify-center px-6 text-center">
-              <div>
-                <p className="text-sm">这个工作空间还没有结构化问题清单。</p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  问题文件放在
-                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono">{index.dir}</code>
-                  下，一问一文件。旧工作空间要先在终端里跑一次迁移脚本
-                  <code className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono">
-                    scripts/migrate_questions.py
-                  </code>
-                  。
-                </p>
-              </div>
-            </div>
-          ) : index && !index.items.length ? (
-            <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-muted-foreground">
-              这个工作空间暂时没有未决问题。
-            </div>
-          ) : index ? (
-            <QuestionsBody
-              projectId={projectId}
-              index={index}
-              changeToken={changeToken}
-              reload={reload}
-            />
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
-              {loading ? '正在读问题清单…' : '暂无数据'}
-            </div>
-          )}
-        </DialogPopup>
-      </DialogPortal>
-    </Dialog>
+    <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+      {loading ? '正在读问题清单…' : '暂无数据'}
+    </div>
   );
 }
 

@@ -1,3 +1,5 @@
+import { RECORD_STATUS } from '../../shared/recordStatus.mjs';
+
 export type ReaderKind =
   | 'markdown'
   | 'table'
@@ -729,6 +731,107 @@ export interface QuestionPatch {
   due?: string;
 }
 
+
+/**
+ * 产出物记录的类别与状态 —— **类型直接从 `src/shared/recordStatus.mjs` 那张表派生**，
+ * 不在前端抄第二遍字面量。服务端校验、前端下拉、工作空间校验脚本认的是同一套值，
+ * 抄两份就会出现「界面给得出、服务端不肯收」。
+ *
+ * 两者都用 `string & {}` 兜住表外的值：记录是人和 agent 手写的文件，
+ * `kind` 或 `status` 写错一个词不该让前端崩，界面上当未知显示出来即可
+ * （校验由工作空间的 `scripts/check_markdown.py` 报）。
+ */
+type RecordKindKey = keyof typeof RECORD_STATUS;
+export type RecordKind = RecordKindKey | (string & {});
+export type RecordStatus = (typeof RECORD_STATUS)[RecordKindKey][number] | (string & {});
+
+/**
+ * 清单索引里的一条记录：只有 front-matter，**没有正文**（状态流水走 `api.record`）。
+ *
+ * `id` 以**文件名**为准，不是 front-matter 里的 `id` —— 详情与写入都按编号拼路径，
+ * 听 front-matter 的话，手写错一个字这条就点不开。两者不一致时 `broken` 为真。
+ */
+export interface OutputRecordItem {
+  /** 记录编号，如 `I0007`。外部引用的锚点，只增不复用 */
+  id: string;
+  /** 文件名，`I0007.md` */
+  name: string;
+  /** 工作空间内相对路径 */
+  path: string;
+  mtime: string;
+  /** 产出物类别，决定 `status` 的合法取值 */
+  kind: RecordKind;
+  /** 一句话说清这份产出物是什么。清单行只显示它 */
+  title: string;
+  /** 产出物的工作空间相对路径（单向反链；记录旁挂，产出物文件不带任何我方元数据） */
+  target: string;
+  status: RecordStatus;
+  created: string;
+  /** 状态最后一次变更日期。`delivered` 停滞多久由它与当天的差值表达，不额外立状态 */
+  status_changed: string;
+  updated: string;
+  /** 被哪个编号吸收 / 取代 / 推翻。终态必有值 */
+  resolved_by: string;
+  /**
+   * `target` 指向的产出物文件不在了（被改名或删除）。
+   * **新增字段，可选**：旧服务进程不给，缺字段时当作没丢失，退回改动前的行为。
+   * 界面上用 orange（`--destructive`）——「需要注意」的语义就是它。
+   */
+  targetMissing?: boolean;
+  /**
+   * 这份文件的 front-matter 缺失、读不出来，或 `id` 与文件名不符。**不是错误** ——
+   * 一条坏数据不能拖垮整个接口，也不该悄悄消失，所以它照样在清单里，只是标成无法解析。
+   */
+  broken?: boolean;
+  reason?: string;
+}
+
+/**
+ * 记录索引。`available: false` = 这个工作空间还没有 `output/records/` 目录
+ * （旧工作空间不会自动获得新结构），不是错误，界面走空态说明。
+ */
+export interface OutputRecordIndex {
+  dir: string;
+  available: boolean;
+  items: OutputRecordItem[];
+}
+
+/** 状态流水里的一条：日期 + 变更后的状态 + 一句说明。认不出格式的条目 `date` / `status` 为空。 */
+export interface RecordFlowEntry {
+  date: string;
+  status: RecordStatus;
+  /** `### ` 后的整行原文，格式认不出来时靠它显示 */
+  title: string;
+  note: string;
+}
+
+/** 单条详情：索引的全部字段，外加状态流水与正文。 */
+export interface OutputRecordDetail extends OutputRecordItem {
+  /**
+   * 这个 `kind` 能选的状态值。前端本来就有同一份表，服务端再下发一遍是为了
+   * `kind` 写错时界面有据可依（拿不到就退回按本地表推，缺字段时是空数组）。
+   */
+  statusValues?: readonly RecordStatus[];
+  /** 正文「## 状态流水」下的条目，旧到新。缺字段时前端不显示流水，不报错 */
+  flow?: RecordFlowEntry[];
+  /** front-matter 之后的 markdown 正文 */
+  body: string;
+}
+
+/**
+ * 一次状态变更的载荷。**只有人写区** —— 服务端对载荷里出现任何 AI 写区字段
+ * （`target` / `updated`）或建立时写定的字段（`id` / `kind` / `title` / `created`）
+ * 一律 400 且不落盘。人和 agent 的写区物理隔开，这就是并发方案本身（见 records/README.md）。
+ */
+export interface RecordStatusPatch {
+  /** 必须属于该记录 `kind` 的状态机，否则 400 */
+  status: RecordStatus;
+  /** 这次变更的一句说明。**为空 400** —— 流水的每一条都要说清为什么 */
+  note: string;
+  /** 被哪个编号消解。`absorbed` / `superseded` / `overturned` 时必填，缺了 400 */
+  resolved_by?: string;
+}
+
 export interface NoteHistory {
   file: string;
   batches: NoteHistoryBatch[];
@@ -840,6 +943,33 @@ export const api = {
    */
   saveQuestion: (id: string, questionId: string, patch: QuestionPatch) =>
     request<QuestionDetail>(`/api/projects/${id}/questions/${encodeURIComponent(questionId)}`, {
+      method: 'POST',
+      body: JSON.stringify(patch),
+    }),
+  /**
+   * 产出物记录索引：服务端扫 `output/records/` 现算，只读 front-matter 不读正文。
+   * 与未决问题同构，连「不依赖任何索引文件」的理由都是同一条。
+   *
+   * **老服务进程没有这个接口（404），调用方必须兜住**：产出物页显示「请重启服务」空态，
+   * 不要白屏、不要弹错误、也不要当成「这个工作空间没有产出物记录」。
+   */
+  records: (id: string) => request<OutputRecordIndex>(`/api/projects/${id}/records`),
+  /**
+   * 单条记录的全字段 + 状态流水 + 正文。展开详情时才取，清单不带正文。
+   * 只传编号（`I0007`），**不接受任何路径** —— 带路径片段的一律 400，落盘路径由服务端拼。
+   */
+  record: (id: string, recordId: string) =>
+    request<OutputRecordDetail>(`/api/projects/${id}/records/${encodeURIComponent(recordId)}`),
+  /**
+   * 保存一次状态变更（状态 + 一句说明）。**看板第二处自己写工作空间的接口**
+   * （AGENTS.md 不变量 1 的第六条窄例外，六条约束写在那里）。
+   *
+   * 只改已存在记录的人写区三个字段与正文「## 状态流水」小节；不新建、不删除、不改名。
+   * 返回保存后的整条详情 —— 前端据此立刻更新，不等 SSE 绕一圈回来。
+   * 老服务进程没有这个接口（404 「未知接口」），调用方要兜住并提示重启服务。
+   */
+  saveRecordStatus: (id: string, recordId: string, patch: RecordStatusPatch) =>
+    request<OutputRecordDetail>(`/api/projects/${id}/records/${encodeURIComponent(recordId)}`, {
       method: 'POST',
       body: JSON.stringify(patch),
     }),

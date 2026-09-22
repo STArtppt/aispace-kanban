@@ -21,14 +21,15 @@ import { HelpPanel } from '@/components/HelpPanel';
 import { InputPanel } from '@/components/InputPanel';
 import { OutputPanel } from '@/components/OutputPanel';
 import { OverviewPanel } from '@/components/OverviewPanel';
-import { QuestionsDialog, QuestionsFab, countPending } from '@/components/QuestionsDialog';
+import { QuestionsFab, countPending } from '@/components/QuestionsDialog';
+import { Workbench } from '@/components/Workbench';
 import { Reader } from '@/components/Reader';
 import { SidebarRail } from '@/components/SidebarRail';
 import { UnavailableWorkspace, WorkspaceDialog } from '@/components/WorkspaceSettings';
 import { VisualPanel } from '@/components/VisualPanel';
 import { useBoardSession, type View } from '@/hooks/useBoardSession';
-import { useGlobalHotkey } from '@/hooks/useGlobalHotkey';
 import { useQuestions } from '@/hooks/useQuestions';
+import { useRecords } from '@/hooks/useRecords';
 import { useIngestJob } from '@/hooks/useIngestJob';
 import { useProjects, useScan } from '@/hooks/useWorkspace';
 import { api, type FileItem, type Project } from '@/lib/api';
@@ -332,11 +333,13 @@ export default function App() {
   const { dark, toggle } = useTheme();
   const version = useAppVersion();
   const [helpOpen, setHelpOpen] = useState(false);
-  const [questionsOpen, setQuestionsOpen] = useState(false);
-  // 索引在 App 级预取，不挂任何视图的生命周期上：弹窗打开要瞬时，不等网络
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  /** 工作台停在哪一页。放在 App 级：关掉再打开还在原来那一页 */
+  const [workbenchPage, setWorkbenchPage] = useState<'questions' | 'records'>('questions');
+  // 两份索引都在 App 级预取，不挂任何视图的生命周期上：工作台打开与切页都要瞬时，不等网络
   const questions = useQuestions(activeId, changeToken);
-  // 本仓第一个 App 级快捷键。⌘K / Ctrl+K 开关，Esc 由 Dialog 自己收（见 useGlobalHotkey）
-  useGlobalHotkey('k', () => setQuestionsOpen((v) => !v));
+  const records = useRecords(activeId, changeToken);
+  // ⌘K 的接线在 `Workbench` 里（壳负责快捷键），这里只管开关状态
   // 帮助和文件共用预览位，所以互斥：开帮助时先把文件预览关掉，关帮助就回到看板。
   // useMemo 稳住对象身份，否则每次渲染都是新对象，进出场动画会被反复重放。
   const preview = useMemo<Preview | null>(
@@ -361,7 +364,7 @@ export default function App() {
   useEffect(() => {
     setPreviewExpanded(false);
     setHelpOpen(false);
-    setQuestionsOpen(false);
+    setWorkbenchOpen(false);
   }, [activeId]);
 
   // 预览卸载后再清展开态，避免离场途中侧栏/看板突然弹回
@@ -672,24 +675,30 @@ export default function App() {
         />
       ) : null}
       {/*
-        未决问题：弹窗 + 右下角悬浮入口，都在布局最外层 ——
+        工作台（未决问题 / 产出物两页）+ 右下角悬浮入口，都在布局最外层 ——
         任意视图下都能唤出，关掉后原视图状态不变。
+
+        悬浮球的计数**只数未决问题**，不改成两页合计 ——
+        改口径会让这个数字的既有语义漂移（人已经把它读成「还有几条要澄清」）。
+        点它固定回到未决问题页，它就是那一页的入口。
       */}
       <QuestionsFab
         count={countPending(questions.index)}
-        onClick={() => setQuestionsOpen(true)}
+        onClick={() => {
+          setWorkbenchPage('questions');
+          setWorkbenchOpen(true);
+        }}
       />
-      <QuestionsDialog
-        open={questionsOpen}
-        onOpenChange={setQuestionsOpen}
+      <Workbench
+        open={workbenchOpen}
+        onOpenChange={setWorkbenchOpen}
+        page={workbenchPage}
+        onPageChange={setWorkbenchPage}
         projectId={activeId}
         projectName={activeProject?.name || ''}
-        index={questions.index}
-        loading={questions.loading}
-        error={questions.error}
-        unsupported={questions.unsupported}
+        questions={questions}
+        records={records}
         changeToken={changeToken}
-        reload={questions.reload}
         workspaceAvailable={scan?.available !== false}
       />
       <Toaster />

@@ -31,6 +31,7 @@ import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
 import { PYTHON_CANDIDATES, pickDirectory, revealInSystem } from './platform.mjs';
 import { resolvePrototypeCover, resolvePrototypeServeDir, resolveRefreshTarget, scanPrototypes } from './prototypes.mjs';
 import { readQuestion, scanQuestions, writeQuestion } from './questions.mjs';
+import { readRecord, scanRecords, writeRecordStatus } from './records.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
 import { scanWorkspace, verifySource } from './scan.mjs';
 import { readSheetPage, scanSheet } from './spreadsheet.mjs';
@@ -1571,6 +1572,27 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     }
     if (questionId) return json(res, 200, readQuestion(project.root, questionId));
     return json(res, 200, scanQuestions(project.root));
+  }
+
+  // 产出物记录：扫 output/records/ 现算索引（只读 front-matter，不读正文），
+  // 带第四段编号时取那一条的全字段 + 正文 + 解析好的状态流水。
+  // 与未决问题同构，连「不生成索引文件」的理由都是同一条。
+  // 编号只接受 `I0007` 这种形态，任何路径片段在触达文件系统前就被 readRecord 拒掉。
+  if (head === 'projects' && id && action === 'records') {
+    const project = requireProject(id);
+    const recordId = segments[3] || '';
+    // 保存一次状态变更：**不变量 1 的第六条窄例外**，看板自己写盘的第二处（另一处是人工反馈）。
+    // 两道闸的顺序与其它写接口一致：先非环回禁写、再来源判定，最后才读请求体。
+    // 写入面压在 records.mjs 的 writeRecordStatus 里（只改已存在记录的人写区三个字段
+    // 与正文「## 状态流水」），这里不做任何字段判断 —— 契约只有一处实现，路由层再判一遍只会漂。
+    if (recordId && req.method === 'POST') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      const body = await readBody(req);
+      return json(res, 200, writeRecordStatus(project.root, recordId, body));
+    }
+    if (recordId) return json(res, 200, readRecord(project.root, recordId));
+    return json(res, 200, scanRecords(project.root));
   }
 
   // 伺服工具产出的可点击 HTML 包（文件夹或已解压到缓存的 zip）

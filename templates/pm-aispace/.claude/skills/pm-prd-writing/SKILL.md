@@ -12,6 +12,8 @@ description: 撰写可直接交付评审的 PRD、需求规格说明书、功能
 
 模板在 [`assets/prd-template.md`](assets/prd-template.md)，开始写之前先读一遍并按项目实际情况裁剪。
 
+文档写完之后**一并建一份产出物记录**（`kind: docs`），走 [`pm-output-record`](../pm-output-record/SKILL.md)——没有记录的产出物在看板上只有一个修改时间，看不出还作不作数。
+
 ## 写之前
 
 读齐三份输入：`output/analysis/现状基线.md`、`output/analysis/需求拆解.md`、
