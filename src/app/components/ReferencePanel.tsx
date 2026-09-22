@@ -1,13 +1,12 @@
 import { Loader2, RefreshCw } from 'lucide-react';
 import { CaptureBar } from '@/components/CaptureBar';
-import { EmptyState, HeaderTooltip } from '@/components/Primitives';
+import { EmptyState, HeaderIconButton } from '@/components/Primitives';
 import { ShowcaseCard, ShowcaseGrid } from '@/components/ShowcaseCard';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import type { CaptureControl } from '@/hooks/useCaptureJob';
 import type { WebIngestControl } from '@/hooks/useIngestJob';
 import type { References } from '@/lib/api';
 import { formatRelative } from '@/lib/format';
-import { cn } from '@/lib/utils';
 
 const SOURCE_LABEL: Record<string, string> = {
   manual: '手工放入',
@@ -79,23 +78,19 @@ export function ReferencePanel({
         }
         extraAction={
           canInbox ? (
-            <HeaderTooltip label={inboxBusy ? '正在入库' : '刷新收件箱'}>
-              <button
-                type="button"
-                disabled={inboxBusy}
-                aria-label="刷新收件箱"
-                className={cn(
-                  'flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground',
-                  'hover:bg-accent hover:text-foreground',
-                  'disabled:pointer-events-none disabled:opacity-50',
-                )}
-                onClick={() => void webIngest.start()}
-              >
-                {inboxBusy
-                  ? <Loader2 className="size-3.5 animate-spin" />
-                  : <RefreshCw className="size-3.5" />}
-              </button>
-            </HeaderTooltip>
+            // 这一排右侧另有收起的 URL 输入框（Input，描边方钮），刷新跟着走 outline；
+            // 混一个无边图标进去两个控件就不是一套了。size-8 + shadow-sm 与 Input 齐平。
+            <HeaderIconButton
+              label={inboxBusy ? '正在入库' : '刷新收件箱'}
+              variant="outline"
+              className="size-8 shadow-sm"
+              disabled={inboxBusy}
+              onClick={() => void webIngest.start()}
+            >
+              {inboxBusy
+                ? <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                : <RefreshCw className="size-3.5 text-muted-foreground" />}
+            </HeaderIconButton>
           ) : null
         }
       />
