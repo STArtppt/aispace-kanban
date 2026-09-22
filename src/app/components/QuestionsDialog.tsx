@@ -3,7 +3,14 @@ import { ArrowDown, ArrowUp, ChevronRight, Copy, ListChecks, RotateCcw, X } from
 import { toast } from 'sonner';
 import { Markdown } from '@/components/Markdown';
 import { HeaderIconButton, HeaderTooltip, writeClipboard } from '@/components/Primitives';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsiblePanel,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 import {
   Dialog,
   DialogBackdrop,
@@ -12,6 +19,12 @@ import {
   DialogPortal,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  FeatureBlock,
+  FeatureBlockContent,
+  FeatureBlockPanel,
+  FeatureBlockTrigger,
+} from '@/components/ui/feature-block';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
@@ -24,8 +37,8 @@ import { cn } from '@/lib/utils';
  * 未决问题弹窗：左边按「阻塞了谁」分组的清单，右边单条卡片 + 消解闭环。
  *
  * 排序轴是「阻塞了谁」不是优先级 —— 清单按 `blocks` 分组，`backlog`（不阻塞任何在途
- * 交付物）默认不占版面。四个筛选与状态机一一对应，`待 AI 更新` 是闭环的枢纽，
- * 必须能点进去而不只是一个数字。
+ * 交付物）跟其它组一样按状态出现在对应筛选里。四个筛选与状态机一一对应，
+ * `待 AI 更新` 是闭环的枢纽，必须能点进去而不只是一个数字。
  *
  * 四个标准答案给的是**回答之外的出口** —— 大量问题不需要问任何人，只需要被消解。
  * 它们走向四条不同的路，所以动作区跟着选中项变（「本期不做」是真终态，不出现复制 prompt）。
@@ -276,6 +289,34 @@ function splitSections(body: string): Map<string, string> {
   return out;
 }
 
+/**
+ * 「## 轮次记录」是自由 markdown，没有结构化轮次字段。
+ * 能按三级标题或分隔线切开就一切（一轮一个框），否则整段当一轮，不臆造结构。
+ */
+function splitRoundBodies(markdown: string): string[] {
+  const text = markdown.trim();
+  if (!text) return [];
+  const byHeading = text.split(/^(?=###\s)/m).map((chunk) => chunk.trim()).filter(Boolean);
+  if (byHeading.length > 1) return byHeading;
+  const byRule = text.split(/^\s*---\s*$/m).map((chunk) => chunk.trim()).filter(Boolean);
+  if (byRule.length > 1) return byRule;
+  return [text];
+}
+
+/** 一轮一个框。当前轮与更早的轮次同一套壳，多轮往下排。 */
+function RoundCard({ className, children }: { className?: string; children: ReactNode }) {
+  return (
+    <article
+      className={cn(
+        'flex flex-col gap-3 rounded-lg border border-border bg-background px-4 py-3',
+        className,
+      )}
+    >
+      {children}
+    </article>
+  );
+}
+
 /** 清单行只有一行，markdown 记号（`**`、反引号）在那儿只是噪声 —— 剥掉再截断 */
 function plainText(text: string): string {
   return text.replace(/[*`]/g, '').replace(/\s+/g, ' ').trim();
@@ -310,21 +351,28 @@ const NOTE_LIMIT = 200;
 function AnswerPanel({
   projectId,
   item,
+  reopening = false,
   onSaved,
   onWritten,
+  onCancel,
 }: {
   projectId: string;
   item: QuestionItem;
+  /**
+   * 这一块是「重开一轮」展开出来的。已消解的条目默认**不摆它** ——
+   * 结论已经在下面了，再摆一遍「怎么消解这一条」只会让人以为这条还没处理完。
+   * 展开后走的仍是同样的四个去向，只是这一轮从头选（不预填上一轮的答案）。
+   */
+  reopening?: boolean;
   onSaved: (id: string) => void;
   onWritten: (detail: QuestionDetail) => void;
+  onCancel?: () => void;
 }) {
-  const [answer, setAnswer] = useState(String(item.human_answer || ''));
+  const [answer, setAnswer] = useState(reopening ? '' : String(item.human_answer || ''));
   const [note, setNote] = useState('');
   const [due, setDue] = useState(item.due || '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
-  const resolved = bucketOf(item) === 'resolved';
   // 原生日期框允许六位年份（`110520-02-06`），服务端会 400。
   // 在这里先按形状拦一道，别让人填完点了保存才知道不对
   const needDue = answer === 'ask' && !/^\d{4}-\d{2}-\d{2}$/.test(due);
@@ -358,17 +406,13 @@ function AnswerPanel({
     });
   };
 
-  // 重开一轮：只把 status 推回 open，**上一轮一个字都不删** ——
-  // 把旧结论搬进「## 轮次记录」是 agent 的活（prompt 里写明了），那是它的写区。
-  const reopen = () => {
-    void save({ status: 'open', human_answer: '', human_note: note.trim() });
-  };
-
   return (
     <section className="flex flex-col gap-3 rounded-lg border border-border bg-muted/30 px-3 py-3">
       <div className="flex items-baseline gap-2">
-        <h3 className="font-display text-sm">怎么消解这一条</h3>
-        <span className="text-xs text-muted-foreground">选一个，四个去向不一样</span>
+        <h3 className="font-display text-sm">{reopening ? '再问一轮' : '怎么消解这一条'}</h3>
+        <span className="text-xs text-muted-foreground">
+          {reopening ? '重新选一个去向，上一轮一个字都不删' : '选一个，四个去向不一样'}
+        </span>
       </div>
 
       <div className="grid gap-1.5 sm:grid-cols-2">
@@ -422,47 +466,54 @@ function AnswerPanel({
 
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" disabled={!answer || needDue || saving} onClick={saveAnswer}>
-          {saving ? '保存中…' : '保存'}
+          {saving ? '保存中…' : reopening ? '开启新一轮' : '保存'}
         </Button>
 
-        {/* 动作区随选中项变化：`drop` 是真终态，这里**不出现**复制 prompt */}
-        {answer === 'verify' ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void copyPrompt('verify', [item.path], `${item.id} 的查证 prompt`)}
-          >
-            <Copy className="size-3.5" />
-            复制查证 prompt
-          </Button>
-        ) : null}
-        {answer === 'decide' ? (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => void copyPrompt('decide', [item.path], `${item.id} 的决策草稿 prompt`)}
-          >
-            <Copy className="size-3.5" />
-            复制决策草稿 prompt
-          </Button>
-        ) : null}
-
-        {/* 已消解的条目才给重开入口：结论不满意时要能再问一轮，上一轮痕迹不覆盖 */}
-        {resolved ? (
-          <>
-            <Button size="sm" variant="ghost" disabled={saving} onClick={reopen}>
-              <RotateCcw className="size-3.5" />
-              重开一轮
-            </Button>
+        {/*
+          动作区随选中项变化：`drop` 是真终态，这里**不出现**复制 prompt。
+          重开一轮时三个待派的去向共用重做 prompt —— 它比查证/决策 prompt 多一条
+          「旧结论搬进轮次记录、不要覆盖」，那正是重做这一轮的命门。
+        */}
+        {reopening ? (
+          answer && answer !== 'drop' ? (
             <Button
               size="sm"
-              variant="ghost"
+              variant="outline"
               onClick={() => void copyPrompt('reopen', [item.path], `${item.id} 的重做 prompt`)}
             >
               <Copy className="size-3.5" />
               复制重做 prompt
             </Button>
+          ) : null
+        ) : (
+          <>
+            {answer === 'verify' ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void copyPrompt('verify', [item.path], `${item.id} 的查证 prompt`)}
+              >
+                <Copy className="size-3.5" />
+                复制查证 prompt
+              </Button>
+            ) : null}
+            {answer === 'decide' ? (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void copyPrompt('decide', [item.path], `${item.id} 的决策草稿 prompt`)}
+              >
+                <Copy className="size-3.5" />
+                复制决策草稿 prompt
+              </Button>
+            ) : null}
           </>
+        )}
+
+        {reopening && onCancel ? (
+          <Button size="sm" variant="ghost" disabled={saving} onClick={onCancel}>
+            取消
+          </Button>
         ) : null}
       </div>
 
@@ -493,24 +544,41 @@ function QuestionCard({
   onSaved: (id: string) => void;
 }) {
   const sections = useMemo(() => splitSections(detail?.body || ''), [detail?.body]);
+  /** 重开一轮是否已展开。卡片按 `key={id}` 重挂，翻到下一条自然回到收起态 */
+  const [reopening, setReopening] = useState(false);
+  const resolved = bucketOf(item) === 'resolved';
 
   const why = sections.get('为什么需要') || '';
   const conclusion = sections.get('结论') || '';
   const feedback = sections.get('人工反馈') || '';
-  const rounds = sections.get('轮次记录') || '';
+  const prevRounds = splitRoundBodies(sections.get('轮次记录') || '');
   const aiSource = detail?.ai_source || [];
 
-  // 「依据」折叠区收起时的摘要：凭据已经常驻在上面了，这里说清有几条出处
   // 人写区的两行：先算出来，好让「两行都空就整块不渲染」判得掉
   const humanAnswer = ANSWER_LABEL[item.human_answer] || item.human_answer || '';
   const humanNote = detail?.human_note || '';
+  const hasCurrentRound = Boolean(humanAnswer || humanNote || conclusion || item.ai_conclusion);
 
+  // 「依据」折叠区收起时的摘要：凭据已经常驻在上面了，这里说清有几条出处
   const evidenceSummary = [
     aiSource.length ? `出处 ${aiSource.length} 条` : '未标注出处',
-    rounds ? '有轮次记录' : '',
+    feedback ? '有人工反馈' : '',
   ]
     .filter(Boolean)
     .join(' · ');
+
+  /*
+    编号 + 状态做成一枚徽章，跟着标题进卡片（`badge` 槽）——
+    它说的是"这是哪一条、它现在什么状态"，跟标题是同一件事，摊在卡片外面就散了。
+    状态点走 `icon` 槽（它本来就是 leading 图示），文字保持「编号 · 状态」的读法。
+  */
+  const statusBadge = (
+    <Badge variant="outline" icon={<StatusDot item={item} />}>
+      <span className="font-mono">{item.id}</span>
+      {' · '}
+      {item.broken ? '无法解析' : STATUS_LABEL[item.status] || item.status || '未知状态'}
+    </Badge>
+  );
 
   return (
     <div className="flex flex-col gap-4 px-5 py-4">
@@ -519,14 +587,6 @@ function QuestionCard({
         摊成同一个 `gap-4` 就没有层次了 —— 截图上那两道空档正是这么来的。
       */}
       <header className="flex flex-col gap-2.5">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-xs text-muted-foreground">{item.id}</span>
-          <StatusDot item={item} />
-          <span className="text-xs text-muted-foreground">
-            {item.broken ? '无法解析' : STATUS_LABEL[item.status] || item.status || '未知状态'}
-          </span>
-        </div>
-
         {item.broken ? (
           <div className="rounded-lg border border-destructive/40 px-3 py-2 text-sm text-destructive">
             {item.reason || '这份问题文件解析不出来'}
@@ -535,17 +595,34 @@ function QuestionCard({
         ) : null}
 
         {/*
-          「为什么需要」是问题的**副本**，不是附录：不知道为什么问，就只能照着标题瞎猜。
-          折叠等于默认不读，所以它直接当段落摊在标题下面。
+          标题 + 「为什么需要」收成一张可折叠的特性卡，**默认收起**（用户拍板）。
+          两百多条问题要一条条翻，每条都先摊开一段背景，翻的人得先滚过去才看得到动作区；
+          收起后标题是索引、点开才是细读，翻的成本压在标题这一行上。
+
+          卡片按 `key={item.id}` 重挂，所以翻到下一条自然回到收起态 —— 不必自己清 state。
+          没有「为什么需要」时退回裸标题：给一张点开是空的卡片，比不给更差。
+
+          语义上这里从 `<h2>` 变成了 button 里的文本 —— 换来的是 `aria-expanded` 与
+          Enter/Space 展开。弹窗标题由 `DialogTitle` 承担，这一层丢掉 heading 可以接受。
         */}
-        <div className="flex flex-col gap-1.5">
-          <h2 className="font-display text-lg leading-snug">{plainText(item.title || item.name)}</h2>
-          {why ? (
-            <div className="text-muted-foreground [&_p:first-child]:mt-0 [&_p:last-child]:mb-0">
-              <Markdown>{why}</Markdown>
-            </div>
-          ) : null}
-        </div>
+        {why ? (
+          <FeatureBlock className="font-display">
+            <FeatureBlockTrigger
+              badge={statusBadge}
+              title={plainText(item.title || item.name)}
+            />
+            <FeatureBlockPanel>
+              <FeatureBlockContent className="font-sans [&_p:first-child]:mt-0 [&_p:last-child]:mb-0">
+                <Markdown>{why}</Markdown>
+              </FeatureBlockContent>
+            </FeatureBlockPanel>
+          </FeatureBlock>
+        ) : (
+          <div className="flex flex-col items-start gap-2">
+            {statusBadge}
+            <h2 className="font-display text-lg leading-snug">{plainText(item.title || item.name)}</h2>
+          </div>
+        )}
 
         <div className="flex flex-wrap items-center gap-2">
           <EvidenceBadge value={item.evidence} />
@@ -553,17 +630,6 @@ function QuestionCard({
           {item.blocks && item.blocks !== BACKLOG ? <Tag label="阻塞" value={item.blocks} /> : null}
           {item.due ? <Tag label="最迟答复" value={item.due} /> : null}
         </div>
-
-        {/*
-          人写区两行空着是常态（绝大多数问题还没分派过）。
-          `MetaLine` 自己会返回 null，但外层容器照样会吃掉一道 gap —— 所以整块一起不渲染。
-        */}
-        {humanAnswer || humanNote ? (
-          <div className="flex flex-col gap-1">
-            <MetaLine label="标准答案" value={humanAnswer} />
-            <MetaLine label="人工补充" value={humanNote} />
-          </div>
-        ) : null}
       </header>
 
       {loading && !detail ? <p className="text-xs text-muted-foreground">正在读正文…</p> : null}
@@ -572,30 +638,71 @@ function QuestionCard({
       {/*
         解析不出来的条目不给动作区：字段级写入需要一份能解析的 front-matter，
         服务端也会拒。这种条目先去编辑器里修文件。
+        已消解的也不给 —— 它的入口是轮次框下方、依据上方的「重开一轮」。
       */}
-      {item.broken ? null : (
+      {item.broken || resolved ? null : (
         <AnswerPanel projectId={projectId} item={item} onSaved={onSaved} onWritten={onWritten} />
       )}
 
-      {conclusion || item.ai_conclusion ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="font-display text-base">结论</h3>
-          {conclusion ? (
-            <Markdown>{conclusion}</Markdown>
-          ) : (
-            <p className="text-sm">{item.ai_conclusion}</p>
-          )}
-          {item.status === 'answered' && !item.flows_to.length ? (
-            <p className="text-xs text-destructive">这条结论还没回流正文（flows_to 还空着）</p>
+      {/*
+        一轮一个框：当前轮（标准答案 / 人工补充 / 结论）在上，
+        「## 轮次记录」里更早的轮次按切开的块往下排。切不开就整段一框。
+      */}
+      {hasCurrentRound || prevRounds.length ? (
+        <div className="flex flex-col gap-3">
+          {hasCurrentRound ? (
+            <RoundCard>
+              {humanAnswer || humanNote ? (
+                <div className="flex flex-col gap-1">
+                  <MetaLine label="标准答案" value={humanAnswer} />
+                  <MetaLine label="人工补充" value={humanNote} />
+                </div>
+              ) : null}
+              {conclusion || item.ai_conclusion ? (
+                <section className="flex flex-col gap-2">
+                  <h3 className="font-display text-base">结论</h3>
+                  {conclusion ? (
+                    <Markdown>{conclusion}</Markdown>
+                  ) : (
+                    <p className="text-sm">{item.ai_conclusion}</p>
+                  )}
+                  {item.status === 'answered' && !item.flows_to.length ? (
+                    <p className="text-xs text-destructive">这条结论还没回流正文（flows_to 还空着）</p>
+                  ) : null}
+                </section>
+              ) : null}
+            </RoundCard>
           ) : null}
-        </section>
+          {prevRounds.map((body, index) => (
+            <RoundCard key={index} className="bg-muted/30">
+              <p className="text-xs text-muted-foreground">更早的轮次</p>
+              <Markdown>{body}</Markdown>
+            </RoundCard>
+          ))}
+        </div>
       ) : null}
 
-      {feedback ? (
-        <section className="flex flex-col gap-2">
-          <h3 className="font-display text-base">人工反馈</h3>
-          <Markdown>{feedback}</Markdown>
-        </section>
+      {/*
+        已消解条目的唯一动作入口，摆在依据上方：先读这一轮结论，不满意再重开。
+        点「重开一轮」**不写盘** —— 写盘发生在新一轮选完去向点保存时，
+        所以误点没有任何代价，也不会凭空多出一条「重开一轮」的人工反馈。
+      */}
+      {resolved && !item.broken ? (
+        reopening ? (
+          <AnswerPanel
+            projectId={projectId}
+            item={item}
+            reopening
+            onSaved={onSaved}
+            onWritten={onWritten}
+            onCancel={() => setReopening(false)}
+          />
+        ) : (
+          <Button size="sm" variant="outline" className="self-start" onClick={() => setReopening(true)}>
+            <RotateCcw className="size-3.5" />
+            重开一轮
+          </Button>
+        )
       ) : null}
 
       <CardSection label="依据" summary={evidenceSummary}>
@@ -609,11 +716,26 @@ function QuestionCard({
           <MetaLine label="问题文件" value={item.path} />
           <MetaLine label="更新于" value={item.updated} />
         </div>
-        {rounds ? (
-          <div className="mt-2 border-t border-border pt-2">
-            <p className="mb-1 text-xs text-muted-foreground">轮次记录</p>
-            <Markdown>{rounds}</Markdown>
-          </div>
+        {/*
+          正文「## 人工反馈」是**历史痕迹**（每次保存追加一行，带日期）；
+          当前值已经以「标准答案 / 人工补充」摆在本轮框里了 ——
+          两处都摊开只是同一件事说两遍，所以历史嵌进依据，默认收起。
+        */}
+        {feedback ? (
+          <Collapsible className="mt-2 border-t border-border">
+            <CollapsibleTrigger className="justify-start gap-2 rounded-none px-0 py-2 text-xs font-normal text-muted-foreground hover:bg-transparent hover:text-foreground">
+              <ChevronRight
+                className="size-3.5 shrink-0 transition-transform duration-150 group-data-panel-open:rotate-90 motion-reduce:transition-none"
+                aria-hidden
+              />
+              <span>人工反馈</span>
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <CollapsibleContent className="px-0 pb-1 pt-0 text-foreground">
+                <Markdown>{feedback}</Markdown>
+              </CollapsibleContent>
+            </CollapsiblePanel>
+          </Collapsible>
         ) : null}
       </CardSection>
     </div>
@@ -633,7 +755,6 @@ function QuestionsBody({
   reload: (silent?: boolean) => void;
 }) {
   const [filter, setFilter] = useState<FilterKey>('open');
-  const [showBacklog, setShowBacklog] = useState(false);
   /** 只看「结论还没回流正文」的那些。只在「已消解」筛选下有意义，切走就关掉 */
   const [onlyUnflowed, setOnlyUnflowed] = useState(false);
   const [selectedId, setSelectedId] = useState('');
@@ -645,24 +766,18 @@ function QuestionsBody({
   const counts = useMemo(() => {
     const out: Record<FilterKey, number> = { open: 0, pending_ai: 0, resolved: 0, conflict: 0 };
     for (const item of index.items) {
-      if (item.blocks === BACKLOG && !showBacklog) continue;
       out[bucketOf(item)] += 1;
     }
     return out;
-  }, [index.items, showBacklog]);
-
-  const backlogCount = useMemo(
-    () => index.items.filter((i) => i.blocks === BACKLOG).length,
-    [index.items],
-  );
+  }, [index.items]);
 
   /**
    * 「结论躺在已关闭的卡片里、正文还是旧的」——「只有入口没有出口」的另一面。
    * 光靠关闭状态挡不住，所以在已消解视图里单独把它摆出来。
    */
   const unflowedCount = useMemo(
-    () => index.items.filter((i) => (i.blocks !== BACKLOG || showBacklog) && isUnflowed(i)).length,
-    [index.items, showBacklog],
+    () => index.items.filter(isUnflowed).length,
+    [index.items],
   );
 
   /**
@@ -672,7 +787,6 @@ function QuestionsBody({
   const groups = useMemo(() => {
     const map = new Map<string, QuestionItem[]>();
     for (const item of index.items) {
-      if (item.blocks === BACKLOG && !showBacklog) continue;
       if (bucketOf(item) !== filter) continue;
       if (onlyUnflowed && !isUnflowed(item)) continue;
       const key = item.blocks || UNSORTED;
@@ -687,7 +801,7 @@ function QuestionsBody({
         if ((a.name === BACKLOG) !== (b.name === BACKLOG)) return a.name === BACKLOG ? 1 : -1;
         return b.items.length - a.items.length || a.name.localeCompare(b.name);
       });
-  }, [index.items, filter, showBacklog, onlyUnflowed]);
+  }, [index.items, filter, onlyUnflowed]);
 
   /**
    * 某个分组里「待 AI 更新」的条目。批量复制取的是它，**不看当前筛选** ——
@@ -734,7 +848,7 @@ function QuestionsBody({
 
   /**
    * 方向键翻页时把焦点收到卡片栏的滚动视口上。
-   * 不收的话焦点还留在刚点过的那个控件上（关闭按钮、「显示 backlog」、清单行都算），
+   * 不收的话焦点还留在刚点过的那个控件上（关闭按钮、清单行都算），
    * 浏览器一收到按键就判定成键盘操作，给那个控件描一圈 focus-visible ——
    * 框在哪和翻到哪毫无关系，只会误导。视口自己的 ring 已经关掉了。
    */
@@ -914,7 +1028,7 @@ function QuestionsBody({
                             onClick={() => setSelectedId(item.id)}
                             title={`${item.id} · ${text}`}
                             className={cn(
-                              'flex w-full items-center gap-2 border-l-2 border-transparent py-1.5 pr-3 pl-4 text-left transition-colors hover:bg-accent',
+                              'flex w-full items-center gap-2 border-l-2 border-transparent py-2 pr-3 pl-4 text-left transition-colors hover:bg-accent',
                               item.id === selectedId && 'border-l-foreground bg-muted hover:bg-muted',
                             )}
                           >
@@ -936,21 +1050,6 @@ function QuestionsBody({
             <p className="px-3 py-6 text-center text-xs text-muted-foreground">这个筛选下没有问题</p>
           )}
         </ScrollArea>
-
-        {/*
-          backlog 默认不占版面（它不阻塞任何在途交付物），但也不能凭空消失 ——
-          两百多条沉在里面，用户得有一条路看见它们。
-        */}
-        {backlogCount ? (
-          <button
-            type="button"
-            onClick={() => setShowBacklog((v) => !v)}
-            aria-pressed={showBacklog}
-            className="shrink-0 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-          >
-            {showBacklog ? '隐藏' : '显示'} backlog（{backlogCount} 条不阻塞在途交付物）
-          </button>
-        ) : null}
       </div>
 
       {/* ── 右：单条卡片 + 方向键翻页 ── */}

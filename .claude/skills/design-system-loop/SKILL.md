@@ -156,14 +156,15 @@ RE-ADD 后 `git diff src/app/components/ui/<name>.tsx`:**应该只有真源的�
 | 阅读器里的代码块 | `code-block` |
 | 操作结果提示 | `sonner` / `alert`,别自己写浮层 |
 | 列表行尾的一堆动作(复制 / 转换 / 定位) | `dropdown-menu` 收进「更多」,别在行上摊图标 |
+| 标题常驻、正文按需展开的卡(未决问题的「为什么需要」) | `feature-block`(整头部可点、默认收起),不自己拿 `<details>` 拼 |
 | "待转换 / 存疑"状态 | `badge` + `destructive` 令牌,不新增颜色 |
 
 ## 当前快照
 
-- **已 copy-in**:`alert` `badge` `button` `code-block` `dialog` `dropdown-menu` `gallery-stack` `input`
-  `lightbox` `scroll-area` `select` `sonner` `switch` `tabs` `textarea` `tooltip`
-- **registry 上还有**:`checkbox` `collapsible` `confirm-dialog` `drawer` `field`
-  `label` `theme`
+- **已 copy-in**:`alert` `badge` `button` `code-block` `collapsible` `dialog` `dropdown-menu`
+  `feature-block` `gallery-stack` `input` `lightbox` `scroll-area` `select` `sonner` `switch`
+  `tabs` `textarea` `tooltip`
+- **registry 上还有**:`checkbox` `confirm-dialog` `drawer` `field` `label` `theme`
 
 拉了新的就把这两行更新掉 —— 这份清单是给下一个 Agent 省一次 `ls` 的。
 

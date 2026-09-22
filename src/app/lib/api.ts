@@ -672,7 +672,7 @@ export interface QuestionItem {
   /** 一句话问题。清单行只显示它 */
   title: string;
   status: QuestionStatus;
-  /** 阻塞哪个在途交付物。`backlog` = 不阻塞任何在途交付物，主视图不显示；空 = 还没归类 */
+  /** 阻塞哪个在途交付物。`backlog` = 不阻塞任何在途交付物，清单里单独成一组；空 = 还没归类 */
   blocks: string;
   asked_of: string;
   /** 触发这条问题的文档路径 */
