@@ -38,3 +38,38 @@ visualization/prototypes/**/.cache/
 
 # 如果原始资料涉密、体积大或不该入库，取消下面这行的注释
 # input/raw/
+
+# ---- 大体积二进制 / 表格产物：input/ 与 visualization/ 下一律不入库 ----
+# input/converted/ 与 input/assets/ 都是脚本产物，重跑 ingest.py / realdata.py / pointtable.py 即可重建；
+# _manifest_*.md 摘要仍入库（看板和 AI 靠它了解全局）。
+# output/ 下的交底包 xlsx / SQL 配置件 / 核对件 csv 是手工交付物，**继续入库**保留版本历史。
+# visualization/ 只入库 html / meta.json；原型 zip 和参考页截图留本地（覆盖上文「参考页默认入库」的截图部分）。
+input/**/*.csv
+input/**/*.sqlite
+input/**/*.sqlite-*
+input/**/*.db
+input/**/*.sql
+input/**/*.docx
+input/**/*.doc
+input/**/*.pptx
+input/**/*.ppt
+input/**/*.xlsx
+input/**/*.xlsm
+input/**/*.xls
+input/**/*.pdf
+input/**/*.zip
+input/assets/*
+!input/assets/.gitkeep
+visualization/**/*.zip
+visualization/**/*.png
+visualization/**/*.jpg
+visualization/**/*.jpeg
+visualization/**/*.gif
+visualization/**/*.webp
+visualization/**/*.tif
+visualization/**/*.tiff
+visualization/**/*.emf
+visualization/**/*.wmf
+visualization/**/*.docx
+visualization/**/*.pptx
+visualization/**/*.xlsx
