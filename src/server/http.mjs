@@ -34,7 +34,7 @@ import { resolvePrototypeCover, resolvePrototypeServeDir, resolveRefreshTarget, 
 import { readQuestion, scanQuestions, writeQuestion } from './questions.mjs';
 import { readRecord, scanRecords, writeRecordStatus } from './records.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
-import { scanWorkspace, verifySource } from './scan.mjs';
+import { ARCHIVE_DIR, OUTPUT_GROUPS, scanWorkspace, verifySource } from './scan.mjs';
 import { readSheetPage, scanSheet } from './spreadsheet.mjs';
 import { resolveAppVersion } from './version.mjs';
 
@@ -1068,6 +1068,136 @@ function webIngestStatus(projectId) {
 }
 
 /** 壳页里要拼进 HTML 的都是用户目录名和 meta.json 里的字符串 —— 一律转义。 */
+/** 归档是毫秒级的一次 rename，给足余量；超过就当卡死，终止它并如实说 */
+const ARCHIVE_TIMEOUT_MS = 20 * 1000;
+
+/**
+ * 归档请求的校验，**在起脚本之前**全部做完。请求只带组名与文件基名，不接受任何路径：
+ * 组名三选一；文件名里出现路径分隔符、`..`、目录成分一律 400。
+ * 于是「只能归档组根目录下的文件」「已在 一次归档/ 下的不能再归档」都由形状本身保证。
+ */
+function resolveArchiveTarget(root, rawGroup, rawName) {
+  const group = typeof rawGroup === 'string' ? rawGroup : '';
+  const name = typeof rawName === 'string' ? rawName.trim() : '';
+  const bad = (message) => {
+    const err = new Error(message);
+    err.statusCode = 400;
+    return err;
+  };
+  if (!OUTPUT_GROUPS.includes(group)) {
+    throw bad(`只能归档 ${OUTPUT_GROUPS.join(' / ')} 三组里的产出物，收到的组名是：${group || '(空)'}`);
+  }
+  if (!name || name === '.' || name === '..' || /[\\/\0]/.test(name) || name.includes('..')) {
+    throw bad(`文件名不合法：${name || '(空)'}。只接受组根目录下的文件名，不接受任何路径；组内子目录里的文件本轮不支持归档。`);
+  }
+  if (name.startsWith('.') || name === ARCHIVE_DIR) {
+    throw bad(`这不是可归档的产出物：${name}`);
+  }
+  const relPath = `output/${group}/${name}`;
+  const abs = resolveInside(root, relPath);
+  let stats;
+  try {
+    stats = fs.lstatSync(abs);
+  } catch {
+    stats = null;
+  }
+  if (!stats || !stats.isFile()) {
+    throw bad(`output/${group}/ 根目录下没有这份文件：${name}。可能已经被移走或改名，刷新列表看一眼。`);
+  }
+  return { group, name, relPath };
+}
+
+/**
+ * 一次归档：spawn 工作空间的 scripts/archive_output.py。
+ * **AGENTS.md 不变量 1 的第七条窄例外**：看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；
+ * 真正移动文件与追加 README 交接单的是脚本本身 —— 与 startIngest / startWebIngest 同构。
+ *
+ * 与那两条不同，这里**同步等脚本退出**，不做 running/done 任务态：移一个文件是毫秒级，
+ * 配一套轮询接口只是复制代码。写盘会被 watchWorkspace 捕获，列表自己刷新。
+ */
+async function runArchive(project, body) {
+  const target = resolveArchiveTarget(project.root, body?.group, body?.name);
+
+  const script = path.join(project.root, 'scripts', 'archive_output.py');
+  if (!fs.existsSync(script)) {
+    const err = new Error(
+      '这个工作空间没有 scripts/archive_output.py，看板没法替你归档。'
+        + '用模板新建的工作空间自带归档脚本；自己 mkdir 的目录需要自己装脚本，'
+        + `或在终端里把文件移进 output/${target.group}/${ARCHIVE_DIR}/。`,
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const py = await findPython();
+  if (!py) {
+    const err = new Error(
+      '找不到 Python 3。归档脚本要靠它跑，请先装 Python 3'
+        + '（Windows 用 py 或 python，macOS / Linux 用 python3），再试一次。',
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const [bin, ...prefix] = py;
+  const args = [...prefix, script, '--group', target.group, '--name', target.name, '--json'];
+  const result = await new Promise((resolve) => {
+    const child = spawn(bin, args, { cwd: project.root });
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, ARCHIVE_TIMEOUT_MS);
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    // spawn 异步失败不能变成未处理的 error 把常驻服务带崩
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      resolve({ code: null, stdout, stderr: `启动归档脚本失败：${err.message}`, timedOut });
+    });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr, timedOut });
+    });
+  });
+
+  if (result.timedOut) {
+    const err = new Error(
+      `归档脚本 ${ARCHIVE_TIMEOUT_MS / 1000} 秒没有退出，已经终止它。`
+        + `${target.relPath} 可能已经移走了，刷新列表看一眼再决定要不要重试。`,
+    );
+    err.statusCode = 504;
+    throw err;
+  }
+  if (result.code !== 0) {
+    // 脚本自己的中文说明原样带回去，不包装成一句「归档失败」
+    const output = (result.stderr.trim() || result.stdout.trim() || `归档脚本退出码 ${result.code}，没有输出`);
+    const err = new Error(output);
+    // 退出码 2 是脚本判定的参数 / 文件问题；其余是执行期失败
+    err.statusCode = result.code === 2 ? 400 : 500;
+    throw err;
+  }
+  const lastLine = result.stdout.trim().split(/\r?\n/).pop() || '';
+  try {
+    const parsed = JSON.parse(lastLine);
+    return {
+      ok: true,
+      from: String(parsed.from || target.relPath),
+      to: String(parsed.to || ''),
+      records: Array.isArray(parsed.records) ? parsed.records.map(String) : [],
+    };
+  } catch {
+    // 脚本退出 0 却没给 JSON（被人改过的旧版脚本）：文件大概率已经移走，如实说
+    return { ok: true, from: target.relPath, to: '', records: [] };
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -1888,6 +2018,16 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
 
   // 参考收件箱：看板只 spawn 工作空间 scripts/web_ingest.py --inbox，自己不写任何一个字节。
   // 请求不带路径 / 文件名 / URL，参数由服务端写死。
+  // 一次归档（不变量 1 第七条窄例外）：看板只 spawn 工作空间的 scripts/archive_output.py，
+  // 请求只带组名与文件名，不接受任何路径；同步等脚本退出
+  if (head === 'projects' && id && action === 'archive' && req.method === 'POST') {
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
+    const project = requireProject(id);
+    const body = await readBody(req);
+    return json(res, 200, await runArchive(project, body));
+  }
+
   if (head === 'projects' && id && action === 'web-ingest') {
     const project = requireProject(id);
     if (req.method === 'GET') {

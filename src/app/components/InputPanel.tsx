@@ -1135,7 +1135,12 @@ export function InputPanel({
   ingest: IngestControl;
 }) {
   const { input } = scan;
-  const hasOutputs = scan.output.stats.total > 0;
+  // 归档项照样计入溯源反链，所以「有没有产出」也要算上它们（total 只数主列表）
+  const archivedOutputs = scan.output.stats.archived;
+  const hasOutputs =
+    scan.output.stats.total +
+      (archivedOutputs ? archivedOutputs.analysis + archivedOutputs.docs + archivedOutputs.decisions : 0) >
+    0;
   // 旧服务进程没有 canIngest：整块按钮不出现，只保留终端命令提示
   const canIngest = Boolean(input.canIngest);
   const [ignoringPath, setIgnoringPath] = useState('');

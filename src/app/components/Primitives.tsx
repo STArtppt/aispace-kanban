@@ -334,6 +334,11 @@ export interface RowAction {
   label: string;
   icon: LucideIcon;
   disabled?: boolean;
+  /**
+   * 菜单项下面的一行小字。置灰的项用它说清为什么不能点 ——
+   * 点了没反应、又不说原因，用户只会以为坏了。
+   */
+  hint?: string;
   onSelect: () => void;
 }
 
@@ -379,17 +384,25 @@ export function RowActions({
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent>
-        {actions.map(({ label: itemLabel, icon: Icon, disabled, onSelect }) => (
+        {actions.map(({ label: itemLabel, icon: Icon, disabled, hint, onSelect }) => (
           <DropdownMenuItem
             key={itemLabel}
             disabled={disabled}
+            className={hint ? 'items-start' : undefined}
             onClick={(event) => {
               event.stopPropagation();
               onSelect();
             }}
           >
-            <Icon />
-            {itemLabel}
+            <Icon className={hint ? 'mt-0.5' : undefined} />
+            {hint ? (
+              <span className="flex max-w-64 flex-col gap-0.5">
+                <span>{itemLabel}</span>
+                <span className="text-[11px] leading-snug text-muted-foreground">{hint}</span>
+              </span>
+            ) : (
+              itemLabel
+            )}
           </DropdownMenuItem>
         ))}
       </DropdownMenuContent>

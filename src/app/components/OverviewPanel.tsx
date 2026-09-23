@@ -16,8 +16,9 @@ function inferStages(scan: Scan): Stage[] {
   const { input, output, references, prototypes } = scan;
   const hasRaw = input.stats.raw > 0;
   const converted = input.stats.converted > 0 && input.stats.pending === 0;
-  const analyzed = output.stats.analysis > 0;
-  const documented = output.stats.docs > 0;
+  // 归档过的也算走过这一步：三组计数只数主列表，全归档了不等于没分析过
+  const analyzed = output.stats.analysis + (output.stats.archived?.analysis ?? 0) > 0;
+  const documented = output.stats.docs + (output.stats.archived?.docs ?? 0) > 0;
   // 视觉呈现这一步：有参考或有原型都算走过。references 缺字段（旧服务进程）时退回只看原型
   const showcased = (references?.items.length || 0) > 0 || prototypes.items.length > 0;
 
@@ -46,6 +47,9 @@ export function OverviewPanel({
   const { meta } = scan;
   // 输入/产出页顶部的统计卡并到这里：待转换、存疑、原件动过都是要人处理的
   const stale = scan.input.stats.stale ?? 0;
+  const archived = scan.output.stats.archived;
+  // 旧服务进程没有 archived：当 0，提示不出现
+  const archivedTotal = archived ? archived.analysis + archived.docs + archived.decisions : 0;
   const todoCount = scan.input.stats.pending + scan.input.stats.warnings + stale;
   const todoParts: string[] = [];
   if (scan.input.stats.pending || scan.input.stats.warnings) {
@@ -81,9 +85,11 @@ export function OverviewPanel({
           label="产出"
           value={scan.output.stats.total}
           hint={
-            scan.output.stats.lastUpdated
+            // total 只数主列表；已归档的一起报出来，不然归档之后总数变小像是文件没了
+            (archivedTotal ? `另有 ${archivedTotal} 份已归档 · ` : '') +
+            (scan.output.stats.lastUpdated
               ? `${formatWords(scan.output.stats.words)} · 更新于 ${formatRelative(scan.output.stats.lastUpdated)}`
-              : formatWords(scan.output.stats.words)
+              : formatWords(scan.output.stats.words))
           }
         />
         <Stat
@@ -180,6 +186,7 @@ export function OverviewPanel({
         {scan.output.stats.total ? (
           <div className="overflow-hidden rounded-lg border border-border">
             {[...scan.output.analysis, ...scan.output.docs, ...scan.output.decisions]
+              .filter((file) => !file.archived)
               .sort((a, b) => b.mtime.localeCompare(a.mtime))
               .slice(0, 5)
               .map((file) => (

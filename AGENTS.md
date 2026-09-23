@@ -134,6 +134,29 @@
      ⑥ 写入走「先写临时文件再原子替换」,失败不留半截文件。
         单条意见上限 1000 字、单批上限 50 条,超限 400 且整批不落盘。
         看板写入的状态只能是 `pending`
+   - 一次归档时调工作空间的 `scripts/archive_output.py`(`src/server/http.mjs` 的 `runArchive`)——
+     **这是第七条窄例外,范围就是下面六条,越界即为 bug**。
+     它属于「看板只 `spawn`,工作空间脚本写盘」那一族(与第三、五条、资料转换同构),
+     **不是**第四、六条那种服务端直写 —— 归档是 `rename`,而第六条第①款写死了「不改名」,
+     所以看板自己绝不做,交给脚本。与 `startIngest` 不同的是它**同步等脚本退出**(带超时),
+     不做任务态:移一个文件是毫秒级,配一套轮询只是复制代码。
+     ① 看板只 `spawn`,自己不写、不 `rename`、不 `unlink` 任何一个字节;
+     ② 必须用户在产出列表行点「归档」并确认才发起,没有后台自动跑、没有定时,
+        **不按状态自动归档**(`superseded` 不等于该移走 —— 那是人的判断);
+     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
+     ④ 请求**只带组名与文件基名,不接受任何路径**:组名只能是 `analysis` / `docs` / `decisions`,
+        文件名里出现路径分隔符、`..` 或任何目录成分一律 400,**在起脚本之前就拒掉**;
+        落点由脚本自己算。代价是组内子目录里的文件本轮不可归档(界面置灰说明),
+        不要为此开成「带路径但我们会校验」——「不接受任何路径」这句话本身没有例外,才是它的价值;
+     ⑤ 脚本只允许在 `output/<三个组名>/一次归档/` 下写(移入那一份、维护同目录的 `README.md` 交接单);
+        `input/`、`project.yaml`、`visualization/`、`output/records/`、`output/questions/`
+        以及三个组根目录下的其它文件仍然只读;
+     ⑥ 脚本**只移动与追加 README**(只在清单标记之间追加,提示词段一字不碰),不删除任何文件;
+        落点同名时加日期后缀,不覆盖。脚本不存在时接口 400 说清出路,不退化成「看板替你移一下」。
+     「是否已归档」的判据只写在 `src/server/scan.mjs` 的 `outputPlacement`,前端不从路径里自己找。
+     归档不降低可达性:归档项照样扫描、搜索、预览、计入溯源反链。
+     二次归档(分堆 + 短索引)由工作空间 agent 走 `pm-output-archive` 技能做,看板不参与,
+     也**不产出任何「无需再读」清单**
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
@@ -180,9 +203,9 @@ aispace-kanban/
 ├── bin/cli.mjs             # 平面 1 · CLI:参数解析 + serve/add/list/relink/remove
 ├── src/
 │   ├── server/             # 平面 2 · 常驻服务(.mjs,无类型检查)
-│   │   ├── http.mjs        #   路由 + 静态伺服 + SSE + 系统调用(open);原型刷新 / 参考收件箱 spawn 也在这
+│   │   ├── http.mjs        #   路由 + 静态伺服 + SSE + 系统调用(open);原型刷新 / 参考收件箱 / 一次归档 spawn 也在这
 │   │   ├── config.mjs      #   注册表读写 + 工作空间识别 + 重连候选
-│   │   ├── scan.mjs        #   工作空间扫描 → 结构化 JSON(只读)
+│   │   ├── scan.mjs        #   工作空间扫描 → 结构化 JSON(只读);「是否已归档」判据 outputPlacement 只在这
 │   │   ├── meta.mjs        #   project.yaml 解析 + 完整度统计
 │   │   ├── frontmatter.mjs #   frontmatter / 标题 / 字数
 │   │   ├── records.mjs     #   扫 output/records/ → 产出物记录索引 + 状态写入(不变量 1 第六条例外)
@@ -216,6 +239,8 @@ aispace-kanban/
 │   └── pm-aispace/         #   内置「产品经理AI空间模板」
 │       ├── template.yaml   #     发现用的元信息(id / name / description)
 │       ├── .claude/skills/ #     pm-* 业务技能 + skill-creator
+│       ├── scripts/        #     工作空间自己的工具;看板只 spawn 其中几支:ingest.py / db_ingest.py /
+│       │                   #     web_ingest.py --inbox / archive_output.py(一次归档,第七条例外)
 │       └── input/ output/ visualization/ project.yaml
 └── dist/                   # 构建产物(gitignore),serve 非 dev 模式伺服它
 ```

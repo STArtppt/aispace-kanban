@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseFrontmatter } from './frontmatter.mjs';
 import { resolveInside } from './paths.mjs';
+import { outputPlacement } from './scan.mjs';
 import { isValidStatus, needsResolvedBy, statusValuesOf } from '../shared/recordStatus.mjs';
 
 /** 记录目录，相对工作空间根。改这里要同步 records/README.md 与校验脚本。 */
@@ -96,6 +97,17 @@ function targetMissing(root, target) {
   } catch {
     return true;
   }
+}
+
+/**
+ * `target` 是不是指在某组的 `一次归档/` 下。判据是 scan.mjs 的 `outputPlacement`，这里不另写一份。
+ *
+ * 这是**派生**标记，不是状态：不写进 front-matter、不进三套状态机、不因此改任何记录文件 ——
+ * 归档改变的是位置，不是产出物的状态。归档后 `target` 仍指着旧路径时它是 false，
+ * 那时照旧标「指向丢失」，由 agent 跟进 `target`（AI 写区）之后才变成 true。
+ */
+function targetArchived(target) {
+  return Boolean(target && outputPlacement(String(target).replace(/^\.\//, ''))?.archived);
 }
 
 /**
@@ -221,8 +233,13 @@ export function scanRecords(root) {
       }
       cacheSet(key, item);
     }
-    // 指向丢失不进缓存：它取决于**别的**文件在不在，记录文件自己没变也可能变
-    items.push({ ...item, targetMissing: targetMissing(root, item.target) });
+    // 指向丢失不进缓存：它取决于**别的**文件在不在，记录文件自己没变也可能变。
+    // 目标已归档与它同属派生，一起在这里算、一起不进缓存
+    items.push({
+      ...item,
+      targetMissing: targetMissing(root, item.target),
+      targetArchived: targetArchived(item.target),
+    });
   }
 
   // 编号定长，字符串序就是编号序
@@ -297,6 +314,7 @@ export function readRecord(root, id) {
   return {
     ...base,
     targetMissing: targetMissing(root, base.target),
+    targetArchived: targetArchived(base.target),
     /** 这个 `kind` 能选的状态值。前端也有同一份表，下发一遍是为了 `kind` 写错时界面有据可依 */
     statusValues: statusValuesOf(base.kind),
     flow: parseFlow(body),

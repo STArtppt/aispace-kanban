@@ -127,6 +127,10 @@ function RecordRow({
       <span className="shrink-0 font-mono text-xs text-muted-foreground">{item.id}</span>
       <span className="min-w-0 flex-1 truncate text-sm">{item.title || item.name}</span>
       {flagged ? <FileWarning className="size-3.5 shrink-0 text-destructive" aria-hidden /> : null}
+      {/* 中性灰：归档是位置不是状态，也不是需要注意的缺口。丢失优先 —— 那才要人处理 */}
+      {item.targetArchived && !item.targetMissing ? (
+        <span className="shrink-0 text-xs text-muted-foreground">已归档</span>
+      ) : null}
       {isStalled(item) ? (
         <span className="shrink-0 text-xs text-muted-foreground">
           停 {daysSince(item.status_changed || item.created)} 天
@@ -301,6 +305,7 @@ function RecordCard({
               指向丢失
             </Badge>
           ) : null}
+          {item.targetArchived && !item.targetMissing ? <Badge variant="muted">目标已归档</Badge> : null}
         </div>
         <h3 className="mt-2 text-base font-medium">{item.title || item.name}</h3>
       </div>
@@ -328,6 +333,14 @@ function RecordCard({
           这条指向的产出物文件现在不在了。产出物改名或移走时要由 agent 跟进
           <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono">target</code>
           （走 `pm-output-record` 技能）—— 看板不改它，那是 AI 写区。
+          刚在产出列表里归档的，原路径与新路径记在
+          <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono">output/&lt;组&gt;/一次归档/README.md</code>
+          的清单里。
+        </p>
+      ) : null}
+      {item.targetArchived && !item.targetMissing ? (
+        <p className="text-xs text-muted-foreground">
+          这份产出物已经移进归档区，仍然可以搜到和预览。归档改变的是位置，不是状态 —— 上面的状态照旧有效。
         </p>
       ) : null}
 

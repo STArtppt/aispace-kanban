@@ -37,6 +37,44 @@ export interface FileItem {
   ignored?: boolean;
   /** 一条标注都没有时服务端不返回；旧服务进程也没有。缺了就什么都不显示。 */
   annotations?: Annotations;
+  /**
+   * 产出项在 `output/<组>/一次归档/` 下。**判据只在服务端**（scan.mjs 的 `outputPlacement`），
+   * 前端不从 `path` 里自己找「一次归档」—— 同一个判据实现两遍，目录名一改就是两处要同步。
+   * 可选：旧服务进程没有这个字段，缺了归档项就照旧混在主列表里，等于功能没启用、行为与改动前一致。
+   */
+  archived?: boolean;
+  /** 归档项所在的堆目录名（二次归档分出来的子目录）；平铺在归档根上时为空串 */
+  archivePile?: string;
+  /**
+   * 归档区里的两种说明文件，不是被归档的产出物：`handoff` = 归档根上的 README 交接单，
+   * `index` = 堆目录里的 INDEX.md 堆索引。它们排在各自那一堆最前面，不进已归档计数。
+   */
+  archiveRole?: ArchiveRole;
+  /** 在组内子目录里（不在 一次归档/ 下）。本轮只能归档组根目录下的文件，这类要置灰说明 */
+  nested?: boolean;
+}
+
+export type ArchiveRole = 'handoff' | 'index';
+
+/** 一次归档可选的三组。`questions` / `records` 不在其中，类型上就排除掉 */
+export type OutputGroup = 'analysis' | 'docs' | 'decisions';
+
+/**
+ * POST /api/projects/:id/archive 的请求体。**只带组名与文件基名** ——
+ * 类型上就不留传路径的口子，服务端对带路径分隔符或 `..` 的文件名一律 400。
+ */
+export interface ArchiveRequest {
+  group: OutputGroup;
+  /** 组根目录下的文件名，如 `旧版需求说明.md`，不是路径 */
+  name: string;
+}
+
+/** 归档成功：原路径与新路径（同名冲突时新路径带日期后缀），以及 `target` 待跟进的记录编号 */
+export interface ArchiveResult {
+  ok: true;
+  from: string;
+  to: string;
+  records: string[];
 }
 
 export interface ConvertedItem extends FileItem {
@@ -429,7 +467,18 @@ export interface Scan {
       /** 带标注的产出份数 / 标注总条数。可选：旧服务进程没有这两个字段。 */
       annotated?: number;
       annotations?: number;
+      /**
+       * 各组已归档的份数（不含交接单与堆索引）。有这个字段时，上面三组计数与 total / words
+       * **只数主列表**；界面要把两个数一起显示，不然总数突然变小看起来像文件没了。
+       * 可选：旧服务进程没有，那时三组计数照旧包含一切。
+       */
+      archived?: Record<OutputGroup, number>;
     };
+    /**
+     * 工作空间里有 scripts/archive_output.py 时为 true。false 时「归档」置灰并说明。
+     * 可选：旧服务进程没有这个字段 —— 那时不置灰，点了会撞 404，提示重启服务。
+     */
+    canArchive?: boolean;
   };
   /**
    * visualization/references/ 的参考清单。
@@ -798,6 +847,13 @@ export interface OutputRecordItem {
    */
   targetMissing?: boolean;
   /**
+   * `target` 指在某组的 `一次归档/` 下（由服务端从 `target` 路径派生）。
+   * **它不是状态**：不写进 front-matter、不进三套状态机，`status` 不因归档而变。
+   * 刚归档、agent 还没跟进 `target` 时它是 false，那时照旧是「指向丢失」。
+   * 新增字段，可选：旧服务进程不给，缺了就不显示这个标记。界面上用中性灰，不用 orange。
+   */
+  targetArchived?: boolean;
+  /**
    * 这份文件的 front-matter 缺失、读不出来，或 `id` 与文件名不符。**不是错误** ——
    * 一条坏数据不能拖垮整个接口，也不该悄悄消失，所以它照样在清单里，只是标成无法解析。
    */
@@ -1014,6 +1070,17 @@ export const api = {
    * 返回保存后的整条详情 —— 前端据此立刻更新，不等 SSE 绕一圈回来。
    * 老服务进程没有这个接口（404 「未知接口」），调用方要兜住并提示重启服务。
    */
+  /**
+   * 一次归档：服务端 spawn 工作空间的 scripts/archive_output.py，把组根目录下的一份产出物
+   * 移进同组的 `一次归档/`，同步等脚本退出。看板自己不写盘（不变量 1 第七条窄例外）。
+   * 失败时错误信息是脚本或服务端的原话，照原文显示。
+   * 老服务进程没有这个接口（404 「未知接口」），`request` 已经把「重启 serve」写进提示。
+   */
+  archiveOutput: (id: string, body: ArchiveRequest) =>
+    request<ArchiveResult>(`/api/projects/${id}/archive`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   saveRecordStatus: (id: string, recordId: string, patch: RecordStatusPatch) =>
     request<OutputRecordDetail>(`/api/projects/${id}/records/${encodeURIComponent(recordId)}`, {
       method: 'POST',

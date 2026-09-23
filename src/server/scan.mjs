@@ -45,6 +45,40 @@ const MANIFEST_RE = /^_manifest_(.+)\.md$/;
  */
 const SPLIT_TABLE_THRESHOLD = 40;
 
+/** 产出的三组。`questions/` `records/` 不在其中：它们有自己的入口，不进文件列表 */
+export const OUTPUT_GROUPS = ['analysis', 'docs', 'decisions'];
+/**
+ * 各组内部的归档目录名。改名要同步 templates/pm-aispace/scripts/archive_output.py 的 ARCHIVE_DIR。
+ * 放在组内而不是 output/ 根上：递归扫描照样收得到，归档不降低可达性。
+ */
+export const ARCHIVE_DIR = '一次归档';
+
+/**
+ * 一份产出在组里的位置。**「是否已归档」的判据只写这一处** ——
+ * 前端按下发的字段分区，records.mjs 的「目标已归档」也调它，目录名一改只改这里。
+ *
+ * - 不是 `output/<三组>/` 下的路径：返回 null
+ * - `output/<组>/一次归档/...`：`archived: true`；`pile` 是堆目录名（平铺在归档根上为空串）；
+ *   `role` 标出两种说明文件 —— 归档根上的 `README.md` 是交接单（`handoff`），
+ *   堆目录里的 `INDEX.md` 是堆索引（`index`）。它们不是被归档的产出物，不进已归档计数。
+ * - 其余：`archived: false`；`nested` 表示在组内子目录里（本轮不支持归档，请求不接受路径）
+ *
+ * @param {string} relPath 工作空间相对路径，`/` 分隔
+ */
+export function outputPlacement(relPath) {
+  const parts = String(relPath || '').split('/');
+  if (parts[0] !== 'output' || !OUTPUT_GROUPS.includes(parts[1]) || parts.length < 3) return null;
+  const inner = parts.slice(2);
+  if (inner[0] === ARCHIVE_DIR && inner.length > 1) {
+    const rest = inner.slice(1);
+    if (rest.length === 1) {
+      return { group: parts[1], archived: true, pile: '', role: rest[0] === 'README.md' ? 'handoff' : '' };
+    }
+    return { group: parts[1], archived: true, pile: rest[0], role: rest.length === 2 && rest[1] === 'INDEX.md' ? 'index' : '' };
+  }
+  return { group: parts[1], archived: false, nested: inner.length > 1 };
+}
+
 function rel(root, abs) {
   return path.relative(root, abs).split(path.sep).join('/');
 }
@@ -778,11 +812,23 @@ function scanOutput(root) {
   const outputDir = path.join(root, 'output');
   const groups = {};
   const docs = [];
-  for (const group of ['analysis', 'docs', 'decisions']) {
+  for (const group of OUTPUT_GROUPS) {
     groups[group] = listFiles(path.join(outputDir, group))
       .map((abs) => {
         const { item, body } = describeOutput(root, abs);
+        // 归档项**照样**喂溯源反链（有意为之）：反链是事实陈述，一份资料确实被那篇文档引用过，
+        // 把文档移进 一次归档/ 不会让这件事变成没发生。归档降低的是读取成本，不是可达性。
         if (body) docs.push({ path: item.path, text: body });
+        // 归档项仍留在本组数组里，只打标记：旧前端不认这个字段，照旧混在主列表里显示，
+        // 等于「功能没启用」；新前端按标记分区。
+        const placement = outputPlacement(item.path);
+        if (placement?.archived) {
+          item.archived = true;
+          item.archivePile = placement.pile;
+          if (placement.role) item.archiveRole = placement.role;
+        } else if (placement?.nested) {
+          item.nested = true;
+        }
         return item;
       })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
@@ -819,15 +865,29 @@ function scanOutput(root) {
 
   const all = Object.values(groups).flat();
   const annotated = all.filter((f) => f.annotations);
+  // 三组计数、total、words **只数主列表**（不含归档项），已归档的另报在 archived 里。
+  // 前端必须把两个数一起显示 —— 只报主列表会让「产出总数」突然变小，看起来像文件没了。
+  // archived 不数交接单 README 与堆索引 INDEX.md：它们是归档区的说明，不是被归档的产出物。
+  // lastUpdated 与批注计数仍算全部：归档是 rename，不改修改时间，也不让批注消失。
+  const inMain = (group) => groups[group].filter((f) => !f.archived);
+  const main = all.filter((f) => !f.archived);
+  const archivedCount = (group) => groups[group].filter((f) => f.archived && !f.archiveRole).length;
   return {
     output: {
       ...groups,
+      // 模板工作空间才有归档脚本；自己 mkdir 的目录没有，前端据此把「归档」置灰并说明
+      canArchive: fs.existsSync(path.join(root, 'scripts', 'archive_output.py')),
       stats: {
-        analysis: groups.analysis.length,
-        docs: groups.docs.length,
-        decisions: groups.decisions.length,
-        total: all.length,
-        words: all.reduce((sum, f) => sum + (f.words || 0), 0),
+        analysis: inMain('analysis').length,
+        docs: inMain('docs').length,
+        decisions: inMain('decisions').length,
+        archived: {
+          analysis: archivedCount('analysis'),
+          docs: archivedCount('docs'),
+          decisions: archivedCount('decisions'),
+        },
+        total: main.length,
+        words: main.reduce((sum, f) => sum + (f.words || 0), 0),
         lastUpdated: all.length ? all.reduce((a, b) => (a.mtime > b.mtime ? a : b)).mtime : '',
         annotated: annotated.length,
         annotations: annotated.reduce((sum, f) => sum + f.annotations.total, 0),
