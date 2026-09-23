@@ -466,6 +466,7 @@ Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也�
 | `output/docs/` | 语法管、front-matter **不强制** | 要发出去的文档，YAML 头对收件人是噪音；写了的话必须扁平 |
 | `output/questions/` | 语法管；字段以该目录 README 为准 | 未决问题有自己的字段契约，扁平约束与这里是同一条 |
 | `output/records/` | 语法管；字段以该目录 README 为准 | 产出物记录有自己的字段契约（含按 `kind` 分化的三套状态机），扁平约束与这里是同一条 |
+| `output/records/notes/` | 语法管；格式以 `output/records/README.md` 的「批注」为准 | 一份产出物一份批注文件。看板整条追加，agent 只改 `- 状态：` 与 `- 回执：` |
 | 各目录下的 `README.md` | 语法管、front-matter **不强制** | 目录说明，不是分析产物 |
 | `input/converted/` | **不管** | 由转换脚本生成，重跑即覆盖；要改形态就改脚本 |
 | `input/raw/` | **不碰** | 人类给的原件，只读 |

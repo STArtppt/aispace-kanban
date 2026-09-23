@@ -17,6 +17,7 @@
 理由是记录文件本来就在 `output/**` 的扫描范围里，而要查的东西
 （`kind` 决定 `status` 的合法取值、终态必须有 `resolved_by`、`status` 与正文流水末条一致）
 只有几十行，再开一个脚本会让「两份契约实现」的老问题多一处。
+`output/records/notes/` 的批注文件也在这里查（四个状态、`rejected` 必须有回执、`N` 编号唯一）。
 契约的事实源是 [`output/records/README.md`](../output/records/README.md)。
 
 用法
@@ -75,6 +76,13 @@ RECORD_TITLE_WARN = 60
 RECORD_FLOW_HEADING_RE = re.compile(r"^##[ \t]+状态流水[ \t]*$", re.M)
 RECORD_FLOW_ENTRY_RE = re.compile(r"^###[ \t]+(\S+)[ \t]*·[ \t]*(\S+)[ \t]*$", re.M)
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+# ── 批注文件（output/records/notes/）─────────────────────────────────────────
+# 契约事实源仍是 output/records/README.md 的「批注」一节。
+NOTE_STATUS = {"pending", "adopted", "rejected", "unclear"}
+NOTE_HEADING_RE = re.compile(r"^###[ \t]+(N\d{4})[ \t]*·[ \t]*(\S+)[ \t]*$")
+NOTE_BATCH_RE = re.compile(r"^##[ \t]+\d{4}-\d{2}-\d{2}[ \t]*·[ \t]*第[ \t]*\d+[ \t]*批")
+NOTE_FIELD_RE = re.compile(r"^-[ \t]*(状态|回执|源码区间)[ \t]*[:：]")
 
 # 行首 `#标签`：`#` 后紧跟非空格、非 `#`。`# 标题`（有空格）是合法 H1，不算。
 TAG_RE = re.compile(r"^#[^#\s]")
@@ -243,6 +251,116 @@ def check_headings(body: str, body_start: int, where: str, report: Report) -> No
             f"{where}:{ln}",
             f"跳过可选的 H1 之后，第一个标题是 H{level}。正文从 H2 起，不要跳级",
         )
+
+
+def is_note(path: Path, output_root: Path) -> bool:
+    """这份文件是不是 `output/records/notes/` 下的一份批注（与记录文件同编号）。"""
+    try:
+        rel = path.resolve().relative_to(output_root.resolve())
+    except ValueError:
+        return False
+    parts = rel.parts
+    return len(parts) == 3 and parts[0] == RECORD_DIR and parts[1] == "notes" and bool(RECORD_FILE_RE.match(parts[2]))
+
+
+def check_note(body: str, where: str, report: Report) -> None:
+    """批注文件的格式。事实源是 output/records/README.md 的「批注」一节。
+
+    只报告不修。状态写错、拒绝不给原因，都要在这里看得见 ——
+    看板读的时候会把整份读不出来的文件标出来，但写错一个词它仍会显示，
+    校验是让这种写法过不了闸的那一层。
+    """
+    if not body.strip():
+        report.warn("批注文件是空的", where, "这份批注文件一个条目都没有。看板第一次复制提示词时会写进第一批")
+        return
+
+    seen: dict[str, int] = {}
+    sections: list[tuple[int, str, list[str]]] = []
+    current: tuple[int, str, list[str]] | None = None
+    in_batch = False
+    for i, line in enumerate(body.splitlines(), start=1):
+        if NOTE_BATCH_RE.match(line):
+            in_batch = True
+            continue
+        matched = NOTE_HEADING_RE.match(line)
+        if matched:
+            if current:
+                sections.append(current)
+            current = (i, matched.group(1), [])
+            if not in_batch:
+                report.error(
+                    "批注条目不在批次里",
+                    f"{where}:{i}",
+                    f"`{matched.group(1)}` 上面没有 `## 日期 · 第 N 批`。一批一个二级标题，一条一个三级标题",
+                )
+            continue
+        if line.startswith("## "):
+            in_batch = False
+        if current:
+            current[2].append(line)
+    if current:
+        sections.append(current)
+
+    if not sections:
+        report.error(
+            "批注文件读不出条目",
+            where,
+            "文件不是空的，但没有 `### N<四位编号> · 结构` 这样的条目。格式见 output/records/README.md 的「批注」",
+        )
+        return
+
+    for line_no, note_id, lines in sections:
+        if note_id in seen:
+            report.error(
+                "批注编号重复",
+                f"{where}:{line_no}",
+                f"`{note_id}` 在第 {seen[note_id]} 行已经用过。编号只增不复用，不要把删掉的号补回来",
+            )
+        else:
+            seen[note_id] = line_no
+
+        fields = {m.group(1) for line in lines if (m := NOTE_FIELD_RE.match(line))}
+        for key in ("状态", "回执", "源码区间"):
+            if key not in fields:
+                report.error(
+                    f"批注缺 `- {key}：`",
+                    f"{where}:{line_no}",
+                    f"`{note_id}` 缺 `- {key}：` 这一行。一条批注要有状态、回执、源码区间、原文引用和意见",
+                )
+        if not any(line.startswith(">") for line in lines):
+            report.error(
+                "批注缺原文引用",
+                f"{where}:{line_no}",
+                f"`{note_id}` 没有 `>` 引用块。选中的原文要留在条目里，区间失效时靠它定位",
+            )
+        if not any(re.match(r"^(?:-[ \t]*)?意见[ \t]*[:：]", line) for line in lines):
+            report.error(
+                "批注缺意见",
+                f"{where}:{line_no}",
+                f"`{note_id}` 没有 `意见：` 这一行",
+            )
+
+        status = ""
+        receipt = ""
+        for line in lines:
+            status_m = re.match(r"^-[ \t]*状态[ \t]*[:：][ \t]*(.*)$", line)
+            if status_m:
+                status = status_m.group(1).strip()
+            receipt_m = re.match(r"^-[ \t]*回执[ \t]*[:：][ \t]*(.*)$", line)
+            if receipt_m:
+                receipt = receipt_m.group(1).strip()
+        if status and status not in NOTE_STATUS:
+            report.error(
+                "批注状态不在四值内",
+                f"{where}:{line_no}",
+                f"`{note_id}` 的状态是 `{status}`。只能是 pending / adopted / rejected / unclear",
+            )
+        if status == "rejected" and not receipt:
+            report.error(
+                "拒绝没写原因",
+                f"{where}:{line_no}",
+                f"`{note_id}` 是 `rejected`，回执是空的。没有原因的拒绝等于没有回答",
+            )
 
 
 def is_record(path: Path, output_root: Path) -> bool:
@@ -425,6 +543,9 @@ def check_file(path: Path, output_root: Path, report: Report) -> None:
 
     check_disabled(body, body_start, where, report)
     check_headings(body, body_start, where, report)
+
+    if is_note(path, output_root):
+        check_note(body, where, report)
 
     if is_record(path, output_root):
         if not raw:

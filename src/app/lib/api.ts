@@ -620,8 +620,17 @@ export interface SourceVerification {
 }
 
 /**
- * 预览批注归档后的一条。number 是归档当时页面上的编号。
- * 旧服务没有这套接口（404），调用方要兜住，退回「没有历史」。
+ * 批注状态。四个值的含义在工作空间 `output/records/README.md` 的「批注」一节。
+ * `string & {}` 兜住写错的词：文件是手写的，多一个状态不该让前端崩。
+ */
+export type NoteStatus = 'pending' | 'adopted' | 'rejected' | 'unclear' | (string & {});
+
+/** 这一批落在工作空间的批注文件里，还是看板缓存里。旧服务不给这个字段。 */
+export type NoteSource = 'workspace' | 'cache' | (string & {});
+
+/**
+ * 已经落盘的一条批注。number 是归档当时页面上的编号（缓存批次才有）。
+ * noteId 是批注文件里的 `N` 编号。新增字段都可选：旧服务不给，缺了就当普通历史条目。
  */
 export interface NoteHistoryItem {
   quote: string;
@@ -630,12 +639,22 @@ export interface NoteHistoryItem {
   start?: number;
   end?: number;
   number?: number;
+  /** 批注文件里的 `N0003`。缓存里的旧批次没有 */
+  noteId?: string;
+  status?: NoteStatus;
+  /** agent 回写的那一行。pending 时为空 */
+  receipt?: string;
+  /** 从看板缓存迁过来的。缺了就当不是 */
+  migrated?: boolean;
 }
 
 export interface NoteHistoryBatch {
   id: string;
   archivedAt: string;
   notes: NoteHistoryItem[];
+  /** 缺字段 = 旧服务。不要把缺字段当成「看板缓存」去显示来源文案 */
+  source?: NoteSource;
+  recordId?: string;
 }
 
 /**
@@ -836,6 +855,33 @@ export interface NoteHistory {
   file: string;
   batches: NoteHistoryBatch[];
   batch?: NoteHistoryBatch;
+  /**
+   * 这份预览文件对应的产出物记录。`null` = 新服务确认没有记录。
+   * 缺字段 = 旧服务，调用方不要据此显示「还没有记录」。
+   */
+  recordId?: string | null;
+  /** 批注文件的工作空间相对路径。没有记录时不给 */
+  noteFile?: string;
+  /** 文件在，但格式读不出来。必须显示，不能当成没有批注 */
+  noteFileBroken?: boolean;
+  noteFileReason?: string;
+}
+
+/**
+ * 复制提示词时落盘的返回。和提示词是同一次点击的两半：
+ * 这里的 `noteId` 写进提示词，agent 按它回写。
+ */
+export interface NoteSaveResult {
+  recordId: string;
+  noteFile: string;
+  /** 这次是不是新建了批注文件。追加到已有文件上为 false */
+  created?: boolean;
+  items: Array<{
+    number?: number;
+    noteId: string;
+    /** 文件里已经有同一条（区间 + 原文 + 意见），没有再追加 */
+    duplicate?: boolean;
+  }>;
 }
 
 /**
@@ -1101,16 +1147,32 @@ export const api = {
       body: JSON.stringify({ path: targetPath }),
     }),
   /**
-   * 预览批注历史。写在 ~/.pmwork/dashboard/note-history/，不碰工作空间。
-   * 旧服务没有这些接口（404），调用方要兜住并当成没有历史。
+   * 预览批注历史。有产出物记录时读工作空间 `output/records/notes/I<编号>.md`，
+   * 没有记录时退回看板缓存 `~/.pmwork/dashboard/note-history/`，两边合并。
+   * 旧服务没有这套字段（整段 404 时接口本身也不在），调用方要兜住并当成没有历史。
    */
   noteHistory: (id: string, file: string) =>
     request<NoteHistory>(`/api/projects/${id}/note-history?file=${encodeURIComponent(file)}`),
+  /**
+   * 没有记录时的退路：写看板缓存，不写工作空间。
+   * 有记录的批次走 saveNotes，不要再调这个。
+   */
   appendNoteHistory: (id: string, file: string, notes: NoteHistoryItem[]) =>
     request<NoteHistory>(`/api/projects/${id}/note-history`, {
       method: 'POST',
       body: JSON.stringify({ file, notes }),
     }),
+  /**
+   * 有记录时的落盘，和「复制提示词」是同一次点击。
+   * 只提交编号和批注内容，不带路径。返回每条的 `N` 编号，提示词用它。
+   * 非环回 403，记录不存在 404，超限或载荷带路径 400。
+   */
+  saveNotes: (id: string, recordId: string, notes: NoteHistoryItem[]) =>
+    request<NoteSaveResult>(`/api/projects/${id}/note-history`, {
+      method: 'POST',
+      body: JSON.stringify({ recordId, notes }),
+    }),
+  /** 只清看板缓存那一半。工作空间里的批注文件不动，响应里它们还在。 */
   clearNoteHistory: (id: string, file: string) =>
     request<NoteHistory>(`/api/projects/${id}/note-history?file=${encodeURIComponent(file)}`, {
       method: 'DELETE',

@@ -113,6 +113,27 @@
      写入走「先写临时文件再原子替换」,失败不留半截文件。
      状态值必须属于该记录 `kind` 的状态机(三套表在 `src/shared/recordStatus.mjs`),
      终态(`absorbed` / `superseded` / `overturned`)必须带 `resolved_by`,补充说明为空一律 400
+   - 保存批注时写 `output/records/notes/I<编号>.md`
+     (`src/server/notes.mjs` 的 `appendNotes`)——
+     **仍是第六条窄例外的第二种写入**,不是新开的第七条。
+     它与上面的状态写入同形(看板自己写盘、不 `spawn`),
+     但有一款是对「不新建」的**实质扩张**,单独标出来,不要照着推广:
+     **允许新建(只此一款):** 可以新建 `output/records/notes/I<四位编号>.md`,而且只允许这一种新建。
+        同编号的记录文件 `output/records/I<编号>.md` 必须已存在,不存在一律 404,
+        不因此去建记录(建记录仍是 `pm-output-record` 的活)。
+        除此之外仍然不新建、不删除、不改名。
+        这一款的目录就是 `notes/`,不要推广到 `records/` 根上或别的目录。
+     其余边界:
+     ① 只允许写上述路径。`input/`、`project.yaml`、`visualization/`、
+        `output/` 下的其它一切(含记录文件、产出物本身)仍然只读;
+     ② 只追加新条目,不改写已有条目,不改 `- 状态：` 与 `- 回执：`(那两行是 agent 的);
+     ③ 必须用户点「复制提示词」明确发起,没有后台任务、没有定时、没有自动推导状态;
+     ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
+     ⑤ 请求**只带编号与批注内容,不接受任何路径**;
+        落盘路径由服务端用 `resolveInside()` 自己拼;
+     ⑥ 写入走「先写临时文件再原子替换」,失败不留半截文件。
+        单条意见上限 1000 字、单批上限 50 条,超限 400 且整批不落盘。
+        看板写入的状态只能是 `pending`
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
@@ -165,6 +186,7 @@ aispace-kanban/
 │   │   ├── meta.mjs        #   project.yaml 解析 + 完整度统计
 │   │   ├── frontmatter.mjs #   frontmatter / 标题 / 字数
 │   │   ├── records.mjs     #   扫 output/records/ → 产出物记录索引 + 状态写入(不变量 1 第六条例外)
+│   │   ├── notes.mjs       #   批注文件读写:output/records/notes/(第六条例外的第二种写入,允许新建)
 │   │   ├── prototypes.mjs  #   扫 visualization/prototypes/ → 原型清单(index.html / zip / url 形态)
 │   │   ├── references.mjs  #   扫 visualization/references/ → 参考清单(子目录 index.html)
 │   │   ├── questions.mjs   #   扫 output/questions/ → 未决问题索引 + 人工反馈写入(第四条例外)

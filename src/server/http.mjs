@@ -26,6 +26,7 @@ import {
 import { captureStatus, startCapture } from './capture.mjs';
 import { CAPTURE_PACKAGE_PATH, readPackageBody, receiveCapturePackage } from './capture-inbox.mjs';
 import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-history.mjs';
+import { appendNotes, mergeNoteHistory } from './notes.mjs';
 import { resolveInside } from './paths.mjs';
 import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
 import { PYTHON_CANDIDATES, pickDirectory, revealInSystem } from './platform.mjs';
@@ -1840,26 +1841,48 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return json(res, 200, addIgnore(project, body.path));
   }
 
-  // 预览批注历史：写看板配置目录，不碰工作空间。file 只当键，仍过 resolveInside 挡穿越。
+  // 预览批注。有产出物记录时读/写工作空间 output/records/notes/，没有记录时退回看板缓存。
+  // GET 的 file 只用来反查记录和取缓存键，仍过 resolveInside 挡穿越。
+  // 写入工作空间的那条只收编号，载荷里出现路径一律 400（见 notes.mjs）。
   if (head === 'projects' && id && action === 'note-history') {
     const project = requireProject(id);
     if (req.method === 'GET' || req.method === 'DELETE') {
       const file = (url.searchParams.get('file') || '').trim();
       if (!file) return json(res, 400, { error: '缺少文件路径' });
       resolveInside(project.root, file);
-      if (req.method === 'GET') return json(res, 200, listNoteHistory(project.id, file));
+      if (req.method === 'GET') {
+        return json(res, 200, mergeNoteHistory(project.root, file, listNoteHistory(project.id, file).batches));
+      }
       if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
       if (rejectIfForeignOrigin(req, res)) return undefined;
-      return json(res, 200, clearNoteHistory(project.id, file));
+      clearNoteHistory(project.id, file);
+      return json(res, 200, mergeNoteHistory(project.root, file, listNoteHistory(project.id, file).batches));
     }
     if (req.method === 'POST') {
       if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
       if (rejectIfForeignOrigin(req, res)) return undefined;
       const body = await readBody(req);
-      const file = typeof body.file === 'string' ? body.file.trim() : '';
+      const payload = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
+      const recordId = typeof payload.recordId === 'string' ? payload.recordId.trim() : '';
+      if (recordId) {
+        // 落进工作空间：请求只带编号和批注内容。路径出现在载荷里就拒，连记录目录都不去碰
+        const forbidden = ['file', 'path', 'target', 'noteFile', 'root'].filter((key) => key in payload);
+        if (forbidden.length) {
+          return json(res, 400, {
+            error: `写入批注不接受路径（${forbidden.join('、')}）。请求只带编号和批注内容。`,
+          });
+        }
+        return json(res, 200, appendNotes(project.root, recordId, payload.notes));
+      }
+      const file = typeof payload.file === 'string' ? payload.file.trim() : '';
       if (!file) return json(res, 400, { error: '缺少文件路径' });
       resolveInside(project.root, file);
-      return json(res, 200, appendNoteHistory(project.id, file, body.notes));
+      // 这份产出物还没有记录：退回看板缓存，不在工作空间里新建任何文件
+      const saved = appendNoteHistory(project.id, file, payload.notes);
+      return json(res, 200, {
+        ...mergeNoteHistory(project.root, file, saved.batches),
+        batch: saved.batch ? { ...saved.batch, source: 'cache' } : undefined,
+      });
     }
   }
 

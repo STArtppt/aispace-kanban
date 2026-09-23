@@ -1,9 +1,12 @@
 /**
- * 预览批注的历史批次。
+ * 预览批注的看板缓存。
  *
- * 写在看板自己的配置目录 ~/.pmwork/dashboard/note-history/，不碰工作空间。
- * 当前正在写的批注仍在浏览器本地；文档被改动后，前端把这一批归档到这里，
- * 页面上的标记点随之清掉。
+ * 写在看板自己的配置目录 ~/.pmwork/dashboard/note-history/。
+ * 这已经不是主落点：产出物有记录时，批注写进工作空间的
+ * `output/records/notes/I<编号>.md`（见 notes.mjs）。
+ * 这里只剩两个用途 —— 这份文件还没有产出物记录时的退路，以及存量批次的只读来源。
+ * `appendNoteHistory` 只在「没有记录」时还会被调到。
+ * `listNoteHistory` 照旧，和批注文件一起由 GET /note-history 合并返回。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -88,6 +91,7 @@ export function listNoteHistory(projectId, file) {
   return { file, batches: store[file] || [] };
 }
 
+/** 没有产出物记录时的退路。有记录的批次不要再写到这里。 */
 export function appendNoteHistory(projectId, file, rawNotes) {
   const notes = normalizeNotes(rawNotes);
   if (!notes.length) {

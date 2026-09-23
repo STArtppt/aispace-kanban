@@ -7,14 +7,41 @@ import { HeaderIconButton, writeClipboard } from '@/components/Primitives';
 import { isDocumentChanged, type Annotation } from '@/hooks/useAnnotations';
 import type { AnnotationSession } from '@/hooks/useAnnotationSession';
 import { useNoteHistory } from '@/hooks/useNoteHistory';
-import { buildAnnotationPrompt } from '@/lib/annotationPrompt';
+import { buildAnnotationPrompt, type PromptNote } from '@/lib/annotationPrompt';
 import { formatRelative } from '@/lib/format';
-import type { NoteHistoryItem } from '@/lib/api';
+import { ApiError, type NoteHistoryItem } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /** 浮层统一宽度：够放下一条批注，又不至于把正文盖掉半边。 */
 const CARD = 'pointer-events-auto w-[min(22rem,calc(100vw-2rem))]';
 const SURFACE = 'rounded-lg border border-border bg-popover shadow-md';
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: '待处理',
+  adopted: '已采纳',
+  rejected: '未采纳',
+  unclear: '待确认',
+};
+
+function statusLabel(status: string) {
+  return STATUS_LABEL[status] ?? status;
+}
+
+function fingerprintOf(notes: Array<{ start: number; end: number; quote: string; comment: string }>) {
+  return notes.map((note) => `${note.start},${note.end}\0${note.quote}\0${note.comment}`).join('\n');
+}
+
+function explainSaveFailure(err: unknown): string {
+  const status = err instanceof ApiError ? err.status : 0;
+  const message = err instanceof Error ? err.message : '写入失败';
+  if (status === 403) {
+    return '这次没有落盘，agent 无处回写。服务没有监听在本机地址上，不能往工作空间写批注。';
+  }
+  if (status === 404) {
+    return `这次没有落盘，agent 无处回写。${message}`;
+  }
+  return `这次没有落盘，agent 无处回写。${message}`;
+}
 
 /**
  * 批注胶囊 —— 形态与相邻仓 annotation-collect 的采集款一条线：
@@ -46,9 +73,17 @@ export function AnnotationToolbar({
   const [fallback, setFallback] = useState<string | null>(null);
   const fallbackRef = useRef<HTMLTextAreaElement>(null);
   const changed = isDocumentChanged(seenMtime, mtime, notes.length);
-  const { batches, append, clear } = useNoteHistory(projectId, file);
+  const { batches, recordId, noteFile, noteFileBroken, noteFileReason, ready, load, append, save, clear } =
+    useNoteHistory(projectId, file);
   const historyCount = batches.reduce((n, batch) => n + batch.notes.length, 0);
-  const lastArchive = useRef('');
+  const pendingNotes = batches.flatMap((batch) =>
+    batch.source === 'workspace' ? batch.notes.filter((note) => note.status === 'pending' && note.noteId) : [],
+  );
+  const hasWorkspaceNotes = pendingNotes.length > 0 || batches.some((batch) => batch.source === 'workspace');
+  // 旧服务的批次没有 source，清的就是缓存，按钮保持可点
+  const cacheCount = batches.filter((batch) => batch.source !== 'workspace').length;
+  const lastClear = useRef('');
+  const persisted = useRef(new Set<string>());
   const { active, mode, setMode, panelOpen, setPanelOpen, toast, say } = session;
 
   useEffect(() => {
@@ -69,13 +104,26 @@ export function AnnotationToolbar({
     setCopied(false);
   }, [active]);
 
-  // 文档一变就把当前这批收进历史、清掉页面标记。不管 AI 改全了没有。
+  // 文档一变只清页面标记。坐标已经对不上了，批注在点「复制提示词」时就该落过盘。
   useEffect(() => {
     if (!changed || !notes.length) return;
     const token = `${file}\0${mtime}\0${notes.map((note) => note.id).join(',')}`;
-    if (lastArchive.current === token) return;
-    lastArchive.current = token;
-    const snapshot: NoteHistoryItem[] = notes.map((note, index) => ({
+    if (lastClear.current === token) return;
+    lastClear.current = token;
+    const saved = persisted.current.has(`${file}\0${fingerprintOf(notes)}`);
+    const count = notes.length;
+    onClear();
+    if (saved) {
+      say(`文档已改动，页面上的 ${count} 条标记已清掉。已经落盘的批注还在清单里。`);
+    } else {
+      say(`文档已改动，页面上的 ${count} 条标记已清掉。这一批没有落过盘，已经无法找回。`, 'warn');
+    }
+  }, [changed, file, mtime, notes, onClear, say]);
+
+  if (!active) return null;
+
+  const snapshotOf = (): NoteHistoryItem[] =>
+    notes.map((note, index) => ({
       quote: note.quote,
       comment: note.comment,
       structure: note.structure,
@@ -83,34 +131,102 @@ export function AnnotationToolbar({
       end: note.end,
       number: index + 1,
     }));
-    const count = snapshot.length;
-    void (async () => {
-      try {
-        await append(snapshot);
-        onClear();
-        say(`文档已改动，本批 ${count} 条批注已收入历史，页面上的标记已清掉。`);
-      } catch (err) {
-        onClear();
-        say(`文档已改动，标记已清掉。这一批没写进历史：${(err as Error).message}`, 'warn');
-      }
-    })();
-  }, [append, changed, file, mtime, notes, onClear, say]);
 
-  if (!active) return null;
-
-  const copyPrompt = async () => {
-    if (!notes.length) return;
-    const text = buildAnnotationPrompt(file, notes);
+  const publish = async (text: string, okMessage: string) => {
     if (await writeClipboard(text)) {
       setCopied(true);
       setFallback(null);
-      say(`已复制 ${notes.length} 条批注的提示词，粘给你的 agent 就行。`);
+      say(okMessage);
       return;
     }
     // 非安全上下文（--host 起在局域网地址上走普通 http）拿不到剪贴板，退回手动复制
     setFallback(text);
     setCopied(false);
     say('浏览器不让直接写剪贴板，下面的文本已选中，按 ⌘C / Ctrl+C 复制。', 'warn');
+  };
+
+  const copyPrompt = async () => {
+    if (!notes.length) return;
+    const snapshot = snapshotOf();
+    let currentRecordId = recordId;
+    let currentNoteFile = noteFile;
+    let settled = ready;
+    if (!settled) {
+      const data = await load();
+      settled = true;
+      currentRecordId = data && 'recordId' in data ? data.recordId : undefined;
+      currentNoteFile = data?.noteFile;
+    }
+
+    let promptNotes: PromptNote[] = snapshot.map((note) => ({
+      start: note.start ?? 0,
+      end: note.end ?? 0,
+      quote: note.quote,
+      comment: note.comment,
+      structure: note.structure,
+      number: note.number,
+    }));
+    let saved = false;
+    let reason = '';
+
+    if (currentRecordId) {
+      try {
+        const result = await save(snapshot, currentRecordId);
+        saved = true;
+        currentNoteFile = result.noteFile || currentNoteFile;
+        promptNotes = promptNotes.map((note, index) => {
+          const item = result.items.find((entry) => entry.number === index + 1) ?? result.items[index];
+          return item?.noteId ? { ...note, noteId: item.noteId } : note;
+        });
+        persisted.current.add(`${file}\0${fingerprintOf(notes)}`);
+      } catch (err) {
+        reason = explainSaveFailure(err);
+      }
+    } else if (settled && currentRecordId === null) {
+      try {
+        await append(snapshot);
+        persisted.current.add(`${file}\0${fingerprintOf(notes)}`);
+        reason = '这份还没有产出物记录，批注暂存在看板缓存里。让 agent 建一份记录之后可以迁过去。这次没有落进工作空间，agent 无处回写。';
+      } catch (err) {
+        reason = explainSaveFailure(err);
+      }
+    } else {
+      try {
+        await append(snapshot);
+        persisted.current.add(`${file}\0${fingerprintOf(notes)}`);
+      } catch (err) {
+        reason = explainSaveFailure(err);
+      }
+    }
+
+    const text = buildAnnotationPrompt(file, promptNotes, {
+      noteFile: saved ? currentNoteFile : undefined,
+      saved,
+      reason: saved ? undefined : reason,
+    });
+    const okMessage = saved
+      ? `已复制 ${notes.length} 条批注的提示词，并写入 ${currentNoteFile}。粘给你的 agent 就行。`
+      : `已复制 ${notes.length} 条批注的提示词。${reason}`;
+    await publish(text, okMessage);
+  };
+
+  const recopyPending = async () => {
+    if (!pendingNotes.length) return;
+    const promptNotes: PromptNote[] = pendingNotes.map((note) => ({
+      start: note.start ?? 0,
+      end: note.end ?? 0,
+      quote: note.quote,
+      comment: note.comment,
+      structure: note.structure,
+      number: note.number,
+      noteId: note.noteId,
+    }));
+    const text = buildAnnotationPrompt(file, promptNotes, {
+      noteFile,
+      saved: Boolean(noteFile),
+      resend: true,
+    });
+    await publish(text, `已复制 ${pendingNotes.length} 条还没处理的批注。区间可能已经失效，提示词里写了以原文为准。`);
   };
 
   return (
@@ -123,21 +239,40 @@ export function AnnotationToolbar({
     >
       {panelOpen ? (
         <div className={cn(CARD, SURFACE, 'max-h-96 min-h-0 overflow-hidden')}>
-          <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-            <span className="text-sm font-medium">
-              批注清单
-              {notes.length ? ` · 当前 ${notes.length}` : ''}
-              {historyCount ? ` · 历史 ${historyCount}` : ''}
-            </span>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setPanelOpen(false)}
-            >
-              关闭
-            </Button>
+          <div className="border-b border-border px-3 py-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium">
+                批注清单
+                {notes.length ? ` · 当前 ${notes.length}` : ''}
+                {historyCount ? ` · 已落盘 ${historyCount}` : ''}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => setPanelOpen(false)}
+              >
+                关闭
+              </Button>
+            </div>
+            {hasWorkspaceNotes ? (
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <span className="text-xs text-muted-foreground">
+                  {pendingNotes.length ? `还有 ${pendingNotes.length} 条待处理` : '没有待处理的批注'}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={!pendingNotes.length}
+                  onClick={() => void recopyPending()}
+                >
+                  把未处理的重新复制
+                </Button>
+              </div>
+            ) : null}
           </div>
           <ScrollArea className="max-h-[20rem]" viewportClassName="p-3">
             {notes.length ? (
@@ -190,42 +325,64 @@ export function AnnotationToolbar({
                   : '还没有批注。点正文里的一块，或切到「选中文字」划一段。'}
               </p>
             )}
+            {ready && recordId === null ? (
+              <p className={cn('text-xs text-muted-foreground', notes.length || batches.length ? 'mt-3' : '')}>
+                这份还没有产出物记录，批注暂存在看板缓存里。让 agent 建一份记录之后可以迁过去。
+              </p>
+            ) : null}
+            {noteFileBroken ? (
+              <p className={cn('text-xs text-destructive', notes.length || batches.length ? 'mt-3' : '')}>
+                批注文件读不出来{noteFileReason ? `：${noteFileReason}` : ''}。下面只显示还能读到的批次。
+              </p>
+            ) : null}
             {batches.length ? (
               <div className={cn(notes.length ? 'mt-3 border-t border-border pt-3' : 'mt-3')}>
                 <div className="mb-2 flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium">历史</span>
+                  <span className="text-xs font-medium">已落盘</span>
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
                     className="h-7 px-2 text-xs"
+                    disabled={cacheCount === 0}
                     onClick={() => {
                       void clear().catch((err) =>
-                        say(`历史没清掉：${(err as Error).message}`, 'warn'),
+                        say(`缓存没清掉：${(err as Error).message}`, 'warn'),
                       );
                     }}
                   >
-                    清空历史
+                    清空缓存
                   </Button>
                 </div>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  {cacheCount
+                    ? '清空缓存只删看板缓存里的批次，工作空间里的批注文件不动。'
+                    : '这些批注在工作空间里，看板清不了。要删就在文件系统里删这份批注文件。'}
+                </p>
                 <ul className="flex flex-col gap-3">
                   {batches.map((batch) => (
                     <li key={batch.id} className="flex flex-col gap-2">
                       <p className="text-xs text-muted-foreground">
                         {formatRelative(batch.archivedAt)} · {batch.notes.length} 条
+                        {batch.source === 'workspace' ? ' · 工作空间' : batch.source === 'cache' ? ' · 看板缓存' : ''}
                       </p>
                       {batch.notes.map((note, index) => (
                         <div
-                          key={`${batch.id}-${note.number ?? index}`}
+                          key={`${batch.id}-${note.noteId ?? note.number ?? index}`}
                           className="rounded-lg border border-border bg-muted/40 px-3 py-2"
                         >
                           <span className="text-xs font-medium">
-                            {note.number ?? index + 1}. {note.structure}
+                            {note.noteId ? note.noteId : `${note.number ?? index + 1}.`} {note.structure}
+                            {note.status ? ` · ${statusLabel(note.status)}` : ''}
+                            {note.migrated ? ' · 迁移' : ''}
                           </span>
                           <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                             「{note.quote}」
                           </p>
                           <p className="mt-1 text-sm">{note.comment}</p>
+                          {note.receipt ? (
+                            <p className="mt-1 text-xs text-muted-foreground">回执：{note.receipt}</p>
+                          ) : null}
                         </div>
                       ))}
                     </li>
