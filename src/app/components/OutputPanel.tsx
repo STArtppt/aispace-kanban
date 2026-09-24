@@ -2,16 +2,20 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   Archive,
   ArrowUpDown,
+  Check,
   ChevronRight,
   CodeXml,
   Copy,
   FileText,
   FolderOpen,
   Image,
+  ListChecks,
   MonitorPlay,
+  MoreHorizontal,
   Star,
   StarOff,
   Table,
+  X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -27,10 +31,17 @@ import {
   DialogPortal,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { ExpandableSearch } from '@/components/ExpandableSearch';
 import { Select, SelectContent, SelectItem, SelectTrigger } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { EmptyState, HeaderTooltip, PanelTitle, Row, RowActions, TruncatedHint, writeClipboard } from '@/components/Primitives';
+import { EmptyState, HeaderIconButton, HeaderTooltip, PanelTitle, Row, RowActions, TruncatedHint, writeClipboard } from '@/components/Primitives';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { codePreviewLanguage } from '@/components/CodeFileView';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
@@ -151,38 +162,14 @@ function archiveBlockedReason(item: FileItem, canArchive: boolean | undefined): 
   return '';
 }
 
-/**
- * 已归档区按堆排：交接单 README 最前，然后是二次归档分出来的各堆（每堆的 INDEX.md 排第一），
- * 最后是还平铺在归档根上、没分堆的。堆和角色都是服务端算好的，这里只排序。
- */
-function archiveSections(files: FileItem[]): { pile: string; items: FileItem[] }[] {
-  const piles = new Map<string, FileItem[]>();
-  const loose: FileItem[] = [];
-  const handoff: FileItem[] = [];
-  for (const item of files) {
-    if (item.archiveRole === 'handoff') handoff.push(item);
-    else if (item.archivePile) {
-      if (!piles.has(item.archivePile)) piles.set(item.archivePile, []);
-      piles.get(item.archivePile)!.push(item);
-    } else loose.push(item);
-  }
-  const sections = [...piles.entries()]
-    .sort(([a], [b]) => a.localeCompare(b, 'zh'))
-    .map(([pile, items]) => ({
-      pile,
-      // 稳定排序：堆索引提到最前，其余保持外面给的顺序（收藏 / 排序方式照旧生效）
-      items: [...items].sort((a, b) => Number(b.archiveRole === 'index') - Number(a.archiveRole === 'index')),
-    }));
-  const flat = [...handoff, ...loose];
-  return flat.length ? [{ pile: '', items: flat }, ...sections] : sections;
-}
-
 const ARCHIVE_ROLE_LABEL = { handoff: '交接单', index: '堆索引' } as const;
 
-/** 产出在树里的位置：剥掉 output/<组>/，剩下的目录结构就是整理方式 */
-function outputTreePath(item: FileItem, dir: GroupKey): string {
-  const prefix = `output/${dir}/`;
-  return item.path.startsWith(prefix) ? item.path.slice(prefix.length) : item.name;
+/**
+ * 产出在树里的位置：剥掉 root（默认 output/<组>/），剩下的目录结构就是整理方式。
+ * 已归档区传 output/<组>/一次归档/，否则每条都多套一层「一次归档」目录。
+ */
+function outputTreePath(item: FileItem, root: string): string {
+  return item.path.startsWith(root) ? item.path.slice(root.length) : item.name;
 }
 
 function OutputRow({
@@ -197,6 +184,7 @@ function OutputRow({
   onOpen,
   archiveBlocked,
   onArchive,
+  selection,
 }: {
   item: FileItem;
   /** 树形视图里的层级；列表视图不传 */
@@ -212,9 +200,29 @@ function OutputRow({
   /** 「归档」不能点的理由；空串 = 可以归档 */
   archiveBlocked: string;
   onArchive: (item: FileItem) => void;
+  /** 批量模式下传：点行 = 勾选 / 取消，不打开预览，行尾菜单也收起来 */
+  selection?: { checked: boolean; onToggle: (item: FileItem) => void };
 }) {
   return (
-    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
+    <Row
+      indent={indent}
+      onClick={() => (selection ? selection.onToggle(item) : onOpen(item))}
+      active={selection ? selection.checked : openPath === item.path}
+    >
+      {/* 行本身是 <button>，不能再套 <input>：勾选框只是个画出来的方块，状态靠 aria-checked 报 */}
+      {selection ? (
+        <span
+          role="checkbox"
+          aria-checked={selection.checked}
+          aria-label={`选中 ${item.title || item.name}`}
+          className={cn(
+            'flex size-4 shrink-0 items-center justify-center rounded border border-input',
+            selection.checked && 'border-primary bg-primary text-primary-foreground',
+          )}
+        >
+          {selection.checked ? <Check className="size-3" /> : null}
+        </span>
+      ) : null}
       <KindIcon item={item} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="flex min-w-0 items-center gap-2">
@@ -245,43 +253,45 @@ function OutputRow({
           {annotationLabel(item)}
         </span>
       </div>
-      <RowActions
-        actions={[
-          {
-            label: pinned ? '取消收藏' : '收藏置顶',
-            icon: pinned ? StarOff : Star,
-            onSelect: () => onTogglePin(item.path),
-          },
-          {
-            label: '复制路径',
-            icon: Copy,
-            onSelect: () => {
-              void writeClipboard(markdownLink(item.title || item.name, item.path));
+      {selection ? null : (
+        <RowActions
+          actions={[
+            {
+              label: pinned ? '取消收藏' : '收藏置顶',
+              icon: pinned ? StarOff : Star,
+              onSelect: () => onTogglePin(item.path),
             },
-          },
-          {
-            label: '复制绝对路径',
-            icon: Copy,
-            onSelect: () => {
-              void writeClipboard(absPath(item.path));
+            {
+              label: '复制路径',
+              icon: Copy,
+              onSelect: () => {
+                void writeClipboard(markdownLink(item.title || item.name, item.path));
+              },
             },
-          },
-          {
-            label: `在${fileManager}中显示`,
-            icon: FolderOpen,
-            onSelect: () => {
-              void api.reveal(projectId, item.path);
+            {
+              label: '复制绝对路径',
+              icon: Copy,
+              onSelect: () => {
+                void writeClipboard(absPath(item.path));
+              },
             },
-          },
-          {
-            label: '归档',
-            icon: Archive,
-            disabled: Boolean(archiveBlocked),
-            hint: archiveBlocked || undefined,
-            onSelect: () => onArchive(item),
-          },
-        ]}
-      />
+            {
+              label: `在${fileManager}中显示`,
+              icon: FolderOpen,
+              onSelect: () => {
+                void api.reveal(projectId, item.path);
+              },
+            },
+            {
+              label: '归档',
+              icon: Archive,
+              disabled: Boolean(archiveBlocked),
+              hint: archiveBlocked || undefined,
+              onSelect: () => onArchive(item),
+            },
+          ]}
+        />
+      )}
     </Row>
   );
 }
@@ -305,6 +315,8 @@ function OutputGroup({
   fileManager,
   openPath,
   onOpen,
+  selected,
+  onToggleSelect,
 }: {
   title: string;
   hint: string;
@@ -329,6 +341,9 @@ function OutputGroup({
   fileManager: string;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  /** 批量模式下已勾选的路径；不在批量模式时为 null */
+  selected: Set<string> | null;
+  onToggleSelect: (item: FileItem) => void;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   const rowProps = (item: FileItem) => ({
@@ -342,10 +357,32 @@ function OutputGroup({
     onOpen,
     archiveBlocked: archiveBlockedReason(item, canArchive),
     onArchive,
+    selection: selected ? { checked: selected.has(item.path), onToggle: onToggleSelect } : undefined,
   });
   // 搜索时自动展开：归档项要能被搜到，藏在折叠里等于没搜到
   const archivedOpen = showArchived || (searching && archivedFiles.length > 0);
   const hasArchive = archivedTotal > 0 || archivedFiles.length > 0;
+  // 主列表与已归档区同一套渲染：跟着标题栏的平铺 / 目录树切换走
+  const renderItems = (items: FileItem[], root: string) =>
+    viewMode === 'tree' ? (
+      <FileTree
+        items={items}
+        treePathOf={(item) => outputTreePath(item, root)}
+        keyOf={(item) => item.path}
+        expandAll={searching}
+        renderDirActions={(dirKey) => (
+          <DirActions projectId={projectId} fileManager={fileManager} dirPath={`${root}${dirKey}`} absPath={absPath} />
+        )}
+        renderFile={(item, indent) => <OutputRow {...rowProps(item)} indent={indent} />}
+      />
+    ) : (
+      <div className="overflow-hidden rounded-lg border border-border">
+        {items.map((item) => (
+          <OutputRow key={item.path} {...rowProps(item)} />
+        ))}
+      </div>
+    );
+
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <TruncatedHint
@@ -359,28 +396,8 @@ function OutputGroup({
             : hint
         }
       />
-      {files.length && viewMode === 'tree' ? (
-        <FileTree
-          items={files}
-          treePathOf={(item) => outputTreePath(item, dir)}
-          keyOf={(item) => item.path}
-          expandAll={searching}
-          renderDirActions={(dirKey) => (
-            <DirActions
-              projectId={projectId}
-              fileManager={fileManager}
-              dirPath={`output/${dir}/${dirKey}`}
-              absPath={absPath}
-            />
-          )}
-          renderFile={(item, indent) => <OutputRow {...rowProps(item)} indent={indent} />}
-        />
-      ) : files.length ? (
-        <div className="overflow-hidden rounded-lg border border-border">
-          {files.map((item) => (
-            <OutputRow key={item.path} {...rowProps(item)} />
-          ))}
-        </div>
+      {files.length ? (
+        renderItems(files, `output/${dir}/`)
       ) : searching && archivedFiles.length ? null : total ? (
         <EmptyState title={`没有匹配的${title}`} hint="试试更短的关键词，或清空搜索" />
       ) : hasArchive ? (
@@ -405,22 +422,7 @@ function OutputGroup({
             </span>
             <span className="truncate">· output/{dir}/一次归档/，仍可搜索和预览</span>
           </button>
-          {archivedOpen && archivedFiles.length ? (
-            <div className="overflow-hidden rounded-lg border border-border">
-              {archiveSections(archivedFiles).map(({ pile, items }) => (
-                <div key={pile || '(平铺)'}>
-                  {pile ? (
-                    <div className="border-b border-border bg-muted/40 px-3 py-1.5 text-xs text-muted-foreground">
-                      堆 · {pile}
-                    </div>
-                  ) : null}
-                  {items.map((item) => (
-                    <OutputRow key={item.path} {...rowProps(item)} indent={pile ? 1 : undefined} />
-                  ))}
-                </div>
-              ))}
-            </div>
-          ) : null}
+          {archivedOpen && archivedFiles.length ? renderItems(archivedFiles, `output/${dir}/一次归档/`) : null}
         </div>
       ) : null}
     </div>
@@ -438,7 +440,8 @@ export function OutputPanel({
 }) {
   const { output } = scan;
   const projectId = scan.project.id;
-  const [archiving, setArchiving] = useState<{ item: FileItem; group: GroupKey } | null>(null);
+  // 单条和批量走同一个确认框：单条就是只有一项的批量
+  const [archiving, setArchiving] = useState<{ items: FileItem[]; group: GroupKey } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveError, setArchiveError] = useState('');
   const fileManager = useFileManagerName();
@@ -457,6 +460,12 @@ export function OutputPanel({
   const [tab, setTab] = useState<GroupKey>(
     () => readOutputTab() || GROUPS.find(({ key }) => output[key].some((f) => !f.archived))?.key || 'analysis',
   );
+
+  // 批量模式：null = 没开；开了就是已勾选的路径集合。只在当前标签里选，切标签清空
+  const [selected, setSelected] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    setSelected((current) => (current ? new Set() : current));
+  }, [tab, projectId]);
 
   useEffect(() => {
     localStorage.setItem(OUTPUT_SORT_KEY, sortKey);
@@ -503,28 +512,80 @@ export function OutputPanel({
 
   const searching = query.trim().length > 0;
 
+  // 勾选的按当前标签里能看到的顺序取（主列表 + 已归档）；搜索过滤掉的不算，免得动到看不见的
+  const current = groups.find((group) => group.key === tab);
+  const selectedItems = selected && current
+    ? [...current.files, ...current.archivedFiles].filter((item) => selected.has(item.path))
+    : [];
+  const archivableItems = selectedItems.filter((item) => !archiveBlockedReason(item, output.canArchive));
+
+  const toggleSelect = (item: FileItem) => {
+    setSelected((prev) => {
+      if (!prev) return prev;
+      const next = new Set(prev);
+      if (next.has(item.path)) next.delete(item.path);
+      else next.add(item.path);
+      return next;
+    });
+  };
+
+  const pinSelected = () => {
+    const toPin = selectedItems.filter((item) => !pins.has(item.path));
+    for (const item of toPin) togglePin(item.path);
+    toast.success(
+      toPin.length ? `已收藏 ${toPin.length} 份` : '选中的都已经收藏过了',
+      toPin.length < selectedItems.length && toPin.length
+        ? { description: `另有 ${selectedItems.length - toPin.length} 份本来就在收藏里` }
+        : undefined,
+    );
+    setSelected(null);
+  };
+
   const confirmArchive = async () => {
     if (!archiving) return;
-    const { item, group } = archiving;
+    const { items, group } = archiving;
     setArchiveBusy(true);
     setArchiveError('');
+    let done = 0;
+    const records: string[] = [];
+    let lastTo = '';
     try {
-      // 只带组名与文件名，不带路径：服务端对带路径的一律 400
-      const result = await api.archiveOutput(projectId, { group, name: item.name });
-      setArchiving(null);
-      toast.success(`已归档到 ${result.to || `output/${group}/一次归档/`}`, {
-        description: result.records.length
-          ? `记录 ${result.records.join('、')} 的 target 还指着旧路径，工作台会标「指向丢失」，让 agent 跟进（pm-output-record）`
-          : undefined,
-      });
-      // 正开着的就是这份：跟到新位置，免得预览停在一个已经不在的路径上
-      if (openPath === item.path && result.to) {
-        onOpen({ ...item, path: result.to, name: result.to.split('/').pop() || item.name, archived: true });
+      // 逐条串行：脚本会往同一份 README 交接单追加行，并发调会互相踩
+      for (const item of items) {
+        // 只带组名与文件名，不带路径：服务端对带路径的一律 400
+        const result = await api.archiveOutput(projectId, { group, name: item.name });
+        done += 1;
+        lastTo = result.to;
+        records.push(...result.records);
+        // 正开着的就是这份：跟到新位置，免得预览停在一个已经不在的路径上
+        if (openPath === item.path && result.to) {
+          onOpen({ ...item, path: result.to, name: result.to.split('/').pop() || item.name, archived: true });
+        }
       }
+      setArchiving(null);
+      setSelected(null);
+      toast.success(
+        items.length === 1
+          ? `已归档到 ${lastTo || `output/${group}/一次归档/`}`
+          : `已归档 ${done} 份到 output/${group}/一次归档/`,
+        {
+          description: records.length
+            ? `记录 ${records.join('、')} 的 target 还指着旧路径，工作台会标「指向丢失」，让 agent 跟进（pm-output-record）`
+            : undefined,
+        },
+      );
       // 列表不用手动刷新：脚本写盘会被工作空间监听捕获，SSE 推一轮新扫描
     } catch (err) {
-      // 照原文显示（脚本的中文说明 / 400 / 403 / 旧进程 404 的「重启 serve」），这一行留在主列表里
-      setArchiveError(err instanceof Error ? err.message : String(err));
+      // 照原文显示（脚本的中文说明 / 400 / 403 / 旧进程 404 的「重启 serve」），失败的留在主列表里
+      const message = err instanceof Error ? err.message : String(err);
+      if (done) {
+        // 前面成功的已经移走了，确认框里只留没做完的，重试不会撞「文件不存在」
+        setArchiving({ items: items.slice(done), group });
+        setSelected((prev) => (prev ? new Set(items.slice(done).map((item) => item.path)) : prev));
+        setArchiveError(`已归档 ${done} 份，第 ${done + 1} 份「${items[done].title || items[done].name}」失败，后面的没动：\n${message}`);
+      } else {
+        setArchiveError(message);
+      }
     } finally {
       setArchiveBusy(false);
     }
@@ -538,6 +599,9 @@ export function OutputPanel({
             <PanelTitle>产出列表</PanelTitle>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            {selected ? (
+              <span className="text-xs text-muted-foreground">已选 {selectedItems.length}</span>
+            ) : null}
             <ViewModeToggle mode={viewMode} onChange={setViewMode} label="产出清单" />
             <Select
               value={sortKey}
@@ -570,6 +634,59 @@ export function OutputPanel({
               expandedClassName="w-[10rem] sm:w-[12rem]"
               aria-label="搜索产出文档"
             />
+            {selected ? (
+              <DropdownMenu>
+                <HeaderTooltip label="批量操作">
+                  <DropdownMenuTrigger
+                    render={
+                      <Button variant="outline" size="icon" className="size-8 shadow-sm" aria-label="批量操作" />
+                    }
+                  >
+                    <MoreHorizontal className="size-3.5" />
+                  </DropdownMenuTrigger>
+                </HeaderTooltip>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem disabled={!selectedItems.length} onClick={pinSelected}>
+                    <Star />
+                    批量收藏
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    disabled={!archivableItems.length}
+                    className={selectedItems.length && !archivableItems.length ? 'items-start' : undefined}
+                    onClick={() => {
+                      setArchiveError('');
+                      setArchiving({ items: archivableItems, group: tab });
+                    }}
+                  >
+                    <Archive className={selectedItems.length && !archivableItems.length ? 'mt-0.5' : undefined} />
+                    {selectedItems.length && !archivableItems.length ? (
+                      <span className="flex max-w-64 flex-col gap-0.5">
+                        <span>批量归档</span>
+                        <span className="text-[11px] leading-snug text-muted-foreground">
+                          {archiveBlockedReason(selectedItems[0], output.canArchive)}
+                        </span>
+                      </span>
+                    ) : (
+                      '批量归档'
+                    )}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setSelected(null)}>
+                    <X />
+                    退出批量
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <HeaderIconButton
+                label="批量操作"
+                variant="outline"
+                className="size-8 shadow-sm"
+                onClick={() => setSelected(new Set())}
+              >
+                <ListChecks className="size-3.5" />
+              </HeaderIconButton>
+            )}
           </div>
         </div>
 
@@ -581,16 +698,12 @@ export function OutputPanel({
           className="gap-4"
         >
           <TabsList variant="line">
-            {groups.map(({ key, title, files, total, archivedFiles, archivedTotal }) => (
+            {groups.map(({ key, title, files, total, archivedFiles }) => (
               <TabsTrigger key={key} value={key} className="px-2">
                 <span className="truncate">{title}</span>
-                {/* 主列表数与已归档数一起报：只报主列表，总数突然变小看起来像文件没了 */}
+                {/* 标签上只报主列表数：归档数挤在这里看不清，已归档分区的标题行里有 */}
                 <span className="shrink-0 text-xs font-normal text-muted-foreground">
-                  {searching
-                    ? files.length + archivedFiles.filter((f) => !f.archiveRole).length
-                    : archivedTotal
-                      ? `${total} · 归档 ${archivedTotal}`
-                      : total}
+                  {searching ? files.length + archivedFiles.filter((f) => !f.archiveRole).length : total}
                 </span>
               </TabsTrigger>
             ))}
@@ -609,7 +722,7 @@ export function OutputPanel({
                 canArchive={output.canArchive}
                 onArchive={(item) => {
                   setArchiveError('');
-                  setArchiving({ item, group: key });
+                  setArchiving({ items: [item], group: key });
                 }}
                 searching={searching}
                 viewMode={viewMode}
@@ -620,6 +733,8 @@ export function OutputPanel({
                 fileManager={fileManager}
                 openPath={openPath}
                 onOpen={onOpen}
+                selected={key === tab ? selected : null}
+                onToggleSelect={toggleSelect}
               />
             </TabsContent>
           ))}
@@ -636,9 +751,13 @@ export function OutputPanel({
           <DialogBackdrop />
           <DialogPopup>
             <DialogHeader>
-              <DialogTitle>归档「{archiving?.item.title || archiving?.item.name}」？</DialogTitle>
+              <DialogTitle>
+                {archiving && archiving.items.length > 1
+                  ? `归档选中的 ${archiving.items.length} 份？`
+                  : `归档「${archiving?.items[0]?.title || archiving?.items[0]?.name}」？`}
+              </DialogTitle>
               <DialogDescription>
-                它会移到 output/{archiving?.group}/一次归档/，不再占主列表的位置。
+                {archiving && archiving.items.length > 1 ? '它们' : '它'}会移到 output/{archiving?.group}/一次归档/，不再占主列表的位置。
               </DialogDescription>
             </DialogHeader>
             <DialogBody className="flex flex-col gap-2 text-sm">
@@ -649,6 +768,12 @@ export function OutputPanel({
               <p className="text-xs text-muted-foreground">
                 同目录的 README.md 交接单会追加一行原路径与新路径；攒多了可以把里面的提示词粘给 agent 做二次归档。
               </p>
+              {/* 选中里有归档不了的（已归档 / 子目录里的），明说跳过了几份，别让人以为全处理了 */}
+              {archiving && archiving.items.length > 1 && selectedItems.length > archiving.items.length ? (
+                <p className="text-xs text-muted-foreground">
+                  另有 {selectedItems.length - archiving.items.length} 份已归档或在子目录里，会跳过。
+                </p>
+              ) : null}
               {archiveError ? <p className="whitespace-pre-wrap text-xs text-destructive">{archiveError}</p> : null}
             </DialogBody>
             <DialogFooter>
