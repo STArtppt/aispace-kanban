@@ -15,7 +15,7 @@
 
 支持的形态（dialect 靠**表头**识别，不看扩展名）
 ------------------------------------------------
-目前两种。都是「一行一个值」的长表，只是粒度不同：
+目前三种。前两种是「一行一个值」的长表，只是粒度不同：
 
 1. **测点时序**（水情实时这类）：表头能认出三类列
 
@@ -35,6 +35,14 @@
    机组列（crew_set_code）有就带上。产物是 `日指标.sqlite`，组织名连已转换的
    组织表、指标名连指标字典。**不要**把它硬套进测点时序——粒度是
    （组织 × 机组 × 指标 × 日），字典也不是测点字典。
+
+3. **预报**（南瑞 ADDB 预报流量、WEA_GFSFORRAIN 面雨量预报这类）：有两根时间轴
+
+       宽表   对象 + 发布时间 + V0..Vn（列序号 = 预报步序，步长导出里没写）
+       长表   对象 + 发布时间(ftime) + 预报时间(btime) + 时段(timespan) + 值
+
+   产物是 `预报数据.sqlite`（预报 / 发布 / 对象）。-99、-10000 这类占位值**只标记不删**。
+   对象名称先查水调「数据来源」表（测点点号 → 测点名称），再查测点字典。
 
 状态、质量、创建时间这些**可选列**认出来就带上。列名别名都收在文件顶部，
 遇到新系统加一行即可。
@@ -296,7 +304,7 @@ def detect(path: Path) -> dict | None:
     if not rows:
         return None
     header = [norm_header(c) for c in rows[0]]
-    hit = detect_product_day(header, rows, delim)
+    hit = detect_product_day(header, rows, delim) or detect_forecast(header, rows, delim)
     if hit:
         return hit
     return detect_timeseries(header, rows, delim)
@@ -1546,15 +1554,508 @@ def process_product_day(src: Path, dialect: dict, force: bool, dry_run: bool,
     return True
 
 
+# --------------------------------------------------------------------------- #
+# 预报：一行 = 某对象某次发布的预报（宽表一行一整条预报过程，长表一行一个预报时段）
+# --------------------------------------------------------------------------- #
+#
+# 和实测最大的不同是**有两根时间轴**：发布时间（哪一次预报）和预报时间（预报的是哪个时刻）。
+# 硬套进测点时序会把两者压成一根，同一时刻的几十次预报互相覆盖，所以单独一个分支。
+#
+#   宽表：对象 + 发布时间 + V0..Vn（南瑞 ADDB 预报流量这类），列序号就是预报步序。
+#         **步长导出里没写**，事实表只存步序，不替客户算预报时刻；
+#         按「1 小时一步、V0 = 发布时刻」换算的只放在一个名字写明假设的视图里。
+#   长表：对象 + 发布时间 + 预报时间 + 时段 + 值（WEA_GFSFORRAIN 面雨量预报这类）。
+#
+# 产物 `预报数据.sqlite`：预报（事实）/ 发布（一行一次发布的形状）/ 对象（维表）/ 元信息。
+
+# 宽表的步序列：v0 / v1 / … 连续编号，至少这么多列才当宽表
+WIDE_STEP_COLUMN = re.compile(r"^v(\d+)$")
+WIDE_MIN_STEPS = 6
+FORECAST_ID_ALIASES = ID_ALIASES + ("adid", "stcd", "regid", "区域编码", "对象编码")
+ISSUE_ALIASES = ("ftime", "issue_time", "issuetime", "fcst_issue_time", "发布时间", "预报发布时间")
+TARGET_ALIASES = ("btime", "fcst_time", "fcsttime", "valid_time", "forecast_time",
+                  "预报时间", "预见期时间")
+SPAN_ALIASES = ("timespan", "time_span", "span", "时段", "时间跨度")
+FORECAST_VALUE_ALIASES = ("averpre", "avgpre", "avg_pre") + VALUE_ALIASES
+FORECAST_OPTIONAL_ALIASES = {
+    "最大值": ("maxpre", "max_pre", "maxv", "最大值", "最大雨量"),
+    "最小值": ("minpre", "min_pre", "minv", "最小值", "最小雨量"),
+    "数据源说明": ("explains", "explain", "source", "数据源说明"),
+    "子类型": ("subtype", "sub_type", "子类型"),
+}
+# 常见的「无数据」占位值。**只做标记不删**：它们到底是不是缺测，要现场确认
+FORECAST_SENTINELS = (-99.0, -999.0, -9999.0, -10000.0)
+FORECAST_FACT_COLUMNS = ["对象ID", "发布时间", "步序", "预报时间", "时段小时", "数值",
+                         "疑似占位", "最大值", "最小值", "数据源说明", "子类型"]
+ISSUE_COLUMNS = ["对象ID", "发布时间", "行数", "有效值数", "末个有效步序", "占位值",
+                 "首个预报时间", "末个预报时间", "时段构成", "序列指纹"]
+OBJECT_COLUMNS = ["对象ID", "对象名称", "所属", "字典来源", "发布次数", "首次发布", "末次发布",
+                  "典型有效步数", "占位值", "有效最小值", "有效最大值", "序列不同的发布次数",
+                  "缺的发布时间"]
+
+
+def _strip_ms(raw: str) -> str:
+    """`2026-09-22 00:00:00.000` 这种带毫秒的时标，毫秒全是 0 时去掉再解析。"""
+    raw = raw.strip().strip('"')
+    return raw.split(".")[0] if re.search(r":\d{2}\.\d+$", raw) else raw
+
+
+def detect_forecast(header: list[str], rows: list[list[str]], delim: str) -> dict | None:
+    """先认长表（两根时间轴都在），再认宽表（v0..vn 连续编号）。"""
+    id_col = pick(header, FORECAST_ID_ALIASES)
+    if not id_col:
+        return None
+    issue_col, target_col = pick(header, ISSUE_ALIASES), pick(header, TARGET_ALIASES)
+    if issue_col and target_col:
+        value_col = pick(header, FORECAST_VALUE_ALIASES)
+        if not value_col:
+            return None
+        idx = header.index(issue_col)
+        fmt, _ = sniff_time([_strip_ms(r[idx]) for r in rows[1:80] if len(r) > idx])
+        if not fmt:
+            return None
+        span_col = pick(header, SPAN_ALIASES)
+        used = {id_col, issue_col, target_col, value_col, span_col}
+        optional = {u: h for u, aliases in FORECAST_OPTIONAL_ALIASES.items()
+                    if (h := pick(header, aliases)) and h not in used}
+        return {"形态": "forecast", "子形态": "长表", "台账类型": "现场预报数据",
+                "分隔符": delim, "表头": header, "对象列": id_col, "发布列": issue_col,
+                "预报时间列": target_col, "时段列": span_col, "数值列": value_col,
+                "可选列": optional, "时间格式": fmt}
+
+    steps = sorted(int(m.group(1)) for h in header if (m := WIDE_STEP_COLUMN.match(h)))
+    if len(steps) < WIDE_MIN_STEPS or steps != list(range(steps[0], steps[0] + len(steps))):
+        return None
+    issue_col = issue_col or pick(header, TIME_ALIASES)
+    if not issue_col:
+        return None
+    idx = header.index(issue_col)
+    fmt, _ = sniff_time([_strip_ms(r[idx]) for r in rows[1:80] if len(r) > idx])
+    if not fmt:
+        return None
+    return {"形态": "forecast", "子形态": "宽表", "台账类型": "现场预报数据",
+            "分隔符": delim, "表头": header, "对象列": id_col, "发布列": issue_col,
+            "步序列": [f"v{i}" for i in steps], "首个步序": steps[0], "可选列": {},
+            "时间格式": fmt}
+
+
+def load_source_table_dict() -> tuple[dict[str, dict], list[str]]:
+    """水调「数据来源」表（电站 / 测点名称 / 测点点号 / 实时 / 小时 …）当兜底字典。
+
+    预报对象（ADDB 的 ADID）不在标准化测点表里，只在这份表里有中文名。
+    电站列是合并单元格转出来的，空着就沿用上一行。
+    """
+    index: dict[str, dict] = {}
+    used: list[str] = []
+    for path in sorted(CONVERTED.rglob("*.csv")):
+        if path.stat().st_size > DICT_MAX_BYTES:
+            continue
+        try:
+            with path.open(newline="", encoding="utf-8-sig", errors="replace") as fh:
+                header = [norm_header(c) for c in next(csv.reader(fh), [])]
+        except OSError:
+            continue
+        if not ("测点点号" in header and "测点名称" in header):
+            continue
+        added, station = 0, ""
+        for row in _read_csv(path):
+            row = {norm_header(k): (v or "").strip() for k, v in row.items() if k}
+            station = row.get("电站") or station
+            key = row.get("测点点号", "")
+            if key and key not in index:
+                index[key] = {"对象名称": row.get("测点名称", ""), "所属": station,
+                              "字典来源": rel(path)}
+                added += 1
+        if added:
+            used.append(f"{rel(path)}（{added} 条）")
+    return index, used
+
+
+def read_forecast(src: Path, d: dict) -> tuple[list[tuple], dict]:
+    """整表读进内存。预报导出通常是「最近几天」的小切片（几万行），不值得流式。"""
+    enc = sniff_encoding(src)
+    fmt = d["时间格式"]
+
+    def ts(raw: str) -> str | None:
+        t = parse_time(_strip_ms(raw), fmt)
+        return t.strftime("%Y-%m-%d %H:%M:%S") if t else None
+
+    facts: list[tuple] = []
+    issues = {"总行数": 0, "坏时间行": 0, "非数值": 0, "编码": enc}
+    with src.open(newline="", encoding=enc, errors="replace") as fh:
+        reader = csv.reader(fh, delimiter=d["分隔符"])
+        header = [norm_header(c) for c in next(reader)]
+        col = {h: i for i, h in enumerate(header)}
+        for row in reader:
+            if not row:
+                continue
+            issues["总行数"] += 1
+            obj = row[col[d["对象列"]]].strip()
+            issued = ts(row[col[d["发布列"]]])
+            if not issued:
+                issues["坏时间行"] += 1
+                continue
+            if d["子形态"] == "宽表":
+                for step_col in d["步序列"]:
+                    v = to_float(row[col[step_col]])
+                    if v is None:
+                        issues["非数值"] += 1
+                    step = int(step_col[1:])
+                    facts.append((obj, issued, step, None, None, v,
+                                  int(v in FORECAST_SENTINELS) if v is not None else None,
+                                  None, None, None, None))
+                continue
+            target = ts(row[col[d["预报时间列"]]])
+            if not target:
+                issues["坏时间行"] += 1
+                continue
+            span = to_float(row[col[d["时段列"]]]) if d.get("时段列") else None
+            v = to_float(row[col[d["数值列"]]])
+            if v is None:
+                issues["非数值"] += 1
+            opt = {u: row[col[h]].strip() for u, h in d["可选列"].items()}
+            vmax, vmin = to_float(opt.get("最大值", "")), to_float(opt.get("最小值", ""))
+            facts.append((obj, issued, None, target, span, v,
+                          int(v in FORECAST_SENTINELS) if v is not None else None,
+                          vmax, vmin, opt.get("数据源说明") or None, opt.get("子类型") or None))
+    return facts, issues
+
+
+def _fmt_num(v: float | None) -> str:
+    return "" if v is None else (f"{v:.0f}" if v == int(v) else f"{v:g}")
+
+
+def summarize_forecast(facts: list[tuple], d: dict, names: dict[str, dict]
+                       ) -> tuple[list[dict], list[dict], dict]:
+    """从事实行里算出「发布」和「对象」两张表，以及台账要用的全表体检。"""
+    by_issue: dict[tuple[str, str], list[tuple]] = defaultdict(list)
+    for f in facts:
+        by_issue[(f[0], f[1])].append(f)
+
+    issue_rows = []
+    for (obj, issued), rows in sorted(by_issue.items()):
+        rows.sort(key=lambda f: (f[2] if f[2] is not None else -1, f[3] or ""))
+        valid = [f for f in rows if f[5] is not None and not f[6]]
+        placeholders = sorted({f[5] for f in rows if f[6]})
+        spans = Counter(_fmt_num(f[4]) for f in rows if f[4] is not None)
+        targets = [f[3] for f in rows if f[3]]
+        digest = hashlib.sha1(repr([(f[2], f[3], f[4], f[5]) for f in rows]).encode()).hexdigest()[:12]
+        issue_rows.append({
+            "对象ID": obj, "发布时间": issued, "行数": len(rows), "有效值数": len(valid),
+            "末个有效步序": max((f[2] for f in valid if f[2] is not None), default=""),
+            "占位值": "、".join(_fmt_num(p) for p in placeholders),
+            "首个预报时间": min(targets) if targets else "",
+            "末个预报时间": max(targets) if targets else "",
+            "时段构成": "、".join(f"{k}h×{n}" for k, n in sorted(spans.items(), key=lambda x: float(x[0]))),
+            "序列指纹": digest,
+        })
+
+    all_issues = sorted({r["发布时间"] for r in issue_rows})
+    per_obj: dict[str, list[dict]] = defaultdict(list)
+    for r in issue_rows:
+        per_obj[r["对象ID"]].append(r)
+    obj_rows = []
+    for obj, rows in sorted(per_obj.items()):
+        vals = [f[5] for f in facts if f[0] == obj and f[5] is not None and not f[6]]
+        have = {r["发布时间"] for r in rows}
+        missing = [t for t in all_issues if t not in have and rows[0]["发布时间"] <= t]
+        info = names.get(obj, {})
+        obj_rows.append({
+            "对象ID": obj, "对象名称": info.get("对象名称", ""), "所属": info.get("所属", ""),
+            "字典来源": info.get("字典来源", ""), "发布次数": len(rows),
+            "首次发布": rows[0]["发布时间"], "末次发布": rows[-1]["发布时间"],
+            "典型有效步数": Counter(r["有效值数"] for r in rows).most_common(1)[0][0],
+            "占位值": "、".join(sorted({p for r in rows for p in r["占位值"].split("、") if p})),
+            "有效最小值": _fmt_num(min(vals)) if vals else "",
+            "有效最大值": _fmt_num(max(vals)) if vals else "",
+            "序列不同的发布次数": len({r["序列指纹"] for r in rows}),
+            "缺的发布时间": "、".join(t[5:16] for t in missing),
+        })
+
+    check = {"发布时间": all_issues,
+             "对象数": len(per_obj),
+             "占位值计数": Counter(_fmt_num(f[5]) for f in facts if f[6]),
+             "发布形状": Counter((r["有效值数"], r["末个有效步序"], r["占位值"], r["时段构成"])
+                                 for r in issue_rows)}
+    if d["子形态"] == "长表":
+        check["可选列取值"] = {}
+        for i, name in ((7, "最大值"), (8, "最小值"), (9, "数据源说明"), (10, "子类型")):
+            if name in d["可选列"]:
+                check["可选列取值"][name] = Counter(
+                    _fmt_num(f[i]) if isinstance(f[i], float) else (f[i] or "（空）")
+                    for f in facts)
+        seen, dup = set(), 0
+        for f in facts:
+            key = (f[0], f[1], f[3], f[4], f[10])
+            dup += key in seen
+            seen.add(key)
+        check["主键重复"] = dup
+        # 同一发布内，每种时段覆盖的预报时间范围
+        seg: dict[tuple[str, str], list[str]] = defaultdict(list)
+        for f in facts:
+            seg[(f[1], _fmt_num(f[4]))].append(f[3])
+        check["分段"] = {k: (min(v), max(v), len(set(v))) for k, v in sorted(seg.items())}
+    return issue_rows, obj_rows, check
+
+
+def finish_forecast_sqlite(db: Path, facts: list[tuple], issue_rows: list[dict],
+                           obj_rows: list[dict], meta: list[tuple[str, str]], wide: bool) -> None:
+    conn = sqlite3.connect(db)
+    q = lambda cols: ", ".join(f'"{c}"' for c in cols)  # noqa: E731
+    conn.execute(f"CREATE TABLE 预报 ({q(FORECAST_FACT_COLUMNS)})")
+    conn.execute(f"CREATE TABLE 发布 ({q(ISSUE_COLUMNS)})")
+    conn.execute(f"CREATE TABLE 对象 ({q(OBJECT_COLUMNS)})")
+    conn.execute("CREATE TABLE 元信息 (键 TEXT, 值 TEXT)")
+    conn.executemany(f"INSERT INTO 预报 VALUES ({','.join('?' * len(FORECAST_FACT_COLUMNS))})", facts)
+    conn.executemany(f"INSERT INTO 发布 VALUES ({','.join('?' * len(ISSUE_COLUMNS))})",
+                     [[r[c] for c in ISSUE_COLUMNS] for r in issue_rows])
+    conn.executemany(f"INSERT INTO 对象 VALUES ({','.join('?' * len(OBJECT_COLUMNS))})",
+                     [[r[c] for c in OBJECT_COLUMNS] for r in obj_rows])
+    conn.executemany("INSERT INTO 元信息 VALUES (?, ?)", meta)
+    conn.execute("CREATE INDEX ix_预报 ON 预报 (对象ID, 发布时间)")
+    conn.execute("CREATE INDEX ix_预报_时间 ON 预报 (预报时间)")
+    conn.execute("""CREATE VIEW v_预报 AS
+        SELECT o.对象名称, o.所属, p.* FROM 预报 p LEFT JOIN 对象 o USING (对象ID)
+        WHERE p.疑似占位 = 0""")
+    conn.execute("""CREATE VIEW v_最新发布 AS
+        SELECT p.* FROM v_预报 p
+        JOIN (SELECT 对象ID, MAX(发布时间) AS 发布时间 FROM 发布 GROUP BY 对象ID) m
+        USING (对象ID, 发布时间)""")
+    if wide:
+        # 步长导出里没写。这个视图按假设换算，名字里写明假设，别拿它当事实引用
+        conn.execute("""CREATE VIEW v_预报_假设1小时步长 AS
+            SELECT *, datetime(发布时间, '+' || 步序 || ' hours') AS 假设预报时间 FROM v_预报""")
+    conn.commit()
+    conn.close()
+
+
+def write_forecast_manifest(manifest_path: Path, out_dir: Path, src: Path, digest: str,
+                            d: dict, issues: dict, facts: list[tuple], issue_rows: list[dict],
+                            obj_rows: list[dict], check: dict, dict_sources: list[str],
+                            has_db: bool) -> None:
+    wide = d["子形态"] == "宽表"
+    t_issue = check["发布时间"]
+    db_rel = f"{rel(out_dir)}/预报数据.sqlite"
+    unmatched = [r for r in obj_rows if not r["对象名称"]]
+    frozen = [r for r in obj_rows if r["发布次数"] > 1 and r["序列不同的发布次数"] == 1]
+    gappy = [r for r in obj_rows if r["缺的发布时间"]]
+    placeholders = check["占位值计数"]
+    n_ph = sum(placeholders.values())
+
+    if wide:
+        mapping = (f"对象={d['对象列']} 发布={d['发布列']} "
+                   f"步序={d['步序列'][0]}..{d['步序列'][-1]}（{len(d['步序列'])} 列）")
+    else:
+        mapping = (f"对象={d['对象列']} 发布={d['发布列']} 预报时间={d['预报时间列']} "
+                   f"时段={d.get('时段列') or '（无）'} 数值={d['数值列']}"
+                   + (f" 可选={'、'.join(f'{u}={h}' for u, h in d['可选列'].items())}"
+                      if d["可选列"] else ""))
+
+    L = [
+        "---",
+        f"source: {rel(src)}",
+        f"source_sha256: {digest}",
+        f"payload: {rel_path(out_dir, manifest_path.parent)}",
+        "converted_by: scripts/realdata.py",
+        f"converted_at: {dt.datetime.now().astimezone().isoformat(timespec='seconds')}",
+        f"kind: forecast_{'wide' if wide else 'long'}",
+        f"row_count: {issues['总行数']}",
+        f"fact_count: {len(facts)}",
+        f"object_count: {len(obj_rows)}",
+        f"issue_count: {len(t_issue)}",
+        f"issue_start: {t_issue[0] if t_issue else ''}",
+        f"issue_end: {t_issue[-1] if t_issue else ''}",
+        "---",
+        "",
+        f"# {src.stem} · 现场预报数据台账",
+        "",
+        f"源文件 `{rel(src)}`，**{issues['总行数']:,} 行**（{d['子形态']}，"
+        + ("一行 = 一个对象一次发布的整条预报过程" if wide else "一行 = 一个对象一次发布的一个预报时段")
+        + f"），展开成 **{len(facts):,} 条**预报值；**{len(obj_rows)} 个对象**，"
+        f"**{len(t_issue)} 个发布时间**（{t_issue[0] if t_issue else ''} ~ {t_issue[-1] if t_issue else ''}）。",
+        "",
+        "> 预报有两根时间轴：**发布时间**（哪一次预报）和**预报时间**（预报的是哪个时刻）。"
+        "查的时候先定是哪一次发布，否则同一时刻几十次预报会混在一起。",
+        "",
+        "## 产物怎么用",
+        "",
+        "| 文件 | 用途 |",
+        "| --- | --- |",
+        f"| [`预报数据.sqlite`]({md_link(rel_path(out_dir / '预报数据.sqlite', manifest_path.parent))}) | "
+        "**主产物**。`预报` 事实表 + `发布` + `对象` + 视图。查数一律走 SQL |"
+        if has_db else "| （本次未生成 sqlite） | |",
+        f"| [`对象覆盖清单.csv`]({md_link(rel_path(out_dir / '对象覆盖清单.csv', manifest_path.parent))}) | "
+        "一行一个对象：名称、发布次数、有效步数、值域、是否每次发布都一样 |",
+        f"| [`发布清单.csv`]({md_link(rel_path(out_dir / '发布清单.csv', manifest_path.parent))}) | "
+        "一行一个对象一次发布：有效值数、占位值、预报时间范围、时段构成、序列指纹 |",
+    ]
+    if unmatched:
+        L.append(f"| [`未匹配对象.csv`]({md_link(rel_path(out_dir / '未匹配对象.csv', manifest_path.parent))}) | "
+                 f"字典里查不到名字的 {len(unmatched)} 个对象 |")
+    L += ["", "## 列映射", "", f"`{mapping}`，时间格式 `{d['时间格式']}`，编码 `{issues['编码']}`。", ""]
+
+    L += ["## 表结构", "", "| 表 / 视图 | 说明 |", "| --- | --- |",
+          "| `预报` | 事实表。`对象ID` `发布时间` "
+          + ("`步序`（源表 V 列的序号）" if wide else "`预报时间` `时段小时`")
+          + " `数值` `疑似占位`（数值等于常见占位值时为 1，**只标记不删**）"
+          + ("" if wide else " `最大值` `最小值` `数据源说明` `子类型`") + " |",
+          "| `发布` | 一行一个对象一次发布：有效值数、末个有效步序、占位值、预报时间范围、时段构成、序列指纹 |",
+          "| `对象` | 维表：名称、所属、字典来源、发布次数、典型有效步数、值域、序列不同的发布次数、缺的发布时间 |",
+          "| `v_预报` | 预报左连对象、**去掉疑似占位值**，日常查询首选 |",
+          "| `v_最新发布` | 每个对象最近一次发布的整条预报 |"]
+    if wide:
+        L.append("| `v_预报_假设1小时步长` | 在 `v_预报` 上加 `假设预报时间 = 发布时间 + 步序 小时`。"
+                 "**步长是假设**，导出里没写，引用前先确认 |")
+    L += ["| `元信息` | 源文件、指纹、列映射、字典来源 |", ""]
+
+    L += ["## 体检", ""]
+    if issues["坏时间行"] or issues["非数值"]:
+        L.append(f"- 时间解析失败 {issues['坏时间行']} 行，非数值 {issues['非数值']} 个。")
+    if n_ph:
+        L.append(f"- **疑似占位值** {n_ph:,} 个（占全部预报值 {n_ph / len(facts):.1%}）："
+                 + "、".join(f"`{k}` × {v:,}" for k, v in placeholders.most_common())
+                 + "。当作「无预报」处理是[推断]，含义待确认。")
+    L += ["", "### 每次发布的形状", "",
+          "| 有效值数 | 末个有效步序 | 占位值 | 时段构成 | 发布次数（对象 × 发布） |",
+          "| ---: | ---: | --- | --- | ---: |"]
+    for (n, last, ph, spans), cnt in check["发布形状"].most_common(12):
+        L.append(f"| {n} | {last} | {ph or '—'} | {spans or '—'} | {cnt} |")
+    L.append("")
+
+    if not wide:
+        if check.get("可选列取值"):
+            L += ["### 可选列取值", ""]
+            for name, cnt in check["可选列取值"].items():
+                top = "、".join(f"`{k}` × {v:,}" for k, v in cnt.most_common(5))
+                L.append(f"- **{name}**：{len(cnt)} 种取值 — {top}"
+                         + ("（**全表恒定**）" if len(cnt) == 1 else ""))
+            L.append("")
+        L.append(f"- 主键（对象 + 发布 + 预报时间 + 时段 + 子类型）重复：{check['主键重复']} 组。")
+        L += ["", "### 各次发布的时段分段", "",
+              "| 发布时间 | 时段(小时) | 预报时间起 | 预报时间止 | 不同预报时间数 |",
+              "| --- | ---: | --- | --- | ---: |"]
+        for (issued, span), (a, b, n) in check["分段"].items():
+            L.append(f"| {issued} | {span} | {a} | {b} | {n} |")
+        L.append("")
+
+    L += ["### 按对象", "",
+          "| 对象ID | 名称 | 所属 | 发布次数 | 典型有效步数 | 占位值 | 有效值域 | 序列不同的发布次数 | 缺的发布时间 |",
+          "| --- | --- | --- | ---: | ---: | --- | --- | ---: | --- |"]
+    for r in obj_rows:
+        rng = f"{r['有效最小值']} ~ {r['有效最大值']}" if r["有效最小值"] else "—"
+        L.append(f"| {r['对象ID']} | {r['对象名称'] or '（未匹配）'} | {r['所属']} | {r['发布次数']} | "
+                 f"{r['典型有效步数']} | {r['占位值'] or '—'} | {rng} | {r['序列不同的发布次数']} | "
+                 f"{r['缺的发布时间'] or '—'} |")
+    L.append("")
+    if frozen:
+        L.append(f"- **{len(frozen)} 个对象每次发布的序列完全相同**（"
+                 + "、".join(r["对象名称"] or r["对象ID"] for r in frozen)
+                 + "）：预报没有随发布滚动更新。是模型没跑、只是转存，还是本就如此，待确认。")
+    if gappy:
+        L.append(f"- {len(gappy)} 个对象缺了部分发布时间（见上表「缺的发布时间」）。")
+    hit_sources = sorted({r["字典来源"] for r in obj_rows if r["字典来源"]})
+    L += [f"- 对象名称来自：{'；'.join(f'`{x}`' for x in hit_sources) if hit_sources else '（没找到能对上的字典）'}。"
+          "字典本身未经现场确认，引用到对外文档前请核对。", ""]
+
+    L += ["## 已知局限", "",
+          "- 脚本只做格式归一：不换算单位、不剔异常、不补缺；**占位值只标记不删**。",
+          ("- 宽表的**预报步长和 V0 的含义导出里没有**：事实表只存步序，"
+           "`v_预报_假设1小时步长` 是按假设换算的。"
+           if wide else "- `预报时间` 是时段起点还是终点、`数值` 是时段累计还是强度，导出里没写。"),
+          "", "## SQL 范例", "", "```bash"]
+    if wide:
+        L += [f'sqlite3 -header -column "{db_rel}" \\',
+              '  "SELECT 对象名称,发布时间,步序,数值 FROM v_最新发布 ORDER BY 对象ID,步序 LIMIT 30;"',
+              "",
+              "# 同一对象、同一步序在各次发布里的变化（看预报是否在滚动）",
+              f'sqlite3 -header -column "{db_rel}" \\',
+              "  \"SELECT 发布时间,数值 FROM 预报 WHERE 对象ID='<对象ID>' AND 步序=24 ORDER BY 发布时间;\""]
+    else:
+        L += [f'sqlite3 -header -column "{db_rel}" \\',
+              "  \"SELECT 对象ID,预报时间,时段小时,数值 FROM v_最新发布 WHERE 对象ID='<对象ID>' ORDER BY 预报时间;\"",
+              "",
+              "# 某次发布未来 24 小时各对象累计（假设数值是时段累计量，待确认）",
+              f'sqlite3 -header -column "{db_rel}" \\',
+              "  \"SELECT 对象ID,ROUND(SUM(数值),1) AS 累计 FROM v_预报",
+              "   WHERE 发布时间='<发布时间>' AND 时段小时=1",
+              "     AND 预报时间 < datetime('<发布时间>','+24 hours')",
+              "   GROUP BY 对象ID ORDER BY 累计 DESC;\""]
+    L += ["```", ""]
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text("\n".join(L), encoding="utf-8")
+
+
+def process_forecast(src: Path, d: dict, force: bool, dry_run: bool, want_sqlite: bool) -> bool:
+    size = src.stat().st_size / (1 << 20)
+    log(f"\n▶ {rel(src)}　{size:,.1f} MB")
+    if d["子形态"] == "宽表":
+        log(f"    形态=预报(宽表) 对象={d['对象列']} 发布={d['发布列']}（{d['时间格式']}）"
+            f" 步序={d['步序列'][0]}..{d['步序列'][-1]}")
+    else:
+        log(f"    形态=预报(长表) 对象={d['对象列']} 发布={d['发布列']}（{d['时间格式']}）"
+            f" 预报时间={d['预报时间列']} 时段={d.get('时段列')} 数值={d['数值列']}"
+            + (f" 可选={'、'.join(d['可选列'])}" if d["可选列"] else ""))
+    if dry_run:
+        return False
+
+    digest = sha256_of([src])
+    manifest, out_dir = split_paths(src)
+    if not force and manifest.is_file() and out_dir.is_dir():
+        for line in manifest.read_text(encoding="utf-8").splitlines()[:16]:
+            if line.startswith("source_sha256:") and line.split(":", 1)[1].strip() == digest:
+                log("  ✓ 内容未变，跳过（--force 可强制重建）")
+                return False
+
+    facts, issues = read_forecast(src, d)
+    if not facts:
+        log("  ⚠ 一行数据都没解析出来，产物未生成")
+        return False
+    names, dict_sources = load_source_table_dict()
+    pdict, _ = load_point_dict()
+    for obj in {f[0] for f in facts} - set(names):
+        if obj in pdict and pdict[obj].get("测点名称"):
+            p = pdict[obj]
+            names[obj] = {"对象名称": p["测点名称"], "所属": p.get("场站名称", ""),
+                          "字典来源": p.get("字典来源", "")}
+    issue_rows, obj_rows, check = summarize_forecast(facts, d, names)
+
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    out_dir.mkdir(parents=True)
+    write_csv(out_dir / "对象覆盖清单.csv", OBJECT_COLUMNS, obj_rows)
+    write_csv(out_dir / "发布清单.csv", ISSUE_COLUMNS, issue_rows)
+    unmatched = [r for r in obj_rows if not r["对象名称"]]
+    if unmatched:
+        write_csv(out_dir / "未匹配对象.csv", OBJECT_COLUMNS, unmatched)
+    if want_sqlite:
+        meta = [("源文件", rel(src)), ("源文件指纹", digest), ("转换脚本", "scripts/realdata.py"),
+                ("形态", f"forecast/{d['子形态']}"),
+                ("转换时间", dt.datetime.now().astimezone().isoformat(timespec="seconds")),
+                ("总行数", str(issues["总行数"])), ("预报值条数", str(len(facts))),
+                ("对象字典", "；".join(dict_sources)),
+                ("疑似占位值", "、".join(_fmt_num(v) for v in FORECAST_SENTINELS))]
+        finish_forecast_sqlite(out_dir / "预报数据.sqlite", facts, issue_rows, obj_rows, meta,
+                               d["子形态"] == "宽表")
+    write_forecast_manifest(manifest, out_dir, src, digest, d, issues, facts, issue_rows,
+                            obj_rows, check, dict_sources, want_sqlite)
+    log(f"  ✓ {issues['总行数']:,} 行 → {len(facts):,} 条预报值 / {len(obj_rows)} 个对象"
+        f" / {len(check['发布时间'])} 个发布时间 → {rel(manifest)}"
+        + (f"　未匹配对象 {len(unmatched)}" if unmatched else ""))
+    return True
+
+
 def process(src: Path, force: bool, dry_run: bool, want_sqlite: bool,
             time_format: str | None) -> bool:
     """一份导出文件 → 一个库。各表之间互相独立，不跨文件合并。"""
     d = detect(src)
     if not d:
-        log(f"⚠ {rel(src)}：不是现场数据（表头要能认出 测点/时间/数值，或 期间/组织/指标/数值）")
+        log(f"⚠ {rel(src)}：不是现场数据（表头要能认出 测点/时间/数值、期间/组织/指标/数值，"
+            "或 对象/发布时间/预报时间/数值、对象/发布时间/V0..Vn）")
         return False
     if d.get("形态") == "product_day":
         return process_product_day(src, d, force, dry_run, want_sqlite)
+    if d.get("形态") == "forecast":
+        return process_forecast(src, d, force, dry_run, want_sqlite)
     files = [(src, d)]
 
     size = src.stat().st_size / (1 << 20)

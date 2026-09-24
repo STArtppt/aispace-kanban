@@ -281,6 +281,7 @@ python3 scripts/realdata.py --time-format "%m/%d/%Y %H:%M:%S"   # 日月顺序�
 | --- | --- | --- |
 | 测点时序 | 测点标识 + 时间 + 数值（`senid` / `time` / `v`） | `SplittingObject/<文件名>/实测数据.sqlite` |
 | 日指标 | 期间 + 组织 + 指标 + 数值（`period_id` / `orgz_code` / `measure_code` / `measure_value`） | `SplittingObject/<文件名>/日指标.sqlite`，组织名连组织表、指标名连指标字典 |
+| 预报 | 宽表：对象 + 发布时间 + `V0..Vn`（`ADID` / `TIME`）；长表：对象 + 发布时间 + 预报时间 + 值（`REGID` / `FTIME` / `BTIME` / `AVERPRE`） | `SplittingObject/<文件名>/预报数据.sqlite`（预报 / 发布 / 对象），占位值只标记不删 |
 
 csv / txt 都能进。
 
