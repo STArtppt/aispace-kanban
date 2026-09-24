@@ -117,12 +117,6 @@ SINGLE_FILE_TIMEOUT = 120
 DEFUDDLE_TIMEOUT = 60
 MAX_HTML_BYTES = 64 * 1024 * 1024
 
-WIKILINK_RE = re.compile(r"!?\[\[([^\]]+)\]\]")
-CALLOUT_RE = re.compile(r"^>(\s*)\[![\w-]+\][^\n]*", re.M)
-TAG_RE = re.compile(r"^#[^#\s].*$", re.M)
-COMMENT_RE = re.compile(r"%%.*?%%", re.S)
-BLOCK_ID_RE = re.compile(r"(?:^|\s)\^[A-Za-z0-9_-]+\s*$", re.M)
-MATH_RE = re.compile(r"\${1,2}([^$\n]+)\${1,2}")
 H1_RE = re.compile(r"^(#)\s+\S")
 FENCE_RE = re.compile(r"^(\s*)(`{3,}|~{3,})")
 HTML_COMMENT_RE = re.compile(r"<!--(.*?)-->", re.S)
@@ -497,7 +491,10 @@ def extract_inline_images(markdown: str, link_prefix: str) -> tuple[str, list[tu
 
 
 def sanitize_markdown(md: str) -> str:
-    """剥除或规整提取结果里的禁用语法，并把多余 H1 降一层。围栏代码块原样保留。"""
+    """把多余 H1 降一层。围栏代码块原样保留。
+
+    wikilink、callout、行首标签、注释、块锚点、公式不再剥掉：看板预览已经能渲染。
+    """
     lines: list[str] = []
     in_fence = False
     fence_mark = ""
@@ -524,13 +521,6 @@ def sanitize_markdown(md: str) -> str:
             h1_seen += 1
             if h1_seen > 1:
                 line = "#" + line
-        line = COMMENT_RE.sub("", line)
-        line = WIKILINK_RE.sub(lambda m: m.group(1).split("|")[-1].strip(), line)
-        line = CALLOUT_RE.sub(">", line)
-        if TAG_RE.match(line):
-            line = line.lstrip("#")
-        line = BLOCK_ID_RE.sub("", line)
-        line = MATH_RE.sub(lambda m: m.group(1).strip(), line)
         lines.append(line)
     return "\n".join(lines).strip() + "\n"
 

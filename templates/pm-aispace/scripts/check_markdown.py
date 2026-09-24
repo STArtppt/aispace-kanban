@@ -6,12 +6,13 @@
 
 为什么值得有这个脚本
 --------------------
-写法规范是约定，不是强制 —— agent 直接改文件，谁也拦不住它写 `[[wikilink]]`
-或 `tags: [a, b]`。这个脚本的作用不是阻止违约，是**让违约可见**，不要静默生效。
+写法规范是约定，不是强制 —— agent 直接改文件，谁也拦不住它写 `tags: [a, b]`
+或连着放两个 H1。这个脚本的作用不是阻止违约，是**让违约可见**，不要静默生效。
 
 它**不管** `input/converted/`（转换脚本的产物，重跑即覆盖）和 `input/raw/`（原件，不碰）。
 `output/questions/` 的字段契约仍由 `check_questions.py` 负责；对那个目录本脚本只查写法子集
-（扁平 front-matter、禁用语法、标题层级），不重复检查问题字段。
+（扁平 front-matter、标题层级），不重复检查问题字段。
+wikilink、callout、行首标签、`%%注释%%`、段尾 `^id`、数学公式看板已经能渲染，这里不再报。
 
 `output/records/` 是例外：产出物记录的字段契约由本脚本查，没有单独的脚本。
 理由是记录文件本来就在 `output/**` 的扫描范围里，而要查的东西
@@ -84,13 +85,6 @@ NOTE_HEADING_RE = re.compile(r"^###[ \t]+(N\d{4})[ \t]*·[ \t]*(\S+)[ \t]*$")
 NOTE_BATCH_RE = re.compile(r"^##[ \t]+\d{4}-\d{2}-\d{2}[ \t]*·[ \t]*第[ \t]*\d+[ \t]*批")
 NOTE_FIELD_RE = re.compile(r"^-[ \t]*(状态|回执|源码区间)[ \t]*[:：]")
 
-# 行首 `#标签`：`#` 后紧跟非空格、非 `#`。`# 标题`（有空格）是合法 H1，不算。
-TAG_RE = re.compile(r"^#[^#\s]")
-CALLOUT_RE = re.compile(r"^>\s*\[![\w-]+\]", re.I)
-WIKILINK_RE = re.compile(r"!?\[\[[^\]]+\]\]")
-COMMENT_RE = re.compile(r"%%.*?%%")
-BLOCK_ID_RE = re.compile(r"(?:^|\s)\^[A-Za-z0-9_-]+\s*$")
-MATH_RE = re.compile(r"(?<!\$)\$(?!\$)[^$\n]+\$|\$\$[^$\n]+\$\$")
 INLINE_ARRAY_RE = re.compile(r"^([\w.-]+):\s*\[")
 NESTED_KEY_RE = re.compile(r"^\s+[\w.-]+:\s*")
 LIST_ITEM_RE = re.compile(r"^\s+-\s+")
@@ -174,54 +168,6 @@ def check_frontmatter(raw: str, where: str, report: Report) -> None:
                 loc,
                 "front-matter 出现了缩进的二级键值对 —— 看板解析器读不出嵌套结构。"
                 "只保留 `key: value` 与 `key:` + `  - item`",
-            )
-
-
-def check_disabled(body: str, body_start: int, where: str, report: Report) -> None:
-    for i, line, in_fence in iter_body_lines(body):
-        if in_fence:
-            continue
-        loc = f"{where}:{body_start + i - 1}"
-        visible = _strip_inline_code(line)
-        if TAG_RE.match(visible):
-            report.error(
-                "行首标签",
-                loc,
-                f"行首 `{visible.split()[0]}` 会被渲染器当成 H1 混进文档目录。"
-                "标签写进 front-matter 的块状 list，标题写成 `# 标题`（`#` 后有空格）",
-            )
-        if CALLOUT_RE.match(visible):
-            report.error(
-                "callout",
-                loc,
-                "`> [!type]` callout 看板暂不渲染，标记会原样露出来。改成普通引用块，需要强调就加粗",
-            )
-        for m in WIKILINK_RE.finditer(visible):
-            raw = m.group(0)
-            inner = raw.strip("![]")
-            name = inner.split("|", 1)[0].strip()
-            report.error(
-                "wikilink" if not raw.startswith("!") else "embed",
-                loc,
-                f"`{raw}` 看板点不开。改成相对路径链接，例如 `[文本](../analysis/{name}.md)`",
-            )
-        if COMMENT_RE.search(visible):
-            report.error(
-                "百分号注释",
-                loc,
-                "`%%注释%%` 看板会原样露在正文里。改成 HTML 注释 `<!-- -->`，或不写",
-            )
-        if BLOCK_ID_RE.search(visible):
-            report.error(
-                "块引用锚点",
-                loc,
-                "段尾 `^id` 是 Obsidian 块锚点，看板暂不渲染。去掉它；要定位就靠标题",
-            )
-        if MATH_RE.search(visible):
-            report.error(
-                "数学公式",
-                loc,
-                "`$...$` / `$$...$$` 看板暂不渲染。能用文字或代码块说清就说清",
             )
 
 
@@ -541,7 +487,6 @@ def check_file(path: Path, output_root: Path, report: Report) -> None:
                     f"缺 `{key}`。`output/analysis/` 与 `output/decisions/` 的最小字段见 AGENTS.md「Markdown 写法」",
                 )
 
-    check_disabled(body, body_start, where, report)
     check_headings(body, body_start, where, report)
 
     if is_note(path, output_root):

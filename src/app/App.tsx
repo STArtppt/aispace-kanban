@@ -324,7 +324,10 @@ function SidebarBody({
 export default function App() {
   const { projects, activeId, select, reload: reloadProjects } = useProjects();
   const { scan, loading, error, reload, refreshedAt, changeToken } = useScan(activeId);
-  const { view, setView, openFile, selectFile } = useBoardSession(activeId, scan);
+  const { view, setView, openFile, selectFile, openPath, goBack, canGoBack, pathSet } = useBoardSession(
+    activeId,
+    scan,
+  );
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [settingsFor, setSettingsFor] = useState<Project | null>(null);
   const [navOpen, setNavOpen] = useState(false);
@@ -336,6 +339,8 @@ export default function App() {
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   /** 工作台停在哪一页。放在 App 级：关掉再打开还在原来那一页 */
   const [workbenchPage, setWorkbenchPage] = useState<'questions' | 'records'>('questions');
+  /** 从文档链接点进来要选中的问题。带序号：同一条连点两次也要再选一次 */
+  const [questionFocus, setQuestionFocus] = useState<{ id: string; seq: number } | null>(null);
   // 两份索引都在 App 级预取，不挂任何视图的生命周期上：工作台打开与切页都要瞬时，不等网络
   const questions = useQuestions(activeId, changeToken);
   const records = useRecords(activeId, changeToken);
@@ -391,6 +396,27 @@ export default function App() {
   const selectFileAndCloseHelp = (file: FileItem | null) => {
     setHelpOpen(false);
     selectFile(file);
+  };
+
+  /**
+   * 预览区里点了站内链接。问题单归工作台（状态、人工反馈都在那页），预览区不动；
+   * 清单还没加载或没有这一条，就当普通 markdown 打开，不等不报错。
+   */
+  const openLinkedPath = (path: string): 'opened' | 'external' => {
+    const question = questions.index?.items.find((entry) => entry.path === path);
+    if (question) {
+      setWorkbenchPage('questions');
+      setQuestionFocus((prev) => ({ id: question.id, seq: (prev?.seq ?? 0) + 1 }));
+      setWorkbenchOpen(true);
+      return 'opened';
+    }
+    return openPath(path, { viaLink: true });
+  };
+
+  const changeWorkbenchOpen = (next: boolean) => {
+    setWorkbenchOpen(next);
+    // 关掉就忘了这次要选中的那条：之后从悬浮球打开不该又跳回去
+    if (!next) setQuestionFocus(null);
   };
 
   const sidebarProps = {
@@ -658,6 +684,9 @@ export default function App() {
                   onClose={() => selectFile(null)}
                   expanded={previewExpanded}
                   onToggleExpand={() => setPreviewExpanded((v) => !v)}
+                  pathSet={pathSet}
+                  onOpenPath={openLinkedPath}
+                  onBack={canGoBack ? goBack : undefined}
                 />
               )}
             </section>
@@ -691,7 +720,8 @@ export default function App() {
       />
       <Workbench
         open={workbenchOpen}
-        onOpenChange={setWorkbenchOpen}
+        onOpenChange={changeWorkbenchOpen}
+        focusQuestion={questionFocus}
         page={workbenchPage}
         onPageChange={setWorkbenchPage}
         projectId={activeId}

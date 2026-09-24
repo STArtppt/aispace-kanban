@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Search, X } from 'lucide-react';
 import { collectBlocks, type BlockEntry, type SearchJumper } from '@/lib/blockIndex';
 import { searchBlocks, type SnippetPart } from '@/lib/fuzzySearch';
@@ -206,21 +206,13 @@ export function PreviewSearch({
   const outcome = state.status === 'done' ? state.outcome : null;
 
   return (
-    <div
-      ref={containerRef}
-      // 左缘跟预览顶栏标题对齐(header px-3 sm:px-4);顶缘跟左侧清单标题行
-      // (产出列表 / 输入列表,ScrollArea py-4 + min-h-8)垂直居中
-      className="absolute top-4 left-3 z-20 w-fit max-w-[calc(100%-1.5rem)] sm:left-4"
-    >
+    // 悬浮定位归上层(PreviewToolbar):它还要把「后退」排在搜索左边
+    <div ref={containerRef} className="relative w-fit min-w-0 max-w-full">
       <div
         className={cn(
-          // 收起态照抄左侧清单的可展开搜索框(ExpandableSearch → Input):
-          // 同样的 rounded-lg / border-input / bg-background / shadow-sm,尺寸也同为 8
-          'flex h-8 items-center overflow-hidden rounded-lg border border-input bg-background shadow-sm',
+          TOOL_SHELL,
           'transition-[width,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)]',
           'focus-within:border-ring',
-          // 收起时半透明:悬浮在 csv 表格上方会挡住表头与首行,让它透出来;
-          // 悬停 / 有焦点 / 展开后都恢复不透明,免得输入时正文透上来干扰阅读
           open
             ? 'w-72 max-w-full opacity-100'
             : 'w-8 opacity-85 hover:opacity-100 focus-within:opacity-100',
@@ -335,6 +327,54 @@ export function PreviewSearch({
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * 收起态照抄左侧清单的可展开搜索框(ExpandableSearch → Input):
+ * 同样的 rounded-lg / border-input / bg-background / shadow-sm,尺寸也同为 8
+ */
+const TOOL_SHELL =
+  'flex h-8 items-center overflow-hidden rounded-lg border border-input bg-background shadow-sm';
+
+/** 与收起态搜索同款的悬浮小按钮(目前只有「后退」) */
+export function PreviewToolButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        TOOL_SHELL,
+        'w-8 shrink-0 justify-center text-muted-foreground opacity-85 hover:text-foreground hover:opacity-100 focus-visible:border-ring focus-visible:opacity-100 focus-visible:outline-none',
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
+ * 预览正文左上角的悬浮工具条:「后退」在左、搜索在右。
+ * 左缘跟预览顶栏标题对齐(header px-3 sm:px-4);顶缘跟左侧清单标题行
+ * (产出列表 / 输入列表,ScrollArea py-4 + min-h-8)垂直居中。
+ * 收起时半透明:悬浮在 csv 表格上方会挡住表头与首行,让它透出来;
+ * 悬停 / 有焦点 / 展开后都恢复不透明,免得输入时正文透上来干扰阅读
+ */
+export function PreviewToolbar({ children }: { children: ReactNode }) {
+  return (
+    <div className="absolute top-4 left-3 z-20 flex w-fit max-w-[calc(100%-1.5rem)] items-start gap-1.5 sm:left-4">
+      {children}
     </div>
   );
 }

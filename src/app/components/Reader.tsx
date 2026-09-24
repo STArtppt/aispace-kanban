@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
 import Papa from 'papaparse';
 import {
+  ArrowLeft,
   ArrowLeftToLine,
   ArrowRightFromLine,
   ChevronDown,
@@ -31,9 +32,18 @@ import { AnnotationLayer } from '@/components/AnnotationLayer';
 import { AnnotationToolbar } from '@/components/AnnotationToolbar';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { CodeFileView, codePreviewLabel, codePreviewLanguage } from '@/components/CodeFileView';
-import { DocumentToc, Markdown, type TocItem } from '@/components/Markdown';
+import {
+  DocumentToc,
+  Markdown,
+  scrollToAnchor,
+  type OnInternalLink,
+  type ResolveLink,
+  type TocItem,
+} from '@/components/Markdown';
 import {
   PreviewSearch,
+  PreviewToolbar,
+  PreviewToolButton,
   type PreviewSearchOutcome,
   type PreviewSearchSource,
 } from '@/components/PreviewSearch';
@@ -118,6 +128,57 @@ function resolveRelative(base: string, url: string) {
   }
   return stack.join('/');
 }
+
+/** 带协议的（http:、mailto:、javascript:、Windows 盘符……）都不是工作空间路径 */
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * 按 `base` 解析成工作空间内路径；越出根（`..` 退过头）或解析成空返回 null。
+ * 与 `resolveRelative` 的区别：那边只管拼地址，越界由服务端的 resolveInside 挡；
+ * 这里要判「是不是站内」，所以越界得自己认出来。`#…` / `?…` 不算路径的一部分。
+ */
+function resolveWorkspacePath(base: string, url: string, { stripFragment }: { stripFragment: boolean }) {
+  const raw = stripFragment ? url.replace(/[?#].*$/, '') : url;
+  if (!raw) return null;
+  let decoded = raw;
+  try {
+    decoded = decodeURI(raw);
+  } catch {
+    decoded = raw;
+  }
+  const stack: string[] = [];
+  for (const seg of `${base}/${decoded}`.split('/')) {
+    if (!seg || seg === '.') continue;
+    if (seg === '..') {
+      if (!stack.length) return null;
+      stack.pop();
+    } else stack.push(seg);
+  }
+  return stack.length ? stack.join('/') : null;
+}
+
+/**
+ * 预览区 markdown 的站内链接判定。
+ * - 链接：按当前文档目录解析，落在工作空间内就算站内（存不存在由打开时决定）。
+ * - 行内代码：先按工作空间根、再按当前文档目录，只认扫描结果里的精确命中 ——
+ *   误成链比漏成链更伤，所以不猜文件名、不为此请求服务端。
+ */
+function makeResolveLink(projectId: string, base: string, pathSet: Set<string>): ResolveLink {
+  return (url, kind) => {
+    if (SCHEME_RE.test(url) || url.startsWith('#') || url.startsWith('//')) return null;
+    if (kind === 'link') {
+      const path = resolveWorkspacePath(base, url, { stripFragment: true });
+      return path ? { path, href: api.fileUrl(projectId, path) } : null;
+    }
+    for (const from of ['', base]) {
+      const path = resolveWorkspacePath(from, url, { stripFragment: false });
+      if (path && pathSet.has(path)) return { path, href: api.fileUrl(projectId, path) };
+    }
+    return null;
+  };
+}
+
+const EMPTY_PATHS = new Set<string>();
 
 function sheetLabel(name: string) {
   return name.replace(/\.(csv|tsv)$/i, '') || name;
@@ -890,10 +951,22 @@ export function Reader({
   onToggleExpand,
   canIngest,
   ingest,
+  pathSet = EMPTY_PATHS,
+  onOpenPath,
+  onBack,
 }: {
   projectId: string;
   item: FileItem;
   onClose: () => void;
+  /** 扫描到的全部路径：行内代码自动成链只认它 */
+  pathSet?: Set<string>;
+  /**
+   * 站内链接被点中。返回 `external` 表示看板接不住（扫描外的二进制等），交给浏览器新开。
+   * 不传就不启用站内链接，正文链接照旧新开窗口。
+   */
+  onOpenPath?: (path: string) => 'opened' | 'external';
+  /** 后退链非空时才给；不给就不显示「后退」 */
+  onBack?: () => void;
   /** 宽屏下预览是否已向左展开至主区全宽 */
   expanded?: boolean;
   /** 宽屏提供；窄屏预览本就是全屏，不传则不显示展开按钮 */
@@ -992,6 +1065,41 @@ export function Reader({
       : '批注';
 
   const base = dirOf(mode === 'markdown' && isDir ? manifestPath : item.path);
+  // 表格包与 html 原型的摘要：相对路径以摘要文件自己的目录为准（新布局下它与正文分居两地）
+  const manifestBase = dirOf(manifestPath || item.path);
+
+  // 批注模式下点链接不跳：交给批注层自己拦（它会 preventDefault，选文字模式还会提示）
+  const annotatingRef = useRef(annotate.active);
+  annotatingRef.current = annotate.active;
+  const onOpenPathRef = useRef(onOpenPath);
+  onOpenPathRef.current = onOpenPath;
+  const linksEnabled = Boolean(onOpenPath);
+  const onInternalLink = useCallback<OnInternalLink>(
+    (target, event) => {
+      if (annotatingRef.current) return;
+      event.preventDefault();
+      if (target.startsWith('#')) {
+        scrollToAnchor(event.currentTarget, target);
+        return;
+      }
+      const result = onOpenPathRef.current?.(target) ?? 'external';
+      if (result === 'external') window.open(api.fileUrl(projectId, target), '_blank', 'noreferrer');
+    },
+    [projectId],
+  );
+  const resolveBodyLink = useMemo(
+    () => (linksEnabled ? makeResolveLink(projectId, base, pathSet) : undefined),
+    [linksEnabled, projectId, base, pathSet],
+  );
+  const resolveManifestLink = useMemo(
+    () => (linksEnabled ? makeResolveLink(projectId, manifestBase, pathSet) : undefined),
+    [linksEnabled, projectId, manifestBase, pathSet],
+  );
+  const manifestUrlTransform = useCallback(
+    (url: string) =>
+      shouldPassthroughUrl(url) ? url : api.fileUrl(projectId, resolveRelative(manifestBase, url)),
+    [projectId, manifestBase],
+  );
   // 单文件 HTML（output/docs 下的汇报材料）没有 _manifest.md，校验说明这一栏不该出现
   const hasManifest = (multiSheet || mode === 'html') && isDir;
   const [htmlTab, setHtmlTab] = useState<'preview' | 'manifest'>('preview');
@@ -1138,14 +1246,25 @@ export function Reader({
     [projectId, item.path, jumper],
   );
 
-  const searchBox = canSearch ? (
-    <PreviewSearch
-      key={searchResetKey}
-      getBlocksRoot={getSearchRoot}
-      jumper={jumper}
-      source={searchingTable ? tableSearchSource : undefined}
-    />
-  ) : null;
+  // 「后退」与搜索同在正文左上角的悬浮条里
+  const previewToolbar =
+    onBack || canSearch ? (
+      <PreviewToolbar>
+        {onBack ? (
+          <PreviewToolButton label="后退" onClick={onBack}>
+            <ArrowLeft className="size-3.5" />
+          </PreviewToolButton>
+        ) : null}
+        {canSearch ? (
+          <PreviewSearch
+            key={searchResetKey}
+            getBlocksRoot={getSearchRoot}
+            jumper={jumper}
+            source={searchingTable ? tableSearchSource : undefined}
+          />
+        ) : null}
+      </PreviewToolbar>
+    ) : null;
 
   return (
     <aside
@@ -1226,7 +1345,7 @@ export function Reader({
       */}
       {mode === 'markdown' ? (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-            {searchBox}
+            {previewToolbar}
             <div
               ref={mdScrollRef}
               data-reader-scroll
@@ -1272,6 +1391,8 @@ export function Reader({
                           : api.fileUrl(projectId, resolveRelative(base, url))
                       }
                       onHeadingsChange={(items) => setTocState({ path: item.path, items })}
+                      resolveLink={resolveBodyLink}
+                      onInternalLink={onInternalLink}
                     >
                       {body}
                     </Markdown>
@@ -1317,7 +1438,7 @@ export function Reader({
             ref={tableSearchRef}
             className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
           >
-          {searchBox}
+          {previewToolbar}
           {tableTab === 'summary' ? (
             <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
               <div
@@ -1352,7 +1473,10 @@ export function Reader({
                     ) : null}
                     <Markdown
                       key={`${item.path}-table-manifest`}
+                      urlTransform={manifestUrlTransform}
                       onHeadingsChange={(items) => setTocState({ path: item.path, items })}
+                      resolveLink={resolveManifestLink}
+                      onInternalLink={onInternalLink}
                     >
                       {body}
                     </Markdown>
@@ -1389,7 +1513,7 @@ export function Reader({
         </div>
       ) : (
         <div ref={plainScrollRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-        {searchBox}
+        {previewToolbar}
         <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
           {mode === 'text' ? (
             <>
@@ -1510,7 +1634,14 @@ export function Reader({
                   {manifestError ? <p className="text-sm text-destructive">{manifestError}</p> : null}
                   {manifestContent && !manifestError ? (
                     <div className="mx-auto w-full max-w-[76ch]">
-                      <Markdown key={`${item.path}-manifest`}>{body}</Markdown>
+                      <Markdown
+                        key={`${item.path}-manifest`}
+                        urlTransform={manifestUrlTransform}
+                        resolveLink={resolveManifestLink}
+                        onInternalLink={onInternalLink}
+                      >
+                        {body}
+                      </Markdown>
                     </div>
                   ) : null}
                 </TabsContent>

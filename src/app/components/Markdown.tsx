@@ -1,26 +1,34 @@
 import {
   Children,
   cloneElement,
+  createContext,
   isValidElement,
   useCallback,
+  useContext,
   useLayoutEffect,
   useEffect,
   useMemo,
   useRef,
   useState,
   type ComponentProps,
+  type MouseEvent as ReactMouseEvent,
   type ReactElement,
+  type ReactNode,
   type RefObject,
 } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import { MarkdownCodeBlock } from '@/components/MarkdownCodeBlock';
 import { MermaidBlock } from '@/components/MermaidBlock';
 import { useScrollActivity } from '@/hooks/useScrollActivity';
+import { remarkWorkspace } from '@/lib/markdownSyntax';
 import { hoistLargeDataUris, shouldPassthroughUrl } from '@/lib/markdownUrls';
 import { pickSourceAttrs, rehypeSourcePos, rehypeStripTableWhitespace } from '@/lib/sourceAnchor';
 import { cn } from '@/lib/utils';
+import 'katex/dist/katex.min.css';
 
 export type TocItem = { id: string; text: string; level: number; index: number };
 
@@ -65,6 +73,162 @@ function findHeadingEl(container: HTMLElement | null, item: TocItem): HTMLElemen
   return headings[item.index] ?? headings.find((el) => el.id === item.id) ?? null;
 }
 
+/** 解析出的站内目标：`path` 相对工作空间根，`href` 是原始文件地址（修饰键点击时浏览器用它） */
+export type InternalLinkTarget = { path: string; href: string };
+
+/**
+ * 站内链接的判定与上报。`kind` 区分来源：`link` 是 `[..](..)` 的目标，
+ * `code` 是行内代码的文本 —— 两者解析规则不同，但走同一个判定函数，免得口径分叉。
+ */
+export type ResolveLink = (url: string, kind: 'link' | 'code') => InternalLinkTarget | null;
+/** 站内目标（工作空间路径，或 `#锚点`）被无修饰键左键点中。要不要 preventDefault 由调用方定 */
+export type OnInternalLink = (target: string, event: ReactMouseEvent<HTMLAnchorElement>) => void;
+
+type LinkHandlers = { resolve: ResolveLink; open: OnInternalLink };
+
+/** 不给 = 帮助面板、问题详情：链接行为与改动前逐字一致 */
+const LinkContext = createContext<LinkHandlers | null>(null);
+/** 链接里的行内代码不再自动成链：`<a>` 套 `<a>` 是非法结构 */
+const InsideLinkContext = createContext(false);
+
+/** 与浏览器「新窗口 / 新标签」相关的点法一律放行 */
+function isPlainClick(event: ReactMouseEvent) {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
+
+/** 锚点与标题文本比较前的规整：去首尾空白、小写、空白与连字符等价、解百分号 */
+function normalizeAnchor(text: string): string {
+  let decoded = text;
+  try {
+    decoded = decodeURIComponent(text);
+  } catch {
+    decoded = text;
+  }
+  return decoded.trim().toLowerCase().replace(/[\s-]+/g, '-');
+}
+
+/**
+ * 在链接所在的正文里找标题文本对得上的那个并滚过去；找不到就什么都不做。
+ * 标题 id 是序号（`doc-h-<n>`），对不上锚点文本，所以按文本比。
+ */
+export function scrollToAnchor(from: Element, hash: string) {
+  const want = normalizeAnchor(hash.replace(/^#/, ''));
+  if (!want) return;
+  const root = from.closest('.markdown-body');
+  if (!root) return;
+  const headings = root.querySelectorAll<HTMLElement>('h1, h2, h3, h4, h5, h6');
+  for (const el of headings) {
+    if (normalizeAnchor(el.textContent || '') === want) {
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
+  }
+}
+
+type HastLike = { type: string; tagName?: string; properties?: Record<string, unknown>; children?: HastLike[] };
+
+/**
+ * urlTransform 会就地改写 href，渲染器拿到的已经是 `/file?path=…`。
+ * 判定站内链接要原始写法，所以先抄一份到 `data-md-href`。只在启用站内链接时挂。
+ */
+function rehypeKeepHref() {
+  return (tree: HastLike) => {
+    const visit = (node: HastLike) => {
+      if (node.type === 'element' && node.tagName === 'a' && typeof node.properties?.href === 'string') {
+        node.properties.dataMdHref = node.properties.href;
+      }
+      for (const child of node.children || []) visit(child);
+    };
+    visit(tree);
+  };
+}
+
+const LINK_CLASS = 'underline underline-offset-4 decoration-border hover:decoration-foreground';
+
+function MdLink({ className, ...all }: ComponentProps<'a'>) {
+  const link = useContext(LinkContext);
+  if (!link) {
+    // 未启用：与改动前逐字一致
+    return <a className={cn(LINK_CLASS, className)} target="_blank" rel="noreferrer" {...all} />;
+  }
+  const { 'data-md-href': raw, children, ...rest } = all as typeof all & { 'data-md-href'?: unknown };
+  const props = {
+    ...rest,
+    children: <InsideLinkContext.Provider value>{children}</InsideLinkContext.Provider>,
+  };
+  const original = typeof raw === 'string' ? raw : '';
+  if (original.startsWith('#')) {
+    return (
+      <a
+        className={cn(LINK_CLASS, className)}
+        {...props}
+        onClick={(event) => {
+          if (!isPlainClick(event)) return;
+          link.open(original, event);
+        }}
+      />
+    );
+  }
+  const target = original ? link.resolve(original, 'link') : null;
+  if (!target) {
+    return <a className={cn(LINK_CLASS, className)} target="_blank" rel="noreferrer" {...props} />;
+  }
+  // href 用解析结果：`a.md#某节` 的片段不能进 path 参数，否则 ⌘ 点击新开的是 404
+  return (
+    <a
+      className={cn(LINK_CLASS, className)}
+      {...props}
+      href={target.href}
+      onClick={(event) => {
+        if (!isPlainClick(event)) return;
+        link.open(target.path, event);
+      }}
+    />
+  );
+}
+
+/** 批注用的 rehypeSourcePos 会给文本外包 span，行内代码的 children 不一定是字符串 */
+function plainText(node: ReactNode): string {
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(plainText).join('');
+  if (isValidElement<{ children?: ReactNode }>(node)) return plainText(node.props.children);
+  return '';
+}
+
+/** 行内代码：内容恰好是工作空间里的文件路径时包成站内链接，等宽样式不变 */
+function InlineCode({ className, children, ...rest }: ComponentProps<'code'>) {
+  const link = useContext(LinkContext);
+  const insideLink = useContext(InsideLinkContext);
+  const text = link && !insideLink ? plainText(children).trim().replace(/^\.\//, '') : '';
+  const target = text && !/\s/.test(text) ? link!.resolve(text, 'code') : null;
+  const code = (
+    <code
+      className={cn(
+        'rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]',
+        // 下划线画在 code 自己身上；颜色比普通链接深一档 —— border 色贴着 muted 底色，看不出能点
+        target && 'underline underline-offset-4 decoration-muted-foreground/50 group-hover:decoration-foreground',
+        className,
+      )}
+      {...rest}
+    >
+      {children}
+    </code>
+  );
+  if (!target) return code;
+  return (
+    <a
+      className="group"
+      href={target.href}
+      onClick={(event) => {
+        if (!isPlainClick(event)) return;
+        link!.open(target.path, event);
+      }}
+    >
+      {code}
+    </a>
+  );
+}
+
 /**
  * markdown 排版。
  * 标题 id 不在 render 时分配（StrictMode 会双调组件导致序号错位），
@@ -105,14 +269,7 @@ function buildComponents(): ComponentProps<typeof ReactMarkdown>['components'] {
       />
     ),
     hr: ({ className, ...props }) => <hr className={cn('my-8 border-border', className)} {...props} />,
-    a: ({ className, ...props }) => (
-      <a
-        className={cn('underline underline-offset-4 decoration-border hover:decoration-foreground', className)}
-        target="_blank"
-        rel="noreferrer"
-        {...props}
-      />
-    ),
+    a: MdLink,
     code: ({ className, children, ...props }) => {
       // pre 会把 isBlock 透传下来；带 language-* 的也是围栏块
       const { isBlock: isBlockProp, ...rest } = props as {
@@ -132,9 +289,9 @@ function buildComponents(): ComponentProps<typeof ReactMarkdown>['components'] {
         );
       }
       return (
-        <code className={cn('rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em]', className)} {...rest}>
+        <InlineCode className={className} {...(rest as ComponentProps<'code'>)}>
           {children}
-        </code>
+        </InlineCode>
       );
     },
     // CodeBlock 自带外壳；pre 只负责把子 code 标成块级，避免双重边框
@@ -340,9 +497,17 @@ export function Markdown({
   onHeadingsChange,
   sourceFile,
   sourceByteOffset = 0,
+  resolveLink,
+  onInternalLink,
 }: {
   children: string;
   urlTransform?: (url: string) => string;
+  /**
+   * 站内链接判定。与 `onInternalLink` 一起给才生效；都不给时渲染与改动前一致。
+   * 身份变了（比如扫描结果刷新）只重渲链接与行内代码，不重新解析正文。
+   */
+  resolveLink?: ResolveLink;
+  onInternalLink?: OnInternalLink;
   /** 渲染完成后回调实际标题列表（与 DOM 锚点一致） */
   onHeadingsChange?: (items: TocItem[]) => void;
   /** 相对工作空间根。不传就不盖 A2 属性（帮助文档等） */
@@ -366,6 +531,18 @@ export function Markdown({
     return (urlTransformRef.current ?? defaultUrlTransform)(url);
   }, []);
 
+  // 与 urlTransform 同理：上报回调收进 ref，只让判定函数的身份决定链接要不要重渲
+  const onInternalLinkRef = useRef(onInternalLink);
+  onInternalLinkRef.current = onInternalLink;
+  const linksEnabled = Boolean(resolveLink && onInternalLink);
+  const linkHandlers = useMemo<LinkHandlers | null>(
+    () =>
+      linksEnabled && resolveLink
+        ? { resolve: resolveLink, open: (target, event) => onInternalLinkRef.current?.(target, event) }
+        : null,
+    [linksEnabled, resolveLink],
+  );
+
   // 超大 data URI 抽成 blob:，再交给 micromark。原文仍用来盖锚点。
   const hoisted = useMemo(() => hoistLargeDataUris(children), [children]);
 
@@ -374,13 +551,23 @@ export function Markdown({
     [children, sourceFile, sourceByteOffset, hoisted.replaced],
   );
 
+  const remarkPlugins: ComponentProps<typeof ReactMarkdown>['remarkPlugins'] = useMemo(
+    () => [remarkMath, [remarkGfm, { singleTilde: false }], [remarkWorkspace, { sourceFile }]],
+    [sourceFile],
+  );
+
   const rehypePlugins: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = useMemo(() => {
-    // rehype-raw 会把裸 HTML 表里的换行缩进留成文本节点；React 19 不允许
-    // colgroup / table / tr 等结构标签的子节点是空白，开发态会把预览盖成空白。
+    // katex 要在 rehype-raw 之前：它认的是 remark-math 留下的 code.language-math，
+    // 转成 span 之后代码高亮组件才不会把公式当围栏代码块。
+    // 非法公式不让整篇白掉：rehype-katex 自己会退回源文本；errorColor 不用它默认的红。
     const plugins: ComponentProps<typeof ReactMarkdown>['rehypePlugins'] = [
+      [rehypeKatex, { errorColor: 'currentColor', strict: 'ignore' }],
+      // rehype-raw 会把裸 HTML 表里的换行缩进留成文本节点；React 19 不允许
+      // colgroup / table / tr 等结构标签的子节点是空白，开发态会把预览盖成空白。
       rehypeRaw,
       rehypeStripTableWhitespace,
     ];
+    if (linksEnabled) plugins.push(rehypeKeepHref);
     if (sourceFile) {
       plugins.push([
         rehypeSourcePos,
@@ -393,7 +580,7 @@ export function Markdown({
       ]);
     }
     return plugins;
-  }, [sourceFile, children, sourceByteOffset, hoisted.mapToOriginal]);
+  }, [sourceFile, children, sourceByteOffset, hoisted.mapToOriginal, linksEnabled]);
 
   /**
    * 整棵正文按「源码 + 锚点参数」memo。
@@ -410,7 +597,7 @@ export function Markdown({
         // 关掉单波浪删除线：中文文档里「6~8 月」「0~2 MW」这类区间写法太常见，
         // 同一段出现两个 `~` 就会被 remark-gfm 默认的 singleTilde 配对成删除线。
         // 成对 `~~删除~~` 不受影响；全角 `～` 本就不会触发（micromark 只认 ASCII ~）。
-        remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
+        remarkPlugins={remarkPlugins}
         // MinerU 与 pandoc 时代的老产物会出裸 HTML 图/表，不是 ![]()；不接 rehype-raw 会被转义掉。
         // docx/odt/rtf/epub 现在走 anydoc_writer.mjs 出的是 ![]()，但**别把这个插件删了**——上面两条路还在。
         rehypePlugins={rehypePlugins}
@@ -421,7 +608,7 @@ export function Markdown({
         {hoisted.text}
       </ReactMarkdown>
     ),
-    [hoisted.text, renderKey, rehypePlugins, stableUrlTransform],
+    [hoisted.text, renderKey, remarkPlugins, rehypePlugins, stableUrlTransform],
   );
 
   // 布局后根据真实 DOM 打 id，再回传目录 —— 彻底避开 render 期序号问题
@@ -432,7 +619,7 @@ export function Markdown({
 
   return (
     <div ref={rootRef} className="markdown-body max-w-[76ch]">
-      {rendered}
+      <LinkContext.Provider value={linkHandlers}>{rendered}</LinkContext.Provider>
     </div>
   );
 }

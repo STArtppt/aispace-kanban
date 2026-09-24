@@ -742,11 +742,14 @@ function QuestionsBody({
   changeToken,
   reload,
   active,
+  focus,
 }: {
   projectId: string;
   index: QuestionIndex;
   changeToken: number;
   reload: (silent?: boolean) => void;
+  /** 从文档链接点进来要选中的那条。`seq` 变了就再选一次，同一条连点两次也生效 */
+  focus?: { id: string; seq: number } | null;
   /**
    * 这一页现在露在前面吗。工作台化之后本页在切到产出物页时**仍然挂着**
    * （切回来要保持原样：筛选、卡片位置都不重置），
@@ -856,6 +859,23 @@ function QuestionsBody({
     const pane = cardPaneRef.current?.querySelector<HTMLElement>('[data-slot="scroll-area-viewport"]');
     if (pane && document.activeElement !== pane) pane.focus({ preventScroll: true });
   };
+
+  // 链接点进来：切到那条所在的筛选再选中它。筛选、子筛选都要跟着换，否则它不在清单里
+  const focusSeq = focus?.seq;
+  useEffect(() => {
+    if (!focus) return;
+    const item = index.items.find((entry) => entry.id === focus.id);
+    if (!item) return;
+    setFilter(bucketOf(item));
+    setOnlyUnflowed(false);
+    setSelectedId(item.id);
+    // 已经是选中项时下面那个 effect 不会再触发；等这一帧渲染完再滚一次
+    const frame = requestAnimationFrame(() => {
+      rowRefs.current.get(item.id)?.scrollIntoView({ block: 'nearest' });
+    });
+    return () => cancelAnimationFrame(frame);
+    // 只跟请求走：清单刷新不该把人拽回这一条
+  }, [focusSeq]);
 
   // 翻页后把选中行滚进可视区
   useEffect(() => {
@@ -1114,6 +1134,7 @@ export function QuestionsPane({
   reload,
   workspaceAvailable = true,
   active,
+  focus,
 }: {
   projectId: string;
   index: QuestionIndex | null;
@@ -1130,6 +1151,8 @@ export function QuestionsPane({
   workspaceAvailable?: boolean;
   /** 这一页露在前面吗。切走时内部状态照旧留着，只是不再接管方向键 */
   active: boolean;
+  /** 打开时要选中的问题（从文档链接点进来）。不给就照旧 */
+  focus?: { id: string; seq: number } | null;
 }) {
   if (unsupported) {
     return (
@@ -1205,6 +1228,7 @@ export function QuestionsPane({
         changeToken={changeToken}
         reload={reload}
         active={active}
+        focus={focus}
       />
     );
   }

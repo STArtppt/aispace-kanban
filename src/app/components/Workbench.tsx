@@ -47,6 +47,7 @@ export function Workbench({
   records,
   changeToken,
   workspaceAvailable = true,
+  focusQuestion,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -72,6 +73,8 @@ export function Workbench({
   changeToken: number;
   /** 工作空间目录还在不在（`scan.available`）。两页的降级文案都要用它 */
   workspaceAvailable?: boolean;
+  /** 打开时要选中的问题（从文档链接点进来）。不给就照旧 */
+  focusQuestion?: { id: string; seq: number } | null;
 }) {
   // 本仓唯一的 App 级快捷键。⌘K / Ctrl+K 开关，Esc 由 Dialog 自己收（见 useGlobalHotkey）
   useGlobalHotkey('k', () => onOpenChange(!open));
@@ -132,6 +135,7 @@ export function Workbench({
               reload={questions.reload}
               workspaceAvailable={workspaceAvailable}
               active={page === 'questions'}
+              focus={focusQuestion}
             />
           </div>
           <div className={cn('flex min-h-0 flex-1 flex-col', page !== 'records' && 'hidden')} inert={page !== 'records'}>

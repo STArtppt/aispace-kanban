@@ -135,3 +135,71 @@
   animation: search-flash 2s ease-out both;
   border-radius: 0.375rem;
 }
+
+/*
+ * 工作空间 Markdown 的 callout / 标签 / 文档嵌入 / 公式。
+ * 需要注意的 callout 只用 --destructive；其余黑白灰。
+ * katex 自带样式里有纯黑色，深色模式下会看不见，这里拉回正文颜色。
+ */
+.markdown-body .callout {
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: var(--muted);
+  padding: 0.7rem 0.9rem;
+}
+
+.markdown-body .callout-attention {
+  border-left-color: var(--destructive);
+}
+
+.markdown-body .callout-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.markdown-body .callout-attention .callout-title {
+  color: var(--destructive);
+}
+
+.markdown-body .callout p {
+  margin-top: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.markdown-body details.callout > summary {
+  cursor: pointer;
+}
+
+.markdown-body .md-tag {
+  display: inline-block;
+  margin: 0 0.3rem 0.1rem 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--background);
+  padding: 0 0.45rem;
+  font-size: 0.75rem;
+  line-height: 1.45rem;
+  color: var(--muted-foreground);
+}
+
+.markdown-body a.md-embed {
+  text-decoration: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--muted);
+  padding: 0.05rem 0.4rem;
+}
+
+.markdown-body .katex,
+.markdown-body .katex * {
+  color: inherit;
+}
+
+.markdown-body .katex-display {
+  margin: 0.75rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
