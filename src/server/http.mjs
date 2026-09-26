@@ -97,6 +97,7 @@ const MIME = {
   '.gif': 'image/gif',
   '.webp': 'image/webp',
   '.bmp': 'image/bmp',
+  '.pdf': 'application/pdf',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
@@ -1804,7 +1805,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return sendStaticFile(res, abs, { isolate: true });
   }
 
-  // 读文件正文：md / csv / txt 走这里，图片也走这里（按 MIME 直出）
+  // 读文件正文：md / csv / txt 走这里，图片、PDF 也走这里（按 MIME 直出）
   if (head === 'projects' && id && action === 'file') {
     const project = requireProject(id);
     const abs = resolveInside(project.root, url.searchParams.get('path'));

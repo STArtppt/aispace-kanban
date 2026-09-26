@@ -1012,6 +1012,10 @@ export function Reader({
     ? 'table'
     : item.reader;
 
+  // PDF 仍是 external（不改扫描契约），但交给浏览器自带的 PDF 查看器内嵌预览：
+  // 扫描件和文字件一样能看，不引依赖。目录型产物不走这条。
+  const isPdf = mode === 'external' && !isDir && /\.pdf$/i.test(item.path);
+
   const contentPath =
     mode === 'markdown' && isDir
       ? manifestPath
@@ -1649,7 +1653,27 @@ export function Reader({
             </div>
           ) : null}
 
-          {mode === 'external' ? (
+          {isPdf ? (
+            <div className="flex h-[min(80vh,900px)] flex-col gap-2">
+              <iframe
+                title={item.title || item.name}
+                src={api.fileUrl(projectId, item.path)}
+                className="h-full w-full flex-1 rounded-lg border border-border bg-white"
+              />
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" onClick={() => void api.reveal(projectId, item.path, 'open')}>
+                  <SquareArrowOutUpRight className="size-3.5" />
+                  用默认程序打开
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => void api.reveal(projectId, item.path)}>
+                  <FolderOpen className="size-3.5" />
+                  在{fileManager}中显示
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          {mode === 'external' && !isPdf ? (
             <div className="flex flex-col items-start gap-4 rounded-lg border border-dashed border-border px-5 py-8">
               <div className="flex flex-col gap-1">
                 <p className="text-sm">这是原始格式文档，网页里不渲染。</p>
