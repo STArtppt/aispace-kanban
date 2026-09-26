@@ -169,9 +169,9 @@ function countFiles<T>(dir: TreeDir<T>): number {
   return dir.count;
 }
 
-/** 目录按名称排；文件保持调用方给的顺序（那是用户选的排序结果） */
+/** 目录按名称自然序排（10 排在 9 之后）；文件保持调用方给的顺序（那是用户选的排序结果） */
 function sortDirs<T>(dir: TreeDir<T>) {
-  dir.dirs.sort((a, b) => a.name.localeCompare(b.name, 'zh'));
+  dir.dirs.sort((a, b) => a.name.localeCompare(b.name, 'zh', { numeric: true }));
   for (const child of dir.dirs) sortDirs(child);
 }
 

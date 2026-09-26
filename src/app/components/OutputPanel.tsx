@@ -492,7 +492,7 @@ export function OutputPanel({
           const pin = Number(pins.has(b.path)) - Number(pins.has(a.path));
           if (pin) return pin;
           if (sortKey === 'name') {
-            return (a.title || a.name).localeCompare(b.title || b.name, 'zh');
+            return (a.title || a.name).localeCompare(b.title || b.name, 'zh', { numeric: true });
           }
           const cmp = (a.mtime || '').localeCompare(b.mtime || '');
           return sortKey === 'mtimeAsc' ? cmp : -cmp;

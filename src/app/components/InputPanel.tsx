@@ -388,7 +388,7 @@ function PendingList({
       const pin = Number(pins.has(b.path)) - Number(pins.has(a.path));
       if (pin) return pin;
       if (sortKey === 'name') {
-        return pendingLabel(a).localeCompare(pendingLabel(b), 'zh');
+        return pendingLabel(a).localeCompare(pendingLabel(b), 'zh', { numeric: true });
       }
       const cmp = (a.mtime || '').localeCompare(b.mtime || '');
       return sortKey === 'mtimeAsc' ? cmp : -cmp;
@@ -615,7 +615,7 @@ function ConvertedList({
       const pin = Number(pins.has(b.path)) - Number(pins.has(a.path));
       if (pin) return pin;
       if (sortKey === 'name') {
-        return (a.title || a.name).localeCompare(b.title || b.name, 'zh');
+        return (a.title || a.name).localeCompare(b.title || b.name, 'zh', { numeric: true });
       }
       const cmp = (a.mtime || '').localeCompare(b.mtime || '');
       return sortKey === 'mtimeAsc' ? cmp : -cmp;
