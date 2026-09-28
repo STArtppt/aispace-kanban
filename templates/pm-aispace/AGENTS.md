@@ -177,7 +177,8 @@ raw/客户版          # 目录：连同其下所有文件一起忽略
 ```
 
 gitignore 风格，路径相对 `input/` 写。**`scripts/layout.py`（三个转换脚本共用）和看板
-`src/server/scan.mjs` 读的是同一份**，改一次全都生效——改动其中一侧的匹配规则时必须同步另一侧。
+[`src/server/scan.mjs`](https://github.com/STArtppt/aispace-kanban/blob/main/src/server/scan.mjs) 读的是同一份**，改一次全都生效。两边的匹配规则必须一致：要改 `layout.py` 的匹配规则，
+看板那一侧你不能改，写反馈单（见「看板显示不对时」）。
 
 `pointtable.py` 的自动发现尤其依赖它：探测点表要逐个读文件头，上千份存量资料全扫一遍要
 好几分钟；整个目录被忽略时直接跳过，不走进去。
@@ -479,7 +480,7 @@ Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也�
 ### 现在可用
 
 - **扁平 YAML front-matter**：只允许 `key: value` 与 `key:` + `  - item` 两种形态。
-  看板的解析器（`src/server/frontmatter.mjs`）只认这两种；
+  看板的解析器（[`src/server/frontmatter.mjs`](https://github.com/STArtppt/aispace-kanban/blob/main/src/server/frontmatter.mjs)）只认这两种；
   内联数组 `tags: [a, b]` 会被整体当成一个字符串，语义静默丢掉。
   这条与 [`output/questions/README.md`](output/questions/README.md) 已有的扁平约束是**同一条**，
   现在从 `questions/` 扩到全部手写 Markdown。
@@ -534,6 +535,74 @@ python3 scripts/migrate_markdown.py --write  # 确认后落盘
 校验闸的作用不是阻止违约——agent 直接改文件谁也拦不住——是**让违约可见，不要静默生效**。
 这两个脚本是工作空间自己的工具，看板既不调用也不 spawn。
 
+## 看板显示不对时
+
+看板是另一个仓库的程序，**对你只读**：可以读它的源码来弄清它期望什么，**不能改它**。
+它不知道你这份文档，你也不知道它的不变量、验证要求和提交约定 —— 为一份文档改渲染器，
+多半会把别的写法弄坏，而且改动没人审、没人提交。
+
+### 去哪查
+
+看板源码公开在 **<https://github.com/STArtppt/aispace-kanban>**。**读 GitHub 上的文件，
+不要去翻本机的看板仓库或 npm 包目录**（那在工作空间外，每次都要用户授权）。
+取原文用 `https://raw.githubusercontent.com/STArtppt/aispace-kanban/main/<路径>`，下表路径拼在后面：
+
+| 想查什么 | 路径 |
+| --- | --- |
+| 概览页怎么显示 `project.yaml` | `src/app/components/MetaView.tsx`、`src/server/meta.mjs` |
+| front-matter 解析 | `src/server/frontmatter.mjs` |
+| Markdown 渲染（callout、wikilink、数学、标签等） | `src/app/components/Markdown.tsx`、`src/app/lib/markdownSyntax.ts` |
+| 文档内链接与图片地址 | `src/app/lib/markdownUrls.ts` |
+| mermaid 图 | `src/app/components/MermaidBlock.tsx`、`src/app/lib/mermaid.ts` |
+
+GitHub 上的 `main` 可能与用户本机跑的版本有出入，对不上时如实说明，别下定论。
+
+### 怎么处理
+
+1. **先改自己这边。** 对照上文的约定（Markdown 写法、`project.yaml` 里各字段的「形如」注释），
+   多数问题是写法没对上，改工作空间里的文件就解决了。
+2. **确认是看板的缺陷**（照约定写了还是显示错，或者约定本身没写清）：
+   工作空间里的文件照样改到能正确显示（临时绕法），然后**写一份反馈单**，见下。
+3. 回复用户时说清：反馈单在哪、用了什么临时绕法、看板那边要改的大致是什么。
+
+**不要改看板仓库或 npm 包目录里的任何文件**，哪怕你已经看出该怎么改 ——
+把改法写进反馈单，由用户带到看板仓库那边按它的规矩改。
+
+### 反馈单 `.kanban-feedback/`
+
+放在工作空间根目录的 `.kanban-feedback/`（隐藏目录，看板不扫、不显示），
+**一个问题一份**，文件名 `YYYY-MM-DD-<短标题>.md`。目录不存在就建。
+
+```markdown
+# <一句话说清问题>
+
+- 状态：待处理
+- 回执：
+
+## 现象
+看板哪个视图、哪一块、显示成了什么样。
+
+## 期望
+应该显示成什么样。
+
+## 最小复现
+合成的最小片段（自己编的名称和内容），能单独复现问题。
+
+## 疑似源码位置
+GitHub 链接，尽量带行号：https://github.com/STArtppt/aispace-kanban/blob/main/<路径>#L<行>
+
+## 建议改法
+文字说明，或一段 diff 文本。只写在这里，不落到看板仓库。
+
+## 临时绕法
+工作空间里改了哪些文件、怎么改的；看板修好后要撤掉哪些。
+```
+
+- **最小复现必须是合成的**，不贴工作空间里的真实资料、客户名称、截图。这份单子可能被带进公开仓库。
+- `状态` 只用三个值：`待处理` / `已修复` / `不修`。
+- 用户转来看板那边的回执时：把 `状态` 改掉，`回执` 填上结论和看板提交号（不修就写理由）；
+  已修复的，按「临时绕法」一节撤掉绕法，改回按约定的写法。
+
 ## 不要做的事
 
 - **不要主动读取 `input/raw/` 下的原始文件**（除非用户明确要求）。分析、写文档、追溯一律优先用 `input/converted/` 和 `input/INDEX.md`。原始文件（尤其 PDF / docx / xlsx）体积大、进上下文烧 token，且内容已由 `scripts/ingest.py` 转成可读文本——默认读转换产物即可。用户说「打开原件」「对照 raw 里的某某」「看一下原始 PDF」时才读 `input/raw/`。
@@ -548,6 +617,8 @@ python3 scripts/migrate_markdown.py --write  # 确认后落盘
   自己的单页 HTML 一个子目录一个 `index.html`，见上文。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。
 - 不要用推断填平资料空白，标注出来交给用户去确认。
+- 不要读写本机的看板仓库或看板的 npm 包目录。要看看板源码读 GitHub；看板有缺陷写反馈单
+  （见「看板显示不对时」）。唯一的例外是下面「模板改动回同步源」规定的那几个文件。
 
 ## 模板改动回同步源
 
@@ -557,6 +628,12 @@ python3 scripts/migrate_markdown.py --write  # 确认后落盘
 
 **凡是改动了模板自带文件**（如 `scripts/ingest.py`、`skills/` 下的通用技能、`AGENTS.md` 等），
 在改动完成后必须同步回模板源，否则下次新建工作空间会丢失这些优化。
+
+**能写的范围只有一处**：看板仓库 `templates/pm-aispace/` 下、与本工作空间里同名的那个文件
+（例如本空间的 `skills/pm-project-meta/SKILL.md` → 看板仓库的
+`templates/pm-aispace/.claude/skills/pm-project-meta/SKILL.md`）。
+看板仓库的其余部分 —— 根目录下的 `src/`、`bin/`、`scripts/`、`package.json`，`templates/init_workspace.py`
+以及别的一切 —— **都不在范围内**。问题要改看板代码才能解决的，写反馈单（见「看板显示不对时」）。
 
 同步规则：
 

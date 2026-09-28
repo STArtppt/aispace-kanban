@@ -8,6 +8,11 @@
 
 --from 指向某个模板目录（里面要有 template.yaml）。不传时用旁边的 pm-aispace。
 新建时只需要名称和路径，元信息里的其它字段先留 null。
+
+新建时会顺带在 .claude/settings.local.json 里写「禁止改看板源码」的权限规则。
+给已有工作空间补这条规则（只写这一个文件）：
+
+    python3 templates/init_workspace.py --guard-only --path <工作空间目录>
 """
 from __future__ import annotations
 
@@ -128,6 +133,77 @@ def ensure_skill_creator(target: Path) -> None:
     shutil.copytree(src, dest)
 
 
+def kanban_root() -> Path | None:
+    """
+    看板根目录：本脚本所在 templates/ 的上一级（源码仓库或 npm 包目录）。
+    用 PMWORK_TEMPLATE_ROOT 把脚本挪到别处时，上一级就不是看板了 —— 按包名认，认不出返回 None。
+    """
+    root = HERE.parent
+    try:
+        pkg = json.loads((root / "package.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    name = pkg.get("name", "") if isinstance(pkg, dict) else ""
+    return root if name.split("/")[-1] == "aispace-kanban" else None
+
+
+def permission_path(p: Path, is_dir: bool) -> str:
+    """Claude Code 权限规则里的绝对路径写 //<路径>；Windows 盘符写成 /c/... 的形状。"""
+    posix = p.as_posix()
+    if p.drive:
+        posix = "/" + p.drive.rstrip(":").lower() + posix[len(p.drive):]
+    return f"Edit(/{posix}/**)" if is_dir else f"Edit(/{posix})"
+
+
+def guard_rules(src_root: Path) -> list[str]:
+    """
+    工作空间里的 agent 不许改看板源码（理由见模板 AGENTS.md「看板显示不对时」）。
+    Claude Code 里 deny 压过 allow，没法「整个看板 deny、只放行本模板」，
+    所以逐个列顶层条目：templates/ 以外全 deny，templates/ 里只留本模板（模板改动回同步源要写它）。
+    Edit 规则对 Claude Code 所有内置写文件工具都生效；shell 写法拦不住，主防线仍是 AGENTS.md。
+    """
+    root = kanban_root()
+    if root is None:
+        return []
+    rules = []
+    for item in sorted(root.iterdir()):
+        if item.name == "templates":
+            for sub in sorted(item.iterdir()):
+                if sub.resolve() != src_root:
+                    rules.append(permission_path(sub, sub.is_dir()))
+        else:
+            rules.append(permission_path(item, item.is_dir()))
+    return rules
+
+
+def write_guard(target: Path, src_root: Path) -> int:
+    """
+    把 guard_rules 合并进 <工作空间>/.claude/settings.local.json 的 permissions.deny，返回新增条数。
+    只动这一个文件的这一个字段：已有条目、allow 和其它字段原样保留，重复跑结果一样。
+    写 settings.local.json 而不是 settings.json：里面是本机绝对路径，不该入库、不该跟着工作空间搬走。
+    """
+    rules = guard_rules(src_root)
+    if not rules:
+        return 0
+    path = target / ".claude" / "settings.local.json"
+    data: dict = {}
+    if path.exists():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError(f"{path} 不是 JSON 对象，没有改动它")
+    perms = data.setdefault("permissions", {})
+    deny = perms.setdefault("deny", [])
+    added = [r for r in rules if r not in deny]
+    if not added:
+        return 0
+    deny.extend(added)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    return len(added)
+
+
 def render_project_yaml(src_root: Path, name: str) -> str:
     """拿模板自己的 project.yaml 当骨架，只替换 workspace 段。没有这份文件就写最小骨架。"""
     today = dt.date.today().isoformat()
@@ -146,13 +222,36 @@ def render_project_yaml(src_root: Path, name: str) -> str:
     return "\n".join(lines)
 
 
+def guard_only(target: Path, src_root: Path, as_json: bool) -> int:
+    """--guard-only：给已有工作空间补规则。用户在命令行手动跑，看板不调用。"""
+    if not target.is_dir():
+        return fail(f"工作空间目录不存在：{target}", as_json)
+    if kanban_root() is None:
+        return fail("没找到看板根目录（本脚本要放在看板仓库或 npm 包的 templates/ 下才能用）", as_json)
+    try:
+        added = write_guard(target, src_root)
+    except ValueError as err:
+        return fail(str(err), as_json)
+    if as_json:
+        print(json.dumps({"ok": True, "root": str(target), "guard": added}, ensure_ascii=False))
+    else:
+        log(f"已补上 {added} 条禁改看板源码的权限规则：{target / '.claude' / 'settings.local.json'}"
+            if added else "规则已经齐了，没有改动")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="从一份模板初始化一个新的工作空间")
     ap.add_argument("--from", dest="from_dir", default="", help="模板目录（默认：本目录下的 pm-aispace）")
-    ap.add_argument("--name", required=True, help="工作空间名称")
+    ap.add_argument("--name", default="", help="工作空间名称（新建时必填）")
     ap.add_argument("--path", required=True, help="工作空间目录（不存在会创建）")
     ap.add_argument("--force", action="store_true", help="目标目录非空时也继续")
     ap.add_argument("--json", action="store_true", help="以 JSON 输出结果，供程序调用")
+    ap.add_argument(
+        "--guard-only",
+        action="store_true",
+        help="只给已有工作空间补上「禁止改看板源码」的权限规则，不复制、不新建其它任何文件",
+    )
     args = ap.parse_args()
 
     src_root = Path(args.from_dir).expanduser().resolve() if args.from_dir else (HERE / "pm-aispace")
@@ -160,6 +259,10 @@ def main() -> int:
         return fail(f"找不到模板目录：{src_root}", args.json)
 
     target = Path(args.path).expanduser().resolve()
+    if args.guard_only:
+        return guard_only(target, src_root, args.json)
+    if not args.name:
+        return fail("新建工作空间要给 --name", args.json)
     if target.exists() and any(target.iterdir()) and not args.force:
         return fail(f"目录非空：{target}（要在已有目录上初始化请加 --force）", args.json)
 
@@ -182,13 +285,20 @@ def main() -> int:
         shutil.copy2(ignore_src, target / "input" / ".ingestignore")
 
     (target / "project.yaml").write_text(render_project_yaml(src_root, args.name), encoding="utf-8")
+    try:
+        guard = write_guard(target, src_root)
+    except (OSError, ValueError) as err:
+        # 规则是附加防线，写不成不该让新建失败
+        print(f"禁改看板源码的权限规则没写成：{err}", file=sys.stderr)
+        guard = 0
 
     if args.json:
         # 名字里多半有中文；stdout 已在上面强制成 UTF-8，Windows 上不会再炸编码
-        print(json.dumps({"ok": True, "root": str(target), "name": args.name}, ensure_ascii=False))
+        print(json.dumps({"ok": True, "root": str(target), "name": args.name, "guard": guard}, ensure_ascii=False))
     else:
         log(f"工作空间已创建：{target}")
         log(f"  名称：{args.name}")
+        log(f"  禁改看板源码的权限规则：{guard} 条" if guard else "  没找到看板根目录，未生成禁改看板源码的权限规则")
         ingest = target / "scripts" / "ingest.py"
         if ingest.exists():
             log("\n下一步：把资料放进 input/raw/，然后跑")

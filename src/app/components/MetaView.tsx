@@ -83,7 +83,7 @@ function FactGrid({ meta }: { meta: ProjectMeta }) {
 }
 
 function BulletList({ items, title }: { items: unknown[]; title: string }) {
-  if (!items?.length) return null;
+  if (!Array.isArray(items) || !items.length) return null;
   return (
     <div className="flex flex-col gap-2">
       <SectionTitle count={items.length}>{title}</SectionTitle>
@@ -102,9 +102,29 @@ function BulletList({ items, title }: { items: unknown[]; title: string }) {
   );
 }
 
-function ObjectTable({ rows, title }: { rows: Record<string, any>[]; title: string }) {
-  if (!rows?.length) return null;
-  const columns = [...new Set(rows.flatMap((row) => Object.keys(row)))];
+/**
+ * 行不一定是对象：`deliverables` 这类字段允许直接写成字符串数组。
+ * 若照直 `Object.keys('《示例调研方案》')`，拿到的是 `['0','1','2'…]` ——
+ * 一句话会被拆成几十个单字列，表面看像一张表，实际什么也没表达。
+ * 原始值行统一收进单列 `PLAIN_COLUMN`。
+ */
+const PLAIN_COLUMN = '内容';
+
+function isRecord(row: unknown): row is Record<string, unknown> {
+  return row !== null && typeof row === 'object';
+}
+
+function cellText(row: unknown, col: string): string | null {
+  const value = isRecord(row) ? row[col] : col === PLAIN_COLUMN ? row : null;
+  return value === null || value === undefined || value === '' ? null : String(value);
+}
+
+function ObjectTable({ rows, title }: { rows: unknown[]; title: string }) {
+  // project.yaml 是手写的：字段整个写成一个字符串时 rows 不是数组，照直 flatMap 会白屏
+  if (!Array.isArray(rows) || !rows.length) return null;
+  const columns = [
+    ...new Set(rows.flatMap((row) => (isRecord(row) ? Object.keys(row) : [PLAIN_COLUMN]))),
+  ];
   return (
     <div className="flex flex-col gap-2">
       <SectionTitle count={rows.length}>{title}</SectionTitle>
@@ -122,15 +142,14 @@ function ObjectTable({ rows, title }: { rows: Record<string, any>[]; title: stri
           <tbody>
             {rows.map((row, i) => (
               <tr key={i}>
-                {columns.map((col) => (
-                  <td key={col} className="border-b border-border px-3 py-2 align-top">
-                    {row[col] === null || row[col] === undefined || row[col] === '' ? (
-                      <span className="text-muted-foreground/60">待补充</span>
-                    ) : (
-                      String(row[col])
-                    )}
-                  </td>
-                ))}
+                {columns.map((col) => {
+                  const text = cellText(row, col);
+                  return (
+                    <td key={col} className="border-b border-border px-3 py-2 align-top">
+                      {text ?? <span className="text-muted-foreground/60">待补充</span>}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
@@ -244,6 +263,7 @@ export function MetaView({ meta }: { meta: ProjectMeta }) {
       <BulletList items={constraints.合规 || []} title="合规约束" />
       <ObjectTable rows={data.systems || []} title="既有系统（数据来源）" />
       <BulletList items={data.acceptance?.流程 || []} title="验收流程" />
+      <BulletList items={data.acceptance?.标准 || []} title="验收标准" />
 
       <MissingList meta={meta} />
 

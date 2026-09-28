@@ -2,6 +2,9 @@
 .env
 .env.local
 
+# Claude Code 本机设置：里面有新建时生成的「禁止改看板源码」规则，写的是本机绝对路径
+.claude/settings.local.json
+
 .DS_Store
 Thumbs.db
 *.swp
