@@ -367,7 +367,7 @@ export function SidebarRail({
                             'flex items-center gap-1.5 rounded-md border border-transparent px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent',
                             // 选中态同侧栏工作空间项：浅灰底 + 细深色描边
                             project.id === activeId &&
-                              'border-foreground/40 bg-muted font-medium hover:bg-muted',
+                              'border-foreground/40 bg-selected font-medium hover:bg-selected',
                           )}
                         >
                           {broken ? (

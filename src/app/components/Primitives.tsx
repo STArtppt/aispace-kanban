@@ -137,12 +137,21 @@ export function Row({
       style={
         pad ? ({ paddingLeft: pad, '--row-sep-left': pad } as CSSProperties) : undefined
       }
+      data-active={active || undefined}
       className={cn(
         'relative flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-accent',
         pad
-          ? 'after:absolute after:right-0 after:bottom-0 after:left-[var(--row-sep-left)] after:h-px after:bg-border after:[content:""] last:after:content-none'
+          ? cn(
+              'after:absolute after:right-0 after:bottom-0 after:left-[var(--row-sep-left)] after:h-px after:bg-border last:after:content-none',
+              // 缩进的分割线只画了右半截：本行或下一行上了底色时，它会在色块左上角 / 左下角
+              // 留出 1px 的缺口。这时两条都藏掉，靠底色本身分隔
+              active
+                ? 'after:content-none'
+                : 'after:[content:""] hover:after:content-none [&:has(+:hover)]:after:content-none [&:has(+[data-active])]:after:content-none',
+            )
           : 'border-b border-border last:border-b-0',
-        active && 'bg-muted',
+        // 选中：深一档的底 + 左侧竖条，与 hover 的浅灰区分开
+        active && 'bg-selected shadow-[inset_2px_0_0_0_var(--color-foreground)] hover:bg-selected',
         className,
       )}
     >

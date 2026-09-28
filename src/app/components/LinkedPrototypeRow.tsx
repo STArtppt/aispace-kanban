@@ -257,7 +257,7 @@ export function LinkedPrototypeRow({
                   onClick={() => onOpen?.(toFileItem(doc))}
                   className={cn(
                     'flex min-w-0 items-baseline gap-2 rounded-md px-1.5 py-1 text-left outline-none transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring',
-                    openPath === doc.path && 'bg-accent',
+                    openPath === doc.path && 'bg-selected font-medium hover:bg-selected',
                   )}
                 >
                   <span className="truncate text-[13px]">{doc.label}</span>

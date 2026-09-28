@@ -1050,7 +1050,7 @@ function QuestionsBody({
                             title={`${item.id} · ${text}`}
                             className={cn(
                               'flex w-full items-center gap-2 border-l-2 border-transparent py-2 pr-3 pl-4 text-left transition-colors hover:bg-accent',
-                              item.id === selectedId && 'border-l-foreground bg-muted hover:bg-muted',
+                              item.id === selectedId && 'border-l-foreground bg-selected font-medium hover:bg-selected',
                             )}
                           >
                             <StatusDot item={item} />

@@ -237,7 +237,7 @@ function SidebarBody({
                 // border-transparent 常驻：选中时才上色，避免多出 1px 让行错位
                 'group flex items-center gap-1 rounded-md border border-transparent pr-1 transition-colors hover:bg-accent',
                 // 选中态同概览页「进行中」阶段：浅灰底 + 细深色描边
-                project.id === activeId && 'border-foreground/40 bg-muted hover:bg-muted',
+                project.id === activeId && 'border-foreground/40 bg-selected hover:bg-selected',
               )}
             >
               <button
@@ -283,7 +283,7 @@ function SidebarBody({
             }}
             className={cn(
               'flex items-center gap-2 rounded-md border border-transparent px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent',
-              view === key && 'border-foreground/40 bg-muted font-medium hover:bg-muted',
+              view === key && 'border-foreground/40 bg-selected font-medium hover:bg-selected',
             )}
           >
             <Icon className="size-4" />
