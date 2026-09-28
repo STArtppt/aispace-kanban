@@ -30,7 +30,7 @@ import {
 } from '../../shared/recordStatus.mjs';
 
 /**
- * 产出物记录这一页（⌘K 工作台的第二页）：左边先按类别、组内按状态分组的清单，
+ * 记录单这一页（⌘K 工作台的第二页）：左边按类别分 tab、tab 内按状态折叠分组的清单，
  * 右边单条详情 + 状态变更。
  *
  * 排序轴是「需不需要人处理」，**不是自我评估的优先级** —— `questions` 那边
@@ -43,17 +43,14 @@ import {
  * 正文其它小节的入口，这不是疏漏，是那条例外的边界。
  */
 
-/** `delivered` 超过这么多天没动就算停滞，排到需要人处理那一档。 */
+/** `delivered` 超过这么多天没动就算停滞：行上标出停了几天，组内排前面。 */
 const STALE_DAYS = 14;
 
-/** 三个筛选。与状态机对齐，不引入第四个自造的轴。 */
-type FilterKey = 'attention' | 'running' | 'closed';
-
-const FILTERS: { key: FilterKey; label: string }[] = [
-  { key: 'attention', label: '待处理' },
-  { key: 'running', label: '在途' },
-  { key: 'closed', label: '已收尾' },
-];
+/**
+ * 三个 tab 就是三个 `kind`，顺序与「产出文档」视图的三组一致（`RECORD_KINDS`）。
+ * `kind` 写错的记录单独成第四个 tab（只在有的时候出现）—— 让违约可见，不让它悄悄消失。
+ */
+const UNKNOWN_KIND = '';
 
 /** 终态：进了就不用再看了（`resolved_by` 指向接手的那一份）。 */
 const CLOSED = new Set(['absorbed', 'stale', 'final', 'superseded', 'overturned']);
@@ -73,19 +70,7 @@ function isStalled(item: OutputRecordItem): boolean {
   return item.status === 'delivered' && daysSince(item.status_changed || item.created) >= STALE_DAYS;
 }
 
-/**
- * 一条记录落进哪个筛选。
- * 「读不出」与「指向丢失」都归到待处理 —— 它们就是「数据不对、等人看一眼」那一堆，
- * 让违约可见，而不是让它悄悄消失。
- */
-function bucketOf(item: OutputRecordItem): FilterKey {
-  if (item.broken || item.targetMissing) return 'attention';
-  if (ATTENTION.has(item.status) || isStalled(item)) return 'attention';
-  if (CLOSED.has(item.status)) return 'closed';
-  return 'running';
-}
-
-/** 状态在组内的先后：待办的排前面，其余照状态机的推进方向。 */
+/** 状态分组的先后：待办的排前面，其余照状态机的推进方向。 */
 function statusRank(kind: string, status: string): number {
   if (ATTENTION.has(status)) return -1;
   const at = statusValuesOf(kind).indexOf(status);
@@ -119,13 +104,17 @@ function RecordRow({
       type="button"
       onClick={onSelect}
       aria-current={selected}
+      title={`${item.id} · ${item.title || item.name}`}
+      // 与问题单的清单行同一套样式：左竖条表示选中，编号永远看得见、截断的是描述
       className={cn(
-        'flex w-full items-center gap-2 border-b border-border px-3 py-2 text-left transition-colors hover:bg-accent',
-        selected && 'bg-muted',
+        'flex w-full items-center gap-2 border-l-2 border-transparent py-2 pr-3 pl-4 text-left transition-colors hover:bg-accent',
+        selected && 'border-l-foreground bg-selected font-medium hover:bg-selected',
       )}
     >
-      <span className="shrink-0 font-mono text-xs text-muted-foreground">{item.id}</span>
-      <span className="min-w-0 flex-1 truncate text-sm">{item.title || item.name}</span>
+      <span className="min-w-0 flex-1 truncate text-xs">
+        <span className="mr-1.5 font-mono text-[11px] text-muted-foreground">{item.id}</span>
+        {item.title || item.name}
+      </span>
       {flagged ? <FileWarning className="size-3.5 shrink-0 text-destructive" aria-hidden /> : null}
       {/* 中性灰：归档是位置不是状态，也不是需要注意的缺口。丢失优先 —— 那才要人处理 */}
       {item.targetArchived && !item.targetMissing ? (
@@ -397,140 +386,121 @@ function RecordsBody({
   changeToken: number;
   reload: (silent?: boolean) => void;
 }) {
-  const [filter, setFilter] = useState<FilterKey>('attention');
   const [selectedId, setSelectedId] = useState('');
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  /** 人手动开合过的状态分组（键是 `kind:status`）。没动过的走默认：终态收起，其余展开 */
+  const [toggled, setToggled] = useState<Map<string, boolean>>(() => new Map());
 
-  // 三个筛选各自的计数：全量算一次，切筛选不重算
-  const counts = useMemo(() => {
-    const out: Record<FilterKey, number> = { attention: 0, running: 0, closed: 0 };
-    for (const item of index.items) out[bucketOf(item)] += 1;
+  /** 按 `kind` 分桶。不认识的 `kind` 落进 `UNKNOWN_KIND` 桶 */
+  const byKind = useMemo(() => {
+    const out = new Map<string, OutputRecordItem[]>();
+    for (const item of index.items) {
+      const key = RECORD_KINDS.includes(item.kind as (typeof RECORD_KINDS)[number]) ? item.kind : UNKNOWN_KIND;
+      const bucket = out.get(key);
+      if (bucket) bucket.push(item);
+      else out.set(key, [item]);
+    }
     return out;
   }, [index.items]);
 
+  const tabs: string[] = byKind.has(UNKNOWN_KIND) ? [...RECORD_KINDS, UNKNOWN_KIND] : [...RECORD_KINDS];
+  const [pickedTab, setTab] = useState<string>(
+    () => RECORD_KINDS.find((kind) => byKind.has(kind)) ?? RECORD_KINDS[0],
+  );
+  // 未知类别修好后那个 tab 就没了：退回第一个
+  const tab = tabs.includes(pickedTab) ? pickedTab : RECORD_KINDS[0];
+
   /**
-   * 当前筛选下的分组：先按 `kind` 分三组，组内再按 `status` 分。
-   * **计数跟着筛选重算** —— 否则切到「已收尾」还看到按待处理算的分组数，点开却是空的。
-   * 三类的状态**不混在同一个分组轴上**：`kind` 决定状态机，混了就读不出含义。
+   * 当前 tab 下按 `status` 分组 —— 与问题单同一个形状：可折叠的组标题 + 组内清单。
+   * 组内停滞久的排前面：同一个 `delivered` 里也要先看最久没动的那几条。
    */
   const groups = useMemo(() => {
-    const hit = index.items.filter((item) => bucketOf(item) === filter);
-    const byKind = new Map<string, OutputRecordItem[]>();
-    for (const item of hit) {
-      const key = RECORD_KINDS.includes(item.kind as (typeof RECORD_KINDS)[number]) ? item.kind : '';
-      const bucket = byKind.get(key);
+    const byStatus = new Map<string, OutputRecordItem[]>();
+    for (const item of byKind.get(tab) || []) {
+      const key = item.status || '';
+      const bucket = byStatus.get(key);
       if (bucket) bucket.push(item);
-      else byKind.set(key, [item]);
+      else byStatus.set(key, [item]);
     }
-    const order = [...RECORD_KINDS, ''];
-    return [...byKind.entries()]
-      .sort((a, b) => order.indexOf(a[0] as string) - order.indexOf(b[0] as string))
-      .map(([kind, items]) => {
-        const byStatus = new Map<string, OutputRecordItem[]>();
-        for (const item of items) {
-          const key = item.status || '';
-          const bucket = byStatus.get(key);
-          if (bucket) bucket.push(item);
-          else byStatus.set(key, [item]);
-        }
-        return {
-          kind,
-          total: items.length,
-          statuses: [...byStatus.entries()]
-            .map(([status, rows]) => ({
-              status,
-              // 停滞久的排前面：同一个 `delivered` 里也要先看最久没动的那几条
-              rows: rows.sort(
-                (a, b) =>
-                  daysSince(b.status_changed || b.created) - daysSince(a.status_changed || a.created),
-              ),
-            }))
-            .sort((a, b) => statusRank(kind, a.status) - statusRank(kind, b.status)),
-        };
-      });
-  }, [index.items, filter]);
+    return [...byStatus.entries()]
+      .map(([status, rows]) => ({
+        status,
+        rows: [...rows].sort(
+          (a, b) => daysSince(b.status_changed || b.created) - daysSince(a.status_changed || a.created),
+        ),
+      }))
+      .sort((a, b) => statusRank(tab, a.status) - statusRank(tab, b.status));
+  }, [byKind, tab]);
 
-  const flat = useMemo(
-    () => groups.flatMap((group) => group.statuses.flatMap((s) => s.rows)),
-    [groups],
-  );
+  const isOpen = (status: string) => toggled.get(`${tab}:${status}`) ?? !CLOSED.has(status);
 
-  // 筛选切换后选中项可能不在列表里了：落到第一条，不要留一张对不上的卡片
+  const flat = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
+
+  // 切 tab 后选中项可能不在列表里了：落到第一条，不要留一张对不上的卡片
   const selected = flat.find((item) => item.id === selectedId) || flat[0] || null;
 
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex w-[21rem] shrink-0 flex-col border-r border-border">
         <div className="flex h-11 shrink-0 items-center gap-0.5 overflow-x-auto overscroll-x-contain border-b border-border px-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          {FILTERS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setFilter(key)}
-              aria-pressed={filter === key}
-              className={cn(
-                'relative shrink-0 px-2.5 py-2 text-sm whitespace-nowrap transition-colors',
-                filter === key
-                  ? 'font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-foreground'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {label}
-              <span className="ml-1 text-xs">({counts[key]})</span>
-            </button>
-          ))}
+          {tabs.map((key) => {
+            const count = byKind.get(key)?.length ?? 0;
+            return (
+              <button
+                key={key || 'unknown'}
+                type="button"
+                onClick={() => setTab(key)}
+                aria-pressed={tab === key}
+                className={cn(
+                  'relative h-11 shrink-0 px-2 text-sm whitespace-nowrap transition-colors',
+                  tab === key
+                    ? 'font-medium text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:bg-foreground'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {kindLabel(key)}
+                <span className={cn('ml-1 text-xs', key === UNKNOWN_KIND && 'text-destructive')}>({count})</span>
+              </button>
+            );
+          })}
         </div>
 
         <ScrollArea className="min-h-0 flex-1" viewportClassName="py-1 focus-visible:ring-0">
           {groups.length ? (
-            groups.map((group) => {
-              const isOpen = !collapsed.has(group.kind);
+            groups.map(({ status, rows }) => {
+              const open = isOpen(status);
               return (
-                <div key={group.kind || 'unknown'}>
+                <div key={status || 'unknown'}>
                   <button
                     type="button"
-                    aria-expanded={isOpen}
+                    aria-expanded={open}
                     onClick={() =>
-                      setCollapsed((prev) => {
-                        const next = new Set(prev);
-                        if (next.has(group.kind)) next.delete(group.kind);
-                        else next.add(group.kind);
-                        return next;
-                      })
+                      setToggled((prev) => new Map(prev).set(`${tab}:${status}`, !open))
                     }
                     className="flex w-full items-center gap-2 border-b border-border py-2 pl-3 text-left text-sm hover:bg-accent"
                   >
                     <ChevronRight
-                      className={cn('size-3.5 shrink-0 transition-transform', isOpen && 'rotate-90')}
+                      className={cn('size-3.5 shrink-0 transition-transform', open && 'rotate-90')}
                     />
-                    <span className="min-w-0 flex-1 truncate">{kindLabel(group.kind)}</span>
+                    <span className="min-w-0 flex-1 truncate">{statusLabel(status)}</span>
                     <span className="mr-3 shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                      {group.total}
+                      {rows.length}
                     </span>
                   </button>
-                  {isOpen
-                    ? group.statuses.map(({ status, rows }) => (
-                        <div key={status || 'unknown'}>
-                          <div className="flex items-center gap-2 border-b border-border bg-muted/40 px-3 py-1 text-xs text-muted-foreground">
-                            <span className="min-w-0 flex-1 truncate">{statusLabel(status)}</span>
-                            <span className="shrink-0">{rows.length}</span>
-                          </div>
-                          {rows.map((item) => (
-                            <RecordRow
-                              key={item.id}
-                              item={item}
-                              selected={selected?.id === item.id}
-                              onSelect={() => setSelectedId(item.id)}
-                            />
-                          ))}
-                        </div>
+                  {open
+                    ? rows.map((item) => (
+                        <RecordRow
+                          key={item.id}
+                          item={item}
+                          selected={selected?.id === item.id}
+                          onSelect={() => setSelectedId(item.id)}
+                        />
                       ))
                     : null}
                 </div>
               );
             })
           ) : (
-            <p className="px-3 py-10 text-center text-sm text-muted-foreground">这个筛选下没有记录</p>
+            <p className="px-3 py-10 text-center text-sm text-muted-foreground">这一类还没有记录</p>
           )}
         </ScrollArea>
       </div>
@@ -544,7 +514,7 @@ function RecordsBody({
             reload={reload}
           />
         ) : (
-          <p className="px-5 py-10 text-center text-sm text-muted-foreground">这个筛选下没有记录</p>
+          <p className="px-5 py-10 text-center text-sm text-muted-foreground">这一类还没有记录</p>
         )}
       </ScrollArea>
     </div>
@@ -552,7 +522,7 @@ function RecordsBody({
 }
 
 /**
- * 产出物这一页。空态分三种，各写清怎么开始 ——
+ * 记录单这一页。空态分三种，各写清怎么开始 ——
  * 「没这个目录」「服务是旧进程」「有目录但还没有记录」要人做的事完全不同。
  */
 export function RecordsPane({
@@ -584,7 +554,7 @@ export function RecordsPane({
             看板服务是常驻进程、不热更。在终端里重跑
             <code className="mx-1 rounded bg-muted px-1.5 py-0.5 font-mono">pnpm serve</code>
             （开发时是 <code className="rounded bg-muted px-1.5 py-0.5 font-mono">pnpm dev</code>）再打开这里。
-            未决问题那一页不受影响。
+            问题单那一页不受影响。
           </p>
         </div>
       </div>

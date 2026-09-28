@@ -43,6 +43,12 @@ import { cn } from '@/lib/utils';
 
 /** 不阻塞任何在途交付物的归处。与 questions/README.md 的约定同一个词。 */
 const BACKLOG = 'backlog';
+/** backlog 组在界面上的中文名。**只改显示**，落盘和发给 agent 的 prompt 里仍是 `backlog` */
+const BACKLOG_LABEL = '暂不阻塞';
+
+function groupLabel(name: string): string {
+  return name === BACKLOG ? BACKLOG_LABEL : name;
+}
 /** `blocks` 空着 = 迁移出来还没归类过（迁移只搬运不推断），单独成一组 */
 const UNSORTED = '待归类';
 
@@ -1007,7 +1013,7 @@ function QuestionsBody({
                       <ChevronRight
                         className={cn('size-3.5 shrink-0 transition-transform', isOpen && 'rotate-90')}
                       />
-                      <span className="min-w-0 flex-1 truncate">{group.name}</span>
+                      <span className="min-w-0 flex-1 truncate">{groupLabel(group.name)}</span>
                       <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
                         {group.items.length}
                       </span>
@@ -1022,10 +1028,10 @@ function QuestionsBody({
                       disabled={!batch.length}
                       title={
                         batch.length
-                          ? `复制「${group.name}」待 AI 更新的 ${batch.length} 条 prompt`
+                          ? `复制「${groupLabel(group.name)}」待 AI 更新的 ${batch.length} 条 prompt`
                           : '这一组没有待 AI 更新的问题'
                       }
-                      aria-label={`复制「${group.name}」的批量 prompt`}
+                      aria-label={`复制「${groupLabel(group.name)}」的批量 prompt`}
                       onClick={() =>
                         void copyPrompt('batch', batch.map((i) => i.path), `「${group.name}」`)
                       }

@@ -17,7 +17,7 @@
  */
 
 /** 产出物的三个类别。顺序就是界面上三组的先后。 */
-export const RECORD_KINDS = Object.freeze(['analysis', 'docs', 'decisions']);
+export const RECORD_KINDS = Object.freeze(['analysis', 'decisions', 'docs']);
 
 /**
  * `kind` → 合法状态值（顺序即状态机的推进方向，前端下拉照这个顺序排）。
@@ -52,8 +52,8 @@ export const RECORD_TARGET_DIR = Object.freeze({
 /** 界面上的中文类别名。三处（组标题、空态、错误文案）用同一份，不各写一遍。 */
 export const RECORD_KIND_LABEL = Object.freeze({
   analysis: '分析',
-  docs: '文档',
   decisions: '决策',
+  docs: '交付',
 });
 
 /**

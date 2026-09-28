@@ -8,6 +8,7 @@ import {
   DialogPortal,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { QuestionsPane } from '@/components/QuestionsDialog';
 import { RecordsPane } from '@/components/RecordsPane';
 import { useGlobalHotkey } from '@/hooks/useGlobalHotkey';
@@ -15,25 +16,25 @@ import { type OutputRecordIndex, type QuestionIndex } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /**
- * ⌘K 工作台：一个弹窗，两页 —— 未决问题、产出物。
+ * ⌘K 工作台：一个弹窗，两页 —— 问题单（未决问题）、记录单（产出物记录）。
  *
  * 为什么是同一个弹窗而不是两个入口：两者形状高度相似（清单 + 卡片 + 就地写入），
  * 分两个入口会让人记两个快捷键，而且将来第三类（待归档清单）又要再开一个。
  *
  * **这一层只管壳**：Dialog 容器、标题栏、两页切换、⌘K。
  * 两页的内脏各在自己的文件里，彼此**不共享状态** ——
- * 在产出物页做的筛选不影响未决问题页，反之亦然。
+ * 在记录单页做的筛选不影响问题单页，反之亦然。
  *
  * 两页都**常挂着**（只是非当前页 `hidden`）：切回来要保持原样（筛选、卡片位置都不重置），
  * 这是 spec 明写的要求。代价是被挡住的那页仍然活着，所以 `active` 要传下去 ——
- * 未决问题页据此让出 document 上的方向键，不然人在这一页按方向键会悄悄翻动那一页。
+ * 问题单页据此让出 document 上的方向键，不然人在这一页按方向键会悄悄翻动那一页。
  */
 
 type Page = 'questions' | 'records';
 
 const PAGES: { key: Page; label: string }[] = [
-  { key: 'questions', label: '未决问题' },
-  { key: 'records', label: '产出物' },
+  { key: 'questions', label: '问题单' },
+  { key: 'records', label: '记录单' },
 ];
 
 export function Workbench({
@@ -90,24 +91,21 @@ export function Workbench({
               两页切换。它是壳的一部分，所以放在标题栏里 ——
               放进内容区会让人以为这是某一页自己的筛选。
             */}
-            <div className="flex shrink-0 items-center gap-0.5">
-              {PAGES.map(({ key, label }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => onPageChange(key)}
-                  aria-pressed={page === key}
-                  className={cn(
-                    'rounded-md px-2.5 py-1 text-sm transition-colors',
-                    page === key
-                      ? 'bg-muted font-medium text-foreground'
-                      : 'text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
+            <Tabs
+              value={page}
+              onValueChange={(value) => {
+                if (PAGES.some(({ key }) => key === value)) onPageChange(value as Page);
+              }}
+              className="shrink-0"
+            >
+              <TabsList variant="segmented">
+                {PAGES.map(({ key, label }) => (
+                  <TabsTrigger key={key} value={key}>
+                    {label}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
               {projectName}
             </span>
