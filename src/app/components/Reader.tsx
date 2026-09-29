@@ -32,6 +32,7 @@ import { AnnotationLayer } from '@/components/AnnotationLayer';
 import { AnnotationToolbar } from '@/components/AnnotationToolbar';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { CodeFileView, codePreviewLabel, codePreviewLanguage } from '@/components/CodeFileView';
+import { DocxView } from '@/components/DocxView';
 import {
   DocumentToc,
   Markdown,
@@ -1015,6 +1016,8 @@ export function Reader({
   // PDF 仍是 external（不改扫描契约），但交给浏览器自带的 PDF 查看器内嵌预览：
   // 扫描件和文字件一样能看，不引依赖。目录型产物不走这条。
   const isPdf = mode === 'external' && !isDir && /\.pdf$/i.test(item.path);
+  // .docx 同理：扫描仍标 external，这里按扩展名交给 DocxView 在隔离 iframe 里渲染分页版式
+  const isDocx = mode === 'external' && !isDir && /\.docx$/i.test(item.path);
 
   const contentPath =
     mode === 'markdown' && isDir
@@ -1673,7 +1676,17 @@ export function Reader({
             </div>
           ) : null}
 
-          {mode === 'external' && !isPdf ? (
+          {isDocx ? (
+            <DocxView
+              projectId={projectId}
+              path={item.path}
+              title={item.title || item.name}
+              size={item.size}
+              mtime={item.mtime}
+            />
+          ) : null}
+
+          {mode === 'external' && !isPdf && !isDocx ? (
             <div className="flex flex-col items-start gap-4 rounded-lg border border-dashed border-border px-5 py-8">
               <div className="flex flex-col gap-1">
                 <p className="text-sm">这是原始格式文档，网页里不渲染。</p>

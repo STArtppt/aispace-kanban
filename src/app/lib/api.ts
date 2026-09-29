@@ -52,6 +52,16 @@ export interface FileItem {
   archiveRole?: ArchiveRole;
   /** 在组内子目录里（不在 一次归档/ 下）。本轮只能归档组根目录下的文件，这类要置灰说明 */
   nested?: boolean;
+  /**
+   * 不透明键：产出三组里的 `.md`、`input/raw/` 里的 `.docx` 才有。「转成 Word」「提炼模板」只拿它指定来源，
+   * 不传路径（AGENTS.md 不变量 1 第九条）。可选：旧服务进程没有，缺了入口置灰、提示重启。
+   */
+  docKey?: string;
+  /**
+   * 产出组里的 `.docx` 才有：是不是 docx 工具链转出来的（带生成标记）。
+   * `true` 才允许在「转成 Word」里勾选覆盖；`false` 一律拒绝覆盖。缺字段 = 旧服务，不据此判断。
+   */
+  docxGenerated?: boolean;
 }
 
 export type ArchiveRole = 'handoff' | 'index';
@@ -907,6 +917,238 @@ export interface RecordStatusPatch {
   resolved_by?: string;
 }
 
+/**
+ * 反馈单清单里的一条：只有 front-matter，没有正文。
+ * 新字段全部可选 —— 旧服务进程没有这个接口时调用方走 `unsupported`，
+ * 缺字段时不要当成 0 条。
+ */
+export interface FeedbackItem {
+  id?: string;
+  name?: string;
+  path?: string;
+  mtime?: string;
+  title?: string;
+  /** `pending` / `fixed` / `wontfix`，写歪的值原样保留，界面归到「未识别」 */
+  status?: string;
+  created?: string;
+  receipt?: string;
+  /** 最近一次「我已发出」的时间。空 = 还没发过 */
+  sent_at?: string;
+  broken?: boolean;
+  reason?: string;
+}
+
+/** 反馈单索引。`available: false` = 还没有 `output/feedback/`，不是错误。 */
+export interface FeedbackIndex {
+  dir?: string;
+  available?: boolean;
+  /** `.kanban-feedback/` 根上的 `.md` 份数。看板不读那些文件的内容 */
+  legacyCount?: number;
+  items?: FeedbackItem[];
+}
+
+export interface FeedbackSection {
+  heading?: string;
+  body?: string;
+}
+
+export interface FeedbackSend {
+  title?: string;
+  body?: string;
+}
+
+/** 单条详情：索引字段 + 按节拆好的正文 + 发送记录。 */
+export interface FeedbackDetail extends FeedbackItem {
+  sections?: FeedbackSection[];
+  sends?: FeedbackSend[];
+}
+
+/** docx 模板目录里约定的六样。缺的 `exists` 为 false，界面标「缺」。 */
+export interface DocxTemplateFiles {
+  profile?: { exists?: boolean; mtime?: string };
+  reference?: { exists?: boolean; mtime?: string };
+  cover?: { exists?: boolean; mtime?: string };
+  spec?: { exists?: boolean; mtime?: string };
+  collect?: { exists?: boolean; mtime?: string };
+  /** 可选：旧服务进程不报样张 */
+  sample?: { exists?: boolean; mtime?: string };
+}
+
+export interface DocxTemplateItem {
+  name?: string;
+  path?: string;
+  mtime?: string;
+  files?: DocxTemplateFiles;
+  /** 有 `reference.docx` 才算已生成。可选：旧服务进程没有，前端退回看 `files.reference.exists` */
+  generated?: boolean;
+  /** 采集报告里记的来源（工作空间相对路径），只用来显示 */
+  source?: string;
+  /** 来源还在 `input/raw/` 里时给出它的 docKey，「继续」「重新提炼」据此接着做 */
+  sourceDocKey?: string;
+}
+
+/** 模板索引。目录不在时 `available: false`、`items` 为空，状态码仍是 200。 */
+export interface DocxTemplateIndex {
+  dir?: string;
+  available?: boolean;
+  items?: DocxTemplateItem[];
+}
+
+export interface DocxTemplateDetail extends DocxTemplateItem {
+  /** `spec.md` 原文。文件不在或读不动时是空串 */
+  spec?: string;
+  /** `collect/report.json`。没采集过、读不了、旧服务进程时缺省 */
+  report?: DocxCollectReport;
+}
+
+/**
+ * 段落的实际生效格式（单位：pt / 字符 / 倍），由工作空间 scripts/docxkit/collect.py 算出。
+ * 键名是那边 `describe()` 的输出，改名两边一起改。
+ */
+export interface DocxFmt {
+  eastAsia: string | null;
+  ascii: string | null;
+  size: number | null;
+  bold: boolean;
+  jc: string;
+  firstLineChars: number | null;
+  firstLinePt: number | null;
+  hanging: boolean;
+  leftChars: number | null;
+  leftPt: number | null;
+  before: number;
+  after: number;
+  beforeLines: number | null;
+  afterLines: number | null;
+  line: number | null;
+  lineExact: number | null;
+  lineAtLeast: number | null;
+  outline: number | null;
+}
+
+/** 格式簇：同区域、生效格式完全相同的段落。示例只有「编号前缀 + 字数」，不含正文。 */
+export interface DocxCluster {
+  id: string;
+  zone: 'body' | 'table';
+  count: number;
+  fmt: DocxFmt;
+  styles: Record<string, number>;
+  manualNum: Record<string, number>;
+  autoNum: Record<string, number>;
+  numbered: number;
+  avgLen: number;
+  samples: string[];
+  /** 主样式的定义值（正文区才有）；与 fmt 不同的项列在 mismatch 里 —— 「样式定义不可信」 */
+  styleDefined: DocxFmt | null;
+  mismatch: string[];
+  /** 有大纲级别却没有编号：伪标题 */
+  pseudoHeading: boolean;
+  /** 建议角色；null = 建议丢弃（目录项等） */
+  suggestedRole?: string | null;
+}
+
+export interface DocxOutlineLevel {
+  level: number;
+  count: number;
+  numbered: number;
+  styles: Record<string, number>;
+  autoNum: Record<string, number>;
+  autoNumFmt?: Record<string, number>;
+  manualNum: Record<string, number>;
+  clusters: string[];
+}
+
+/** `collect/report.json`：采集报告。只列界面用得到的字段，其余原样忽略。 */
+export interface DocxCollectReport {
+  schema?: number;
+  source?: string;
+  toolVersion?: string;
+  styles?: { total: number; used: number; effective: number; unused: number; custom: number };
+  numbering?: { abstract: number; used: number };
+  paragraphs?: { total: number; nonEmpty: number; inTable: number; directPpr: number; directRpr: number };
+  outline?: DocxOutlineLevel[];
+  tables?: { total: number; borderKinds: Record<string, number> };
+  clusters: DocxCluster[];
+}
+
+/** 簇的决定：三选一。没写到的簇采用报告里的 suggestedRole。 */
+export type DocxClusterDecision = { role: string } | { merge: string } | { drop: true };
+
+/**
+ * 提炼第 ②③ 步的决定，经 stdin 交给 docx_template.py build。**不许出现路径**：
+ * 服务端对 path / file / dir / url 这类键名、含分隔符的值一律 400。
+ */
+export interface DocxDecisions {
+  schema?: 1;
+  clusters?: Record<string, DocxClusterDecision>;
+  /** 同一角色格式不一致时选定的值，键是「角色.属性」，如 `BodyText.line` */
+  choices?: Record<string, string | number | boolean>;
+}
+
+export interface DocxConflict {
+  key: string;
+  options: { value: string | number | boolean; count: number }[];
+  chosen: string | number | boolean;
+}
+
+export interface DocxCollectResult {
+  ok: true;
+  toolVersion?: string;
+  written?: string[];
+  clusters?: number;
+}
+
+export interface DocxBuildResult {
+  ok: true;
+  toolVersion?: string;
+  written?: string[];
+  /** 反查样张时不一致的项、缺 pandoc 跳过样张等；空数组 = 样张各角色格式与规范一致 */
+  warnings?: string[];
+  log?: string[];
+  conflicts?: DocxConflict[];
+  roles?: Record<string, number>;
+  pandocVersion?: string | null;
+}
+
+/** POST /api/projects/:id/docx/convert 的载荷：只有 docKey、模板名与 overwrite，不收路径。 */
+export interface DocxConvertRequest {
+  docKey: string;
+  /** 模板目录名，或 `@base`（通用规范） */
+  template: string;
+  overwrite?: boolean;
+}
+
+export interface DocxConvertResult {
+  ok: true;
+  toolVersion?: string;
+  /** 写出的 .docx（工作空间相对路径） */
+  target?: string;
+  written?: string[];
+  template?: string;
+  overwritten?: boolean;
+  warnings?: string[];
+  log?: string[];
+}
+
+/** `/api/health` 的可选字段：docx 工具链的系统依赖。缺字段 = 旧服务，界面不据此置灰。 */
+export interface DocxToolsHealth {
+  python?: boolean;
+  pandoc?: boolean;
+  /** 找到的 pandoc 版本；pandoc 为 false 而这里有值，说明版本低于 3 */
+  pandocVersion?: string | null;
+  /** 只在 `healthFor(工作空间)` 时有：这个工作空间有没有 docx 工具链脚本（旧工作空间没有） */
+  scripts?: boolean;
+}
+
+export interface Health {
+  ok: boolean;
+  platform?: string;
+  version?: string;
+  /** 服务允许写操作（环回监听）。false 时写按钮置灰并说明；缺字段 = 旧服务，不置灰 */
+  writable?: boolean;
+  docxTools?: DocxToolsHealth;
+}
+
 export interface NoteHistory {
   file: string;
   batches: NoteHistoryBatch[];
@@ -947,11 +1189,19 @@ export interface NoteSaveResult {
  */
 export class ApiError extends Error {
   status: number;
-  constructor(message: string, status: number) {
+  /** 可选的错误类别（docx 工具链的接口会给，如 `no-script` / `no-pandoc` / `not-generated`） */
+  kind?: string;
+  constructor(message: string, status: number, kind?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.kind = kind;
   }
+}
+
+/** 旧服务进程没有这个接口（404「未知接口」）：界面应提示重启看板，而不是当成真的出错。 */
+export function isUnsupported(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404 && err.message.startsWith('未知接口');
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -966,7 +1216,8 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
     if (res.status === 404 && typeof detail.error === 'string' && detail.error.startsWith('未知接口')) {
       throw new ApiError(`${detail.error}（接口服务的进程可能比前端旧，重启 serve 再试）`, res.status);
     }
-    throw new ApiError(detail.error || `请求失败（${res.status}）`, res.status);
+    throw new ApiError(detail.error || `请求失败（${res.status}）`, res.status,
+      typeof detail.kind === 'string' ? detail.kind : undefined);
   }
   return res.json() as Promise<T>;
 }
@@ -977,7 +1228,12 @@ export const api = {
    * version 是看板自己的版本（env / 发版注入的 package.json / git v* tag）。
    * 两者都可选：老服务进程没有，缺了 platform 按 macOS 的说法走、version 不显示。
    */
-  health: () => request<{ ok: boolean; platform?: string; version?: string }>('/api/health'),
+  health: () => request<Health>('/api/health'),
+  /**
+   * 带上工作空间：docxTools 会把那个工作空间 .env 里的 PANDOC_BIN 也算上（与脚本查找顺序一致）。
+   * 旧服务进程忽略这个参数，也没有 docxTools 字段。
+   */
+  healthFor: (projectId: string) => request<Health>(`/api/health?project=${encodeURIComponent(projectId)}`),
   /**
    * 探 `POST /api/pick-directory` 在不在。旧服务进程 404，调用方据此藏掉文件夹按钮。
    * GET 不弹窗。
@@ -1086,6 +1342,59 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(patch),
     }),
+  /**
+   * 看板反馈单索引：扫 `output/feedback/`，并附带旧目录 `.kanban-feedback/` 的份数。
+   * **老服务进程没有这个接口（404），调用方必须识别为 unsupported**：
+   * 提示重启，不要当成「这个工作空间没有反馈单」。
+   */
+  feedbackIndex: (id: string) => request<FeedbackIndex>(`/api/projects/${id}/feedback`),
+  /** 单条反馈单。只传编号（`F0003`），带路径片段的一律 400。 */
+  feedbackDetail: (id: string, feedbackId: string) =>
+    request<FeedbackDetail>(`/api/projects/${id}/feedback/${encodeURIComponent(feedbackId)}`),
+  /**
+   * 用户确认「我已发出」之后写 `sent_at` 并追加一条发送记录
+   * （AGENTS.md 不变量 1 的第八条窄例外）。
+   * 时间以服务端为准，载荷里的 `sent_at` 会被忽略；带上其它字段则 400。
+   */
+  feedbackMarkSent: (id: string, feedbackId: string) =>
+    request<FeedbackDetail>(`/api/projects/${id}/feedback/${encodeURIComponent(feedbackId)}/sent`, {
+      method: 'POST',
+      body: JSON.stringify({ sent_at: '' }),
+    }),
+  /**
+   * `output/docx-template/` 的一层子目录。只读。
+   * 老服务 404 时调用方识别为 unsupported，演示流程不依赖这份列表。
+   */
+  docxTemplates: (id: string) => request<DocxTemplateIndex>(`/api/projects/${id}/docx-templates`),
+  docxTemplate: (id: string, name: string) =>
+    request<DocxTemplateDetail>(
+      `/api/projects/${id}/docx-templates/${encodeURIComponent(name)}`,
+    ),
+  /**
+   * 提炼第 ② 步「开始分析」：服务端 spawn 工作空间的 docx_template.py collect（第九条例外）。
+   * 载荷只有 docKey 与 regenerate。重名未确认 409、非环回 403、缺脚本 / Python 400（kind 说明是哪种）。
+   * 旧服务进程 404，调用方用 `isUnsupported` 识别并提示重启。
+   */
+  docxCollect: (id: string, name: string, body: { docKey: string; regenerate?: boolean }) =>
+    request<DocxCollectResult>(`/api/projects/${id}/docx-templates/${encodeURIComponent(name)}/collect`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** 提炼第 ④ 步「生成模板」：决定经 stdin 交给脚本。已生成未确认重新生成 409。 */
+  docxBuild: (id: string, name: string, body: { docKey: string; decisions: DocxDecisions; regenerate?: boolean }) =>
+    request<DocxBuildResult>(`/api/projects/${id}/docx-templates/${encodeURIComponent(name)}/build`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 「转成 Word」：服务端 spawn 工作空间的 md2docx.py（第九条例外），成品落在 .md 同目录同名。
+   * 同名文件没有生成标记 409（kind `not-generated`）、带标记但没勾覆盖 409（`exists`）、缺 pandoc 400（`no-pandoc`）。
+   */
+  docxConvert: (id: string, body: DocxConvertRequest) =>
+    request<DocxConvertResult>(`/api/projects/${id}/docx/convert`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   file: (id: string, path: string) =>
     request<{ path: string; size: number; mtime: string; content: string }>(
       `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,
@@ -1133,6 +1442,21 @@ export const api = {
       `/api/projects/${id}/verify-source?path=${encodeURIComponent(path)}`,
     ),
   fileUrl: (id: string, path: string) => `/api/projects/${id}/file?path=${encodeURIComponent(path)}`,
+  /**
+   * 以二进制取回文件（.docx 预览用）。新服务按 MIME 直出；旧服务进程不认 .docx，
+   * 会把它当文本包进 JSON —— 这时抛 `kind: 'old-server'`，调用方提示重启后可预览，而不是喂给渲染器。
+   */
+  fileArrayBuffer: async (id: string, path: string): Promise<ArrayBuffer> => {
+    const res = await fetch(`/api/projects/${id}/file?path=${encodeURIComponent(path)}`);
+    if (!res.ok) {
+      const detail = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(detail.error || `请求失败（${res.status}）`, res.status);
+    }
+    if ((res.headers.get('content-type') || '').includes('application/json')) {
+      throw new ApiError('看板服务是旧版本，还不能直出这类文件；重启看板后可预览', 200, 'old-server');
+    }
+    return res.arrayBuffer();
+  },
   reveal: (id: string, path: string, mode: 'reveal' | 'open' = 'reveal') =>
     request<{ ok: boolean }>(`/api/projects/${id}/reveal`, {
       method: 'POST',

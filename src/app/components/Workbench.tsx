@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { ArrowLeft, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -9,33 +9,50 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { FeedbackPane } from '@/components/FeedbackPane';
 import { QuestionsPane } from '@/components/QuestionsDialog';
 import { RecordsPane } from '@/components/RecordsPane';
+import { TemplateRefinePane } from '@/components/TemplateRefinePane';
+import { WorkbenchHub, type HubModule } from '@/components/WorkbenchHub';
+import { useDocxTemplates } from '@/hooks/useDocxTemplates';
 import { useGlobalHotkey } from '@/hooks/useGlobalHotkey';
-import { type OutputRecordIndex, type QuestionIndex } from '@/lib/api';
+import {
+  type DocxTemplateItem,
+  type FeedbackIndex,
+  type FileItem,
+  type OutputRecordIndex,
+  type QuestionIndex,
+} from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 /**
- * ⌘K 工作台：一个弹窗，两页 —— 问题单（未决问题）、记录单（产出物记录）。
+ * ⌘K 工作台：先是模块浏览页，再进四个模块 ——
+ * 问题单、记录单、反馈单、模版洗炼。
  *
- * 为什么是同一个弹窗而不是两个入口：两者形状高度相似（清单 + 卡片 + 就地写入），
- * 分两个入口会让人记两个快捷键，而且将来第三类（待归档清单）又要再开一个。
+ * **这一层只管壳**：Dialog、标题栏、浏览页 / 模块切换、⌘K。
+ * 各页内脏各自一份状态，彼此不共享。
  *
- * **这一层只管壳**：Dialog 容器、标题栏、两页切换、⌘K。
- * 两页的内脏各在自己的文件里，彼此**不共享状态** ——
- * 在记录单页做的筛选不影响问题单页，反之亦然。
- *
- * 两页都**常挂着**（只是非当前页 `hidden`）：切回来要保持原样（筛选、卡片位置都不重置），
- * 这是 spec 明写的要求。代价是被挡住的那页仍然活着，所以 `active` 要传下去 ——
- * 问题单页据此让出 document 上的方向键，不然人在这一页按方向键会悄悄翻动那一页。
+ * 五页都常挂（非当前页 `hidden` + `inert`）：切回来筛选、选中项和滚动位置还在。
+ * 关掉再打开停在哪一页，由 App 级的 `page` 记住。
  */
 
-type Page = 'questions' | 'records';
+export type WorkbenchPage = 'hub' | HubModule;
 
-const PAGES: { key: Page; label: string }[] = [
+const MODULES: { key: HubModule; label: string }[] = [
   { key: 'questions', label: '问题单' },
   { key: 'records', label: '记录单' },
+  { key: 'feedback', label: '反馈单' },
+  { key: 'template', label: '模版洗炼' },
 ];
+
+function countOrNull(
+  blocked: boolean,
+  index: { items?: unknown[] } | null,
+  count: (items: unknown[]) => number,
+): number | null {
+  if (blocked || !index || !Array.isArray(index.items)) return null;
+  return count(index.items);
+}
 
 export function Workbench({
   open,
@@ -44,19 +61,24 @@ export function Workbench({
   onPageChange,
   projectId,
   projectName,
+  version,
   questions,
   records,
+  feedback,
+  rawFiles,
   changeToken,
   workspaceAvailable = true,
   focusQuestion,
+  focusTemplate,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 当前停在哪一页。状态在 App 级，关掉再打开还在原来那一页 */
-  page: Page;
-  onPageChange: (page: Page) => void;
+  page: WorkbenchPage;
+  onPageChange: (page: WorkbenchPage) => void;
   projectId: string;
   projectName: string;
+  /** 看板版本，写进反馈邮件正文。旧服务没有时是空串 */
+  version: string;
   questions: {
     index: QuestionIndex | null;
     loading: boolean;
@@ -71,41 +93,98 @@ export function Workbench({
     unsupported: boolean;
     reload: (silent?: boolean) => void;
   };
+  feedback: {
+    index: FeedbackIndex | null;
+    loading: boolean;
+    error: string;
+    unsupported: boolean;
+    reload: (silent?: boolean) => void;
+  };
+  /** `input/raw/` 里的文件，模版洗炼第 ① 步用来挑 `.docx` */
+  rawFiles: FileItem[];
   changeToken: number;
-  /** 工作空间目录还在不在（`scan.available`）。两页的降级文案都要用它 */
   workspaceAvailable?: boolean;
-  /** 打开时要选中的问题（从文档链接点进来）。不给就照旧 */
   focusQuestion?: { id: string; seq: number } | null;
+  /** 从「转成 Word」弹窗跳进来时要选中的模板 */
+  focusTemplate?: { name: string; seq: number } | null;
 }) {
-  // 本仓唯一的 App 级快捷键。⌘K / Ctrl+K 开关，Esc 由 Dialog 自己收（见 useGlobalHotkey）
   useGlobalHotkey('k', () => onOpenChange(!open));
+  // 模板清单在这一层取：浏览页的卡片计数和模版洗炼页共用一份
+  const templates = useDocxTemplates(projectId, changeToken);
+
+  const questionCount = countOrNull(
+    questions.unsupported || Boolean(questions.error),
+    questions.index,
+    (items) =>
+      (items as QuestionIndex['items']).filter(
+        (item) => !item.broken && (item.status === 'open' || item.status === 'pending_ai'),
+      ).length,
+  );
+  const recordCount = countOrNull(
+    records.unsupported || Boolean(records.error),
+    records.index,
+    (items) => items.length,
+  );
+  const feedbackPending = countOrNull(
+    feedback.unsupported || Boolean(feedback.error),
+    feedback.index,
+    (items) =>
+      (items as NonNullable<FeedbackIndex['items']>).filter(
+        (item) => !item.broken && item.status === 'pending' && !item.sent_at,
+      ).length,
+  );
+
+  const templateCount = countOrNull(
+    templates.unsupported || Boolean(templates.error),
+    templates.index,
+    (items) =>
+      (items as DocxTemplateItem[]).filter(
+        (item) => item.generated ?? Boolean(item.files?.reference?.exists),
+      ).length,
+  );
+
+  const onHub = page === 'hub';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogPortal>
+      {/* 关掉弹窗不卸掉四页：选中项、筛选和滚动都留在这次会话里 */}
+      <DialogPortal keepMounted>
         <DialogBackdrop />
         <DialogPopup className="h-[min(78vh,780px)] w-[min(1100px,94vw)] max-w-none gap-0 p-0 max-sm:max-w-none">
           <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-5">
-            <DialogTitle className="font-display text-base">工作台</DialogTitle>
-            {/*
-              两页切换。它是壳的一部分，所以放在标题栏里 ——
-              放进内容区会让人以为这是某一页自己的筛选。
-            */}
-            <Tabs
-              value={page}
-              onValueChange={(value) => {
-                if (PAGES.some(({ key }) => key === value)) onPageChange(value as Page);
-              }}
-              className="shrink-0"
-            >
-              <TabsList variant="segmented">
-                {PAGES.map(({ key, label }) => (
-                  <TabsTrigger key={key} value={key}>
-                    {label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
+            {onHub ? (
+              <DialogTitle className="font-display text-base">工作台</DialogTitle>
+            ) : (
+              <>
+                <DialogTitle className="sr-only">工作台</DialogTitle>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onPageChange('hub')}
+                  className="shrink-0 px-2"
+                >
+                  <ArrowLeft className="size-4" />
+                  工作台
+                </Button>
+              </>
+            )}
+            {onHub ? null : (
+              <Tabs
+                value={page}
+                onValueChange={(value) => {
+                  if (MODULES.some(({ key }) => key === value)) onPageChange(value as HubModule);
+                }}
+                className="shrink-0"
+              >
+                <TabsList variant="segmented">
+                  {MODULES.map(({ key, label }) => (
+                    <TabsTrigger key={key} value={key}>
+                      {label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            )}
             <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
               {projectName}
             </span>
@@ -118,11 +197,19 @@ export function Workbench({
             />
           </header>
 
-          {/*
-            非当前页用 `hidden` 藏起来而不是卸掉：卸掉就等于每次切页都把筛选、
-            卡片位置、正文缓存全丢一遍。`inert` 让被藏起来的那页不吃 Tab 焦点。
-          */}
-          <div className={cn('flex min-h-0 flex-1 flex-col', page !== 'questions' && 'hidden')} inert={page !== 'questions'}>
+          <div className={cn('flex min-h-0 flex-1 flex-col', !onHub && 'hidden')} inert={!onHub}>
+            <WorkbenchHub
+              questionCount={questionCount}
+              recordCount={recordCount}
+              feedbackPending={feedbackPending}
+              templateCount={templateCount}
+              onOpen={onPageChange}
+            />
+          </div>
+          <div
+            className={cn('flex min-h-0 flex-1 flex-col', page !== 'questions' && 'hidden')}
+            inert={page !== 'questions'}
+          >
             <QuestionsPane
               projectId={projectId}
               index={questions.index}
@@ -136,7 +223,10 @@ export function Workbench({
               focus={focusQuestion}
             />
           </div>
-          <div className={cn('flex min-h-0 flex-1 flex-col', page !== 'records' && 'hidden')} inert={page !== 'records'}>
+          <div
+            className={cn('flex min-h-0 flex-1 flex-col', page !== 'records' && 'hidden')}
+            inert={page !== 'records'}
+          >
             <RecordsPane
               projectId={projectId}
               index={records.index}
@@ -146,6 +236,35 @@ export function Workbench({
               changeToken={changeToken}
               reload={records.reload}
               workspaceAvailable={workspaceAvailable}
+            />
+          </div>
+          <div
+            className={cn('relative flex min-h-0 flex-1 flex-col', page !== 'feedback' && 'hidden')}
+            inert={page !== 'feedback'}
+          >
+            <FeedbackPane
+              projectId={projectId}
+              index={feedback.index}
+              loading={feedback.loading}
+              error={feedback.error}
+              unsupported={feedback.unsupported}
+              changeToken={changeToken}
+              reload={feedback.reload}
+              workspaceAvailable={workspaceAvailable}
+              version={version}
+            />
+          </div>
+          <div
+            className={cn('flex min-h-0 flex-1 flex-col', page !== 'template' && 'hidden')}
+            inert={page !== 'template'}
+          >
+            <TemplateRefinePane
+              projectId={projectId}
+              templates={templates}
+              workspaceAvailable={workspaceAvailable}
+              rawFiles={rawFiles}
+              active={open && page === 'template'}
+              focus={focusTemplate}
             />
           </div>
         </DialogPopup>

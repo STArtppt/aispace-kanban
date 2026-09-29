@@ -34,21 +34,26 @@
 
 ### Requirement: 看板缺陷通过反馈单交接
 
-模板 SHALL 定义反馈单：放在工作空间根目录 `.kanban-feedback/`，一个问题一份 `YYYY-MM-DD-<短标题>.md`。
-它 MUST 至少包含这几个字段：状态（待处理 / 已修复 / 不修）、现象、期望、最小复现、疑似源码位置（GitHub 链接）、
-建议改法（只写文本或 diff，不落到看板仓库）、临时绕法、回执。
+> 这一节由未归档的 change `workbench-module-hub` 改过：反馈单从根目录 `.kanban-feedback/`
+> 改到 `output/feedback/`，看板在工作台的反馈单页读取它。本 change 归档时以改后的文字为准。
+
+模板 SHALL 定义反馈单：放在 `output/feedback/`，一个问题一份 `F<四位编号>.md`。
+它 MUST 至少包含这些字段：`status`（`pending` / `fixed` / `wontfix`）、`receipt`、`sent_at`，
+以及现象、期望、最小复现、疑似源码位置（GitHub 链接）、建议改法（只写文本或 diff，不落到看板仓库）、
+临时绕法，和一节「## 发送记录」。
 最小复现 MUST 是合成的片段，不带工作空间里的真实资料内容。
 智能体写完反馈单 SHALL 在回复里告诉用户反馈单路径，并说明已经用什么办法临时绕过。
+回执回写 MUST 只改 `status` 和 `receipt`，不改 `sent_at` 和发送记录。
 
 #### Scenario: 真的需要改看板才能解决
 
 - **WHEN** 智能体确认问题出在看板渲染上，改文档写法只能绕开、不能根治
-- **THEN** 工作空间里的文档按绕法改好；`.kanban-feedback/` 下多了一份字段齐全的反馈单；看板仓库没有任何变化
+- **THEN** 工作空间里的文档按绕法改好；`output/feedback/` 下多了一份字段齐全的反馈单；看板仓库没有任何变化
 
-#### Scenario: 看板不读反馈单
+#### Scenario: 看板只在工作台反馈单页读取
 
-- **WHEN** 工作空间根目录下有 `.kanban-feedback/` 目录
-- **THEN** 看板的各个视图、搜索和完整度统计都不出现它的内容（扫描本来就跳过根目录的 `.` 开头目录）
+- **WHEN** 工作空间里有 `output/feedback/F0001.md`，根目录下还有旧的 `.kanban-feedback/`
+- **THEN** 产出列表、搜索和完整度统计都不出现这些内容；工作台的反馈单页能打开 `F0001`，旧目录只显示份数、不显示正文
 
 ### Requirement: 反馈单在看板仓库这边闭环
 

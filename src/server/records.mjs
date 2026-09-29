@@ -18,6 +18,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseFrontmatter } from './frontmatter.mjs';
+import { replaceFileAtomic, setFrontmatterFields } from './patchMarkdown.mjs';
 import { resolveInside } from './paths.mjs';
 import { outputPlacement } from './scan.mjs';
 import { isValidStatus, needsResolvedBy, statusValuesOf } from '../shared/recordStatus.mjs';
@@ -370,37 +371,6 @@ function today() {
 }
 
 /**
- * 字段级替换：只动 `updates` 里点名的键，其余行**逐字不变**。
- * 整份重新序列化会把 AI 区的写法、注释、键顺序全洗一遍 —— 那等于在改别人的写区。
- * 与 `questions.mjs` 的同名函数同构（两处都只改自己那几个键，没有第三个调用方）。
- */
-function setFrontmatterFields(text, updates) {
-  const headEnd = text.indexOf('\n') + 1;
-  const close = text.indexOf('\n---', 3);
-  const head = text.slice(0, headEnd);
-  const rest = text.slice(close);
-  const lines = text.slice(headEnd, close).split(/\r?\n/);
-  const pending = new Map(Object.entries(updates));
-  const out = [];
-
-  for (let i = 0; i < lines.length; i += 1) {
-    const kv = /^([\w.-]+):\s*(.*)$/.exec(lines[i]);
-    if (kv && pending.has(kv[1])) {
-      out.push(`${kv[1]}: ${pending.get(kv[1])}`.trimEnd());
-      pending.delete(kv[1]);
-      // 人写区本不该写成列表，但文件是手写的：把这个键的 `- item` 续行一并吃掉，别留孤儿
-      while (i + 1 < lines.length && /^\s+-\s+/.test(lines[i + 1])) i += 1;
-      continue;
-    }
-    out.push(lines[i]);
-  }
-  // 文件里没有这个键（手写漏了）就补在末尾，不重排已有的键
-  for (const [key, value] of pending) out.push(`${key}: ${value}`.trimEnd());
-
-  return head + out.join('\n') + rest;
-}
-
-/**
  * 往正文「## 状态流水」末尾追加一条 `###` 子节。**只碰这一节** ——
  * 别的小节是 agent 的写区，看板一个字都不动。
  * 小节不存在就建在正文末尾（第一次状态变更会走到这条）。
@@ -524,19 +494,7 @@ export function writeRecordStatus(root, id, payload) {
   const entry = `### ${stamp} · ${status}\n\n${note}`;
   next = `${headRaw}\n${appendFlow(bodyRaw, entry)}`;
 
-  const tmp = path.join(path.dirname(abs), `.${wanted}.md.tmp-${process.pid}-${Date.now()}`);
-  try {
-    fs.writeFileSync(tmp, next, 'utf8');
-    fs.renameSync(tmp, abs);
-  } catch (err) {
-    // 失败不留半截文件：临时件清掉，原文件还是原样（rename 之前它一个字节都没动过）
-    try {
-      fs.unlinkSync(tmp);
-    } catch {
-      /* 临时件本来就没建成，忽略 */
-    }
-    throw err;
-  }
+  replaceFileAtomic(abs, next);
 
   return readRecord(root, wanted);
 }

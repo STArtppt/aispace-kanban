@@ -1,0 +1,30 @@
+{
+  "_about": "通用内容规范（样式清单，唯一真源）。客户 profile.json 深合并覆盖本文件；客户没定义的角色一律由这里补齐。字号单位 pt，缩进单位 字符×100，段前段后单位 pt，行距单位 倍。样式名必须是 pandoc 认识的名字。",
+  "doc_defaults": {"font": {"eastAsia": "宋体", "ascii": "Times New Roman"}, "size": 12, "line": 1.5},
+  "heading_numbering": {"levels": ["%1", "%1.%2", "%1.%2.%3"], "formats": ["decimal", "decimal", "decimal"], "suffix": "space"},
+  "table": {"border": "single", "border_eighths_pt": 4, "font_size": 10.5, "line": 1.0, "header_bold": true, "header_fill": null, "header_repeat": true, "align": "center"},
+  "page": {"_why": "只在「通用规范」（@base）现生成参照模板时使用；客户模板沿用客户旧文档的页面设置", "w_cm": 21.0, "h_cm": 29.7, "margin_cm": {"top": 2.54, "bottom": 2.54, "left": 3.17, "right": 3.17, "header": 1.5, "footer": 1.75}},
+  "styles": {
+    "Normal":            {"name": "Normal"},
+    "BodyText":          {"name": "Body Text", "basedOn": "Normal", "firstLineChars": 200, "jc": "both"},
+    "FirstParagraph":    {"name": "First Paragraph", "basedOn": "BodyText", "next": "BodyText"},
+    "Compact":           {"name": "Compact", "basedOn": "Normal", "firstLineChars": 0, "_why": "紧凑列表项与表格单元格共用；不设字号，表格里吃表格样式字号"},
+    "Heading1":          {"name": "heading 1", "basedOn": "Normal", "next": "BodyText", "font": {"eastAsia": "黑体"}, "size": 16, "bold": true, "before": 12, "after": 6, "outline": 1, "numLevel": 0, "keepNext": true},
+    "Heading2":          {"name": "heading 2", "basedOn": "Normal", "next": "BodyText", "font": {"eastAsia": "黑体"}, "size": 15, "bold": true, "before": 6, "after": 6, "outline": 2, "numLevel": 1, "keepNext": true},
+    "Heading3":          {"name": "heading 3", "basedOn": "Normal", "next": "BodyText", "font": {"eastAsia": "黑体"}, "size": 14, "bold": true, "before": 6, "after": 6, "outline": 3, "numLevel": 2, "keepNext": true},
+    "Heading4":          {"name": "heading 4", "basedOn": "Normal", "next": "BodyText", "bold": true, "keepNext": true, "_why": "Markdown 的 #### 映射为无编号小标题，不进目录"},
+    "Title":             {"name": "Title", "basedOn": "Normal", "size": 22, "bold": true, "jc": "center", "after": 12},
+    "TOCHeading":        {"name": "TOC Heading", "basedOn": "Normal", "size": 18, "jc": "center", "after": 12},
+    "Caption":           {"name": "caption", "basedOn": "Normal", "font": {"eastAsia": "黑体"}, "size": 10.5, "jc": "center", "before": 6, "after": 6, "firstLineChars": 0},
+    "TableCaption":      {"name": "Table Caption", "basedOn": "Caption", "keepNext": true, "_why": "表题在表上方，必须与表同页"},
+    "ImageCaption":      {"name": "Image Caption", "basedOn": "Caption"},
+    "Figure":            {"name": "Figure", "basedOn": "Normal", "jc": "center", "firstLineChars": 0},
+    "CaptionedFigure":   {"name": "Captioned Figure", "basedOn": "Figure", "keepNext": true, "_why": "图与图题同页"},
+    "SourceCode":        {"name": "Source Code", "basedOn": "Normal", "font": {"ascii": "Consolas", "eastAsia": "宋体"}, "size": 9, "line": 1.0, "firstLineChars": 0, "shading": "F5F5F5", "before": 3, "after": 3, "wordWrap": false},
+    "VerbatimChar":      {"name": "Verbatim Char", "type": "character", "font": {"ascii": "Consolas"}},
+    "BlockText":         {"name": "Block Text", "basedOn": "BodyText", "leftChars": 200, "firstLineChars": 0, "color": "595959"},
+    "Note":              {"name": "提示框", "custom": true, "basedOn": "BodyText", "firstLineChars": 0, "leftChars": 100, "shading": "F2F2F2", "borderLeft": {"sz": 24, "color": "7F7F7F"}, "_why": "md 写法：::: {custom-style=\"提示框\"}"},
+    "FootnoteReference": {"name": "footnote reference", "type": "character", "superscript": true, "_why": "pandoc 的脚注引用字符样式；没有它脚注号不上标"},
+    "FootnoteText":      {"name": "footnote text", "basedOn": "Normal", "size": 9, "line": 1.0}
+  }
+}

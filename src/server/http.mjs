@@ -29,8 +29,11 @@ import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-his
 import { appendNotes, mergeNoteHistory } from './notes.mjs';
 import { resolveInside } from './paths.mjs';
 import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
-import { PYTHON_CANDIDATES, pickDirectory, revealInSystem } from './platform.mjs';
+import { PYTHON_CANDIDATES, findPython, pickDirectory, revealInSystem } from './platform.mjs';
 import { resolvePrototypeCover, resolvePrototypeServeDir, resolveRefreshTarget, scanPrototypes } from './prototypes.mjs';
+import { listDocxTemplates, readDocxTemplate } from './docxTemplates.mjs';
+import { docxToolsHealth, runDocxBuild, runDocxCollect, runDocxConvert } from './docxTools.mjs';
+import { listFeedback, markSent, readFeedback } from './feedback.mjs';
 import { readQuestion, scanQuestions, writeQuestion } from './questions.mjs';
 import { readRecord, scanRecords, writeRecordStatus } from './records.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
@@ -98,6 +101,7 @@ const MIME = {
   '.webp': 'image/webp',
   '.bmp': 'image/bmp',
   '.pdf': 'application/pdf',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   '.woff': 'font/woff',
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
@@ -387,29 +391,6 @@ async function runInit(templatesRoot, fromDir, name, target) {
     error: '找不到 Python 3。新建工作空间要靠模板的 init_workspace.py，'
       + '请先装 Python 3（Windows 装完用 py 或 python，macOS / Linux 用 python3），再试一次。',
   };
-}
-
-/** 找一个能用的 Python 3。解释器名各平台不同，挨个试到 `--version` 成功为止。 */
-function findPython() {
-  return new Promise((resolve) => {
-    const candidates = [...PYTHON_CANDIDATES];
-    const tryNext = () => {
-      const next = candidates.shift();
-      if (!next) return resolve(null);
-      const [bin, ...prefix] = next;
-      const child = spawn(bin, [...prefix, '--version'], { stdio: 'ignore' });
-      let settled = false;
-      const done = (ok) => {
-        if (settled) return;
-        settled = true;
-        if (ok) resolve([bin, ...prefix]);
-        else tryNext();
-      };
-      child.on('error', () => done(false));
-      child.on('close', (code) => done(code === 0));
-    };
-    tryNext();
-  });
 }
 
 /**
@@ -1541,8 +1522,16 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   // platform 给前端定文案用（"在访达中显示" 还是 "在文件资源管理器中显示"）——
   // 定位动作发生在**服务所在的机器**上，所以不能拿浏览器的 navigator 判断。
   // version 可选：老服务进程没有，侧栏缺了就不显示，退回改动前的行为。
+  // docxTools 可选：Python / pandoc 是否可用（转成 Word、提炼模板据此置灰）。
+  // 带 ?project=<id> 时把那个工作空间 .env 里的 PANDOC_BIN 也算上（与脚本的查找顺序一致），
+  // 并报告那个工作空间有没有 docx 工具链脚本。writable 可选：非环回监听时为 false，写操作按钮据此置灰。
   if (head === 'health') {
-    return json(res, 200, { ok: true, platform: process.platform, version: APP_VERSION });
+    const projectId = url.searchParams.get('project');
+    const projectRoot = projectId ? readProjects().projects.find((p) => p.id === projectId)?.root : undefined;
+    const docxTools = await docxToolsHealth(projectRoot).catch(() => undefined);
+    return json(res, 200, {
+      ok: true, platform: process.platform, version: APP_VERSION, writable: allowMutations, docxTools,
+    });
   }
 
   // 系统原生目录选择器。GET 只用来探这条路走不走得通（旧进程 404，前端就不显示按钮）；
@@ -1725,6 +1714,58 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     }
     if (recordId) return json(res, 200, readRecord(project.root, recordId));
     return json(res, 200, scanRecords(project.root));
+  }
+
+  // 看板反馈单：扫 output/feedback/ 现算索引。带编号时取详情；
+  // POST .../sent 写发送记录 —— **不变量 1 的第八条窄例外**。
+  // 两道闸的顺序与其它写接口一致。字段判断只在 feedback.mjs 里做一遍。
+  if (head === 'projects' && id && action === 'feedback') {
+    const project = requireProject(id);
+    const feedbackId = segments[3] || '';
+    const sub = segments[4] || '';
+    if (sub && !(sub === 'sent' && req.method === 'POST')) {
+      return json(res, 400, { error: `不认识这个操作：${sub}` });
+    }
+    if (feedbackId && sub === 'sent' && req.method === 'POST') {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      const body = await readBody(req);
+      return json(res, 200, markSent(project.root, feedbackId, body));
+    }
+    if (feedbackId) return json(res, 200, readFeedback(project.root, feedbackId));
+    return json(res, 200, listFeedback(project.root));
+  }
+
+  // docx 模板目录：GET 只读。名字只接受一层基名，路径由 docxTemplates.mjs 用 resolveInside 拼。
+  // POST .../:name/collect 与 .../:name/build 是**第九条窄例外**：看板只 spawn 工作空间的
+  // docx_template.py，自己不写盘；载荷只有 docKey、决定与 regenerate，不收路径（见 docxTools.mjs）。
+  if (head === 'projects' && id && action === 'docx-templates') {
+    const project = requireProject(id);
+    const templateName = segments[3] || '';
+    const step = segments[4];
+    if (req.method === 'POST' && segments.length === 5 && (step === 'collect' || step === 'build')) {
+      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+      if (rejectIfForeignOrigin(req, res)) return undefined;
+      const body = await readBody(req);
+      const result = step === 'collect'
+        ? await runDocxCollect(project, templateName, body)
+        : await runDocxBuild(project, templateName, body);
+      return json(res, 200, result);
+    }
+    if (segments.length > 4) return json(res, 400, { error: '模板名不能带路径' });
+    if (templateName) return json(res, 200, readDocxTemplate(project.root, templateName));
+    return json(res, 200, listDocxTemplates(project.root));
+  }
+
+  // 产出 .md 转成 Word：**第九条窄例外**。看板只 spawn 工作空间的 md2docx.py，
+  // 载荷只有 docKey、模板名与 overwrite，不收路径；成品落在 .md 同目录、同名（见 docxTools.mjs）。
+  if (head === 'projects' && id && action === 'docx' && segments[3] === 'convert' && segments.length === 4) {
+    if (req.method !== 'POST') return json(res, 405, { error: '只接受 POST' });
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
+    const project = requireProject(id);
+    const body = await readBody(req);
+    return json(res, 200, await runDocxConvert(project, body));
   }
 
   // 伺服工具产出的可点击 HTML 包（文件夹或已解压到缓存的 zip）
@@ -2124,7 +2165,8 @@ export function createServer({ devOrigin = '', allowMutations = true } = {}) {
         return await handleApi(req, res, url, { allowMutations });
       }
     } catch (err) {
-      return json(res, err.statusCode || 500, { error: err.message });
+      // kind 可选：docx 工具链的错误带它，前端据此决定给不给「复制提示词」这类出路
+      return json(res, err.statusCode || 500, { error: err.message, ...(err.kind ? { kind: err.kind } : {}) });
     }
     if (devOrigin) {
       res.writeHead(302, { location: devOrigin + url.pathname + url.search });

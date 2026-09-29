@@ -1,8 +1,9 @@
 /**
- * 跨平台的系统调用都集中在这里：打开浏览器、在文件管理器里定位文件、找 Python 解释器、
+ * 跨平台的系统调用都集中在这里：打开浏览器、在文件管理器里定位文件、找 Python 解释器与 pandoc、
  * 弹出系统原生目录选择框。三个平台的命令名和参数形态完全不一样，散在各处很容易写着写着只剩 macOS 能用。
  */
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -65,6 +66,92 @@ export function revealInSystem(abs, mode = 'reveal') {
 export const PYTHON_CANDIDATES = process.platform === 'win32'
   ? [['py', '-3'], ['python'], ['python3']]
   : [['python3'], ['python']];
+
+/** 找一个能用的 Python 3。解释器名各平台不同，挨个试到 `--version` 成功为止。 */
+export function findPython() {
+  return new Promise((resolve) => {
+    const candidates = [...PYTHON_CANDIDATES];
+    const tryNext = () => {
+      const next = candidates.shift();
+      if (!next) return resolve(null);
+      const [bin, ...prefix] = next;
+      const child = spawn(bin, [...prefix, '--version'], { stdio: 'ignore' });
+      let settled = false;
+      const done = (ok) => {
+        if (settled) return;
+        settled = true;
+        if (ok) resolve([bin, ...prefix]);
+        else tryNext();
+      };
+      child.on('error', () => done(false));
+      child.on('close', (code) => done(code === 0));
+    };
+    tryNext();
+  });
+}
+
+/** 从工作空间 .env 里只取一个键（不把整份读进环境变量）。读不到返回 null。 */
+function envFileValue(root, key) {
+  if (!root) return null;
+  let text;
+  try {
+    text = fs.readFileSync(path.join(root, '.env'), 'utf8');
+  } catch {
+    return null;
+  }
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || !line.includes('=')) continue;
+    const at = line.indexOf('=');
+    if (line.slice(0, at).trim() !== key) continue;
+    return line.slice(at + 1).trim().replace(/^['"]|['"]$/g, '') || null;
+  }
+  return null;
+}
+
+/** `pandoc --version` 的版本号；跑不起来返回 null。 */
+function pandocVersion(bin) {
+  return new Promise((resolve) => {
+    let out = '';
+    let child;
+    try {
+      child = spawn(bin, ['--version'], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true });
+    } catch {
+      resolve(null);
+      return;
+    }
+    const timer = setTimeout(() => child.kill(), 10_000);
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.on('error', () => { clearTimeout(timer); resolve(null); });
+    child.on('close', () => {
+      clearTimeout(timer);
+      const m = out.trim().match(/^pandoc(?:\.exe)?\s+(\d+(?:\.\d+)*)/);
+      resolve(m ? m[1] : null);
+    });
+  });
+}
+
+/**
+ * 找 pandoc 3：`PANDOC_BIN` 环境变量 → 工作空间 `.env` 的 `PANDOC_BIN` → `PATH`。
+ * 与工作空间 scripts/docxkit/pandoc.py 的查找顺序一致 —— 两边判断不一样，界面上
+ * 「转换」可点、脚本却说找不到 pandoc，是最难解释的一种不一致。改一边要改另一边。
+ *
+ * @param {string} [root] 工作空间根；不给就只看环境变量和 PATH
+ * @returns {Promise<{ bin: string, version: string } | { bin: null, version: string | null }>}
+ *   找不到时 bin 为 null；version 非空表示找到了但版本低于 3
+ */
+export async function findPandoc(root) {
+  const candidates = [process.env.PANDOC_BIN, envFileValue(root, 'PANDOC_BIN'), 'pandoc'].filter(Boolean);
+  let tooOld = null;
+  for (const bin of candidates) {
+    const version = await pandocVersion(bin);
+    if (!version) continue;
+    if (Number(version.split('.')[0]) >= 3) return { bin, version };
+    tooOld = version;
+  }
+  return { bin: null, version: tooOld };
+}
 
 /** 目录选择框开太久就杀子进程，避免一个挂住的 HTTP 请求一直占着。 */
 const PICK_DIRECTORY_TIMEOUT_MS = 120_000;

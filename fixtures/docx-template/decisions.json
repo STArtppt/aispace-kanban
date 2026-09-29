@@ -1,0 +1,9 @@
+{
+  "schema": 1,
+  "clusters": {
+    "c10": {"drop": true},
+    "c11": {"drop": true},
+    "c13": {"merge": "c1"}
+  },
+  "choices": {"BodyText.line": 1.5}
+}

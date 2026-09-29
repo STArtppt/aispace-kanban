@@ -5,7 +5,7 @@
 手写 Markdown 的写法见工作空间根目录 [AGENTS.md](../AGENTS.md) 的「Markdown 写法」一节。
 `analysis/` 与 `decisions/` 要带最小 front-matter；`docs/` 是要发出去的，front-matter 不强制。
 
-## 五个子目录
+## 子目录
 
 ### `analysis/` — 想清楚的过程
 
@@ -57,6 +57,21 @@
 字段契约在 [`records/README.md`](records/README.md) —— 编号规则、按 `kind` 分化的三套状态机、
 状态流水写法、人写区与 AI 写区的分界都在那里。建记录走 `pm-output-record` 技能。
 存量决策要补记录跑 `python3 scripts/migrate_decisions.py`（默认预演，不落盘）。
+
+### `feedback/` — 看板反馈单
+
+看板显示不对、改写法也绕不开时，写在这里：一份一个 `F<四位编号>.md`。
+它和问题、记录一样不进三组文件列表，只在看板 ⌘K 工作台的「反馈单」页里看、预览邮件、标记已发送。
+
+字段契约在 [`feedback/README.md`](feedback/README.md)。怎么写、旧的 `.kanban-feedback/` 怎么迁，
+见工作空间根目录 AGENTS.md 的「看板显示不对时」。
+
+### `docx-template/` — docx 模板产物
+
+一个模板一个子目录（`profile.json`、`reference.docx`、可选的 `cover.docx`、`spec.md`、`collect/`）。
+看板「模版洗炼」页只读列出它。四步新建是演示，不往这里写。
+
+约定在 [`docx-template/README.md`](docx-template/README.md)。客户的参照稿留在本机，不要外传。
 
 ### `<组>/一次归档/` — 不再作数、但还要留着的
 

@@ -28,7 +28,9 @@ input/  →  （分析）  →  output/  →  visualization/
 | `output/decisions/` | 决策记录：一个决策一个文件 | 只追加，不要改历史决策 |
 | `output/<组>/一次归档/` | 三组各自的归档区：不再作数、从主列表移开的产出物；看板照样能搜、能预览 | 一次归档由看板调 `scripts/archive_output.py` 移入，**只移动不删除**；二次归档（分堆 + 短索引）走 `pm-output-archive`，**不写任何「无需再读」清单** |
 | `output/questions/` | 未决问题，**一问一文件** `Q<四位编号>.md`；**和 `analysis/` 平级，不进任何视图的文件列表**，只在看板 ⌘K 弹窗里看和处理 | 走 `pm-open-questions`；字段契约见该目录的 `README.md` |
-| `output/records/` | 产出物记录，**一份产出物一个** `I<四位编号>.md`；和 `analysis/` 平级，**不进任何视图的文件列表**，只在看板 ⌘K 工作台的「产出物」页里看和处理 | 走 `pm-output-record`；字段契约见该目录的 `README.md` |
+| `output/records/` | 产出物记录，**一份产出物一个** `I<四位编号>.md`；和 `analysis/` 平级，**不进任何视图的文件列表**，只在看板 ⌘K 工作台的「记录单」页里看和处理 | 走 `pm-output-record`；字段契约见该目录的 `README.md` |
+| `output/feedback/` | 看板缺陷反馈单，**一份一个** `F<四位编号>.md`。不进文件列表，只在看板 ⌘K 工作台的「反馈单」页里看和发送 | 字段契约见该目录的 `README.md`。见「看板显示不对时」 |
+| `output/docx-template/` | Word 模板，一个模板一个子目录。不进文件列表，在看板 ⌘K 工作台的「模版洗炼」页里看和提炼 | 只由 `scripts/docx_template.py` 写（看板点按钮时也是启动它），见下文「Word 模板与转 Word」和该目录的 `README.md` |
 | `visualization/references/` | 收下来的**别人的**页面：竞品、友商后台、公开文档站 | **一份参考一个目录，入口必须叫 `index.html`**；这是收来的原样材料，不要改它的内容 |
 | `visualization/prototypes/` | 可预览原型库：Axhub Make 客户端、zip 导出包、自己写的单页 HTML | **一个东西一个子目录，入口必须叫 `index.html`**，见下文 |
 
@@ -401,6 +403,54 @@ output/docs/2026-08-18-需求评审材料.html    ← 渲染产物，一起改
 - **没有 md 源、页面本身就是产物**（原型、可视化、方案页、演示页）→
   `visualization/prototypes/<名字>/index.html`，见下节。
 
+## Word 模板与转 Word
+
+客户常要求交付物用他们那份 Word 的格式。这里有两支脚本（公共代码在 `scripts/docxkit/`，只用 Python 标准库）：
+
+| 脚本 | 做什么 | 写到哪 |
+| --- | --- | --- |
+| `scripts/docx_template.py` | 从一份客户旧 Word 提炼模板：`collect` 采集实际格式，`build` 按决定生成模板包 | 只写 `output/docx-template/<模板名>/` |
+| `scripts/md2docx.py` | 按模板把 `.md` 转成 `.docx`（需要 pandoc 3） | 只写 `.md` 同目录、同名的 `.docx` |
+
+看板里的「模版洗炼」和产出列表的「转成 Word」跑的是同一份脚本；用户点「复制提示词」粘给你时，你照着提示词执行即可。
+
+### 转 Word
+
+```bash
+python3 scripts/md2docx.py output/docs/方案.md --template @base      # 通用规范
+python3 scripts/md2docx.py output/docs/方案.md --template 客户甲      # 客户模板
+```
+
+1. 转之前对照写作规定检查 md：客户模板看 `output/docx-template/<模板名>/spec.md`，通用规范看 `scripts/docxkit/base-spec.json`。
+   要点：标题不要手写编号（编号由样式生成）；最多用到 `####`；表题写在表格**下方**一行 `Table: 表 N 标题`；
+   图题写在 `![图 N 标题](路径)` 的方括号里；文档标题写在 front-matter 的 `title:`。需要改就改 md 的写法，不改内容。
+2. 同名 `.docx` 已存在时：带生成标记（上次转出来的）才能加 `--overwrite` 覆盖，覆盖会丢掉在 Word 里的修改，先问用户；
+   没有标记的（人手改过另存的、客户给的原件）脚本会拒绝 —— **不要删它、不要改名绕过**，问用户怎么处理。
+3. 转完检查：标题编号连续、表格有边框和表头、图片都在；脚本输出里的「注意」（warnings）为空。有缺图等提示就先修 md 再转。
+4. 找不到 pandoc 时脚本会说明怎么装。装在非标准位置时在 `.env` 里写 `PANDOC_BIN=<路径>`（这一个键只给路径，不是密钥）。
+
+### 提炼模板
+
+```bash
+python3 scripts/docx_template.py collect input/raw/客户旧文档.docx --name 客户甲
+python3 scripts/docx_template.py build --name 客户甲 --source input/raw/客户旧文档.docx --decisions 决定.json
+```
+
+1. 来源必须在 `input/raw/` 里（这是少数允许读 `input/raw/` 原件的场景 —— 读的是脚本，不是你；不要把原件内容读进上下文）。
+2. `collect` 之后读 `collect/report.json` 的 `clusters`（格式簇，带 `suggestedRole` 建议角色）与 `outline`（大纲），
+   把映射方案（哪个簇当正文 / 各级标题 / 题注，哪些丢弃，同一角色格式不一致时取哪个值）**列给用户确认**，再写决定 JSON。
+   决定的写法见 `scripts/docxkit/decisions.py` 文件头；不写的簇采用建议角色，所以一份 `{}` 也能生成。决定 JSON 用完即删。
+3. `build` 输出里的 warnings 为空，才说明合成样张各角色格式与规范一致；不为空就把差异告诉用户。
+4. 模板名已存在要加 `--regenerate` 才覆盖，先问用户。
+
+### 旧工作空间没有这两支脚本
+
+本工作空间如果建得早，`scripts/` 下可能没有 `docx_template.py`、`md2docx.py` 和 `docxkit/`。
+按「模板改动回同步源」的反方向，从看板仓库的 `templates/pm-aispace/scripts/` 把这三样原样复制过来
+（源码在 <https://github.com/STArtppt/aispace-kanban>），别的文件不要动。
+
+`output/docx-template/` 里是客户的版式材料，不要贴进反馈单或任何公开的地方。
+
 ## 阶段四：视觉呈现
 
 `visualization/` 是**视觉平面**：给人看、能点开的页面。它和 `input/` `output/` 的差别在于
@@ -471,6 +521,8 @@ Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也�
 | `output/questions/` | 语法管；字段以该目录 README 为准 | 未决问题有自己的字段契约，扁平约束与这里是同一条 |
 | `output/records/` | 语法管；字段以该目录 README 为准 | 产出物记录有自己的字段契约（含按 `kind` 分化的三套状态机），扁平约束与这里是同一条 |
 | `output/records/notes/` | 语法管；格式以 `output/records/README.md` 的「批注」为准 | 一份产出物一份批注文件。看板整条追加，agent 只改 `- 状态：` 与 `- 回执：` |
+| `output/feedback/` | 语法管；字段以该目录 README 为准 | 看板缺陷反馈单。智能体写内容和回执，不改 `sent_at` 与发送记录 |
+| `output/docx-template/` | `spec.md` 语法管、front-matter 不强制 | 模板的文字规定。其余是 json / docx，不走这一节 |
 | 各目录下的 `README.md` | 语法管、front-matter **不强制** | 目录说明，不是分析产物 |
 | `input/converted/` | **不管** | 由转换脚本生成，重跑即覆盖；要改形态就改脚本 |
 | `input/raw/` | **不碰** | 人类给的原件，只读 |
@@ -568,40 +620,28 @@ GitHub 上的 `main` 可能与用户本机跑的版本有出入，对不上时�
 **不要改看板仓库或 npm 包目录里的任何文件**，哪怕你已经看出该怎么改 ——
 把改法写进反馈单，由用户带到看板仓库那边按它的规矩改。
 
-### 反馈单 `.kanban-feedback/`
+### 反馈单 `output/feedback/`
 
-放在工作空间根目录的 `.kanban-feedback/`（隐藏目录，看板不扫、不显示），
-**一个问题一份**，文件名 `YYYY-MM-DD-<短标题>.md`。目录不存在就建。
+放在 `output/feedback/`，**一个问题一份** `F<四位编号>.md`。目录不存在就建。
+字段、分组和发送记录的写法以 [`output/feedback/README.md`](output/feedback/README.md) 为准，这里不抄第二遍。
 
-```markdown
-# <一句话说清问题>
-
-- 状态：待处理
-- 回执：
-
-## 现象
-看板哪个视图、哪一块、显示成了什么样。
-
-## 期望
-应该显示成什么样。
-
-## 最小复现
-合成的最小片段（自己编的名称和内容），能单独复现问题。
-
-## 疑似源码位置
-GitHub 链接，尽量带行号：https://github.com/STArtppt/aispace-kanban/blob/main/<路径>#L<行>
-
-## 建议改法
-文字说明，或一段 diff 文本。只写在这里，不落到看板仓库。
-
-## 临时绕法
-工作空间里改了哪些文件、怎么改的；看板修好后要撤掉哪些。
-```
-
-- **最小复现必须是合成的**，不贴工作空间里的真实资料、客户名称、截图。这份单子可能被带进公开仓库。
-- `状态` 只用三个值：`待处理` / `已修复` / `不修`。
-- 用户转来看板那边的回执时：把 `状态` 改掉，`回执` 填上结论和看板提交号（不修就写理由）；
+- **最小复现必须是合成的**，不贴工作空间里的真实资料、客户名称、截图、本机路径。这份单子可能被带进公开仓库。
+- `status` 只用三个值：`pending`（待处理）/ `fixed`（已修复）/ `wontfix`（不修）。新建时 `sent_at` 留空。
+- 六个内容节和「## 发送记录」都要写上。发送记录一节可以先空着，标题必须在。
+- 用户转来看板那边的回执时：**只改 `status` 和 `receipt`**。填上结论和看板提交号（不修就写理由）。
+  不要改 `sent_at`，也不要改「## 发送记录」——那两处是人在看板上点「我已发出」之后由看板写的。
   已修复的，按「临时绕法」一节撤掉绕法，改回按约定的写法。
+
+#### 旧目录 `.kanban-feedback/` 怎么迁
+
+根目录下如果还有 `.kanban-feedback/*.md`，按这个顺序迁，不要让看板自己搬：
+
+1. 按文件日期从早到晚排。编号从 `output/feedback/` 里已有的最大号往后；没有就从 `F0001` 起。编号只增不复用。
+2. 每份改成上面的新格式。状态对应：`待处理` → `pending`，`已修复` → `fixed`，`不修` → `wontfix`。回执照搬到 `receipt`。
+3. `sent_at` 留空，不要编造发送记录。最小复现里若有真实资料，改成合成内容。
+4. 在看板反馈单页确认新文件都在，再删掉 `.kanban-feedback/`。
+
+看板只数旧目录里有几份 `.md` 并提示你复制迁移说明。它不读那些文件，也不移动、改名或删除它们。
 
 ## 不要做的事
 
@@ -619,6 +659,8 @@ GitHub 链接，尽量带行号：https://github.com/STArtppt/aispace-kanban/blo
 - 不要用推断填平资料空白，标注出来交给用户去确认。
 - 不要读写本机的看板仓库或看板的 npm 包目录。要看看板源码读 GitHub；看板有缺陷写反馈单
   （见「看板显示不对时」）。唯一的例外是下面「模板改动回同步源」规定的那几个文件。
+- 不要改反馈单的 `sent_at` 和「## 发送记录」。回执只写 `status` 和 `receipt`。
+- 不要把客户的 docx 原件放进反馈单或公开说明。模板产物留在 `output/docx-template/`。
 
 ## 模板改动回同步源
 

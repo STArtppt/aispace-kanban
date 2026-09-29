@@ -18,6 +18,7 @@
     "hooks": "@/hooks"
   },
   "registries": {
-    "@startist": "http://localhost:5199/r/{name}.json"
+    "@startist": "http://localhost:5199/r/{name}.json",
+    "@efferd": "https://efferd.com/r/{style}/{name}.json"
   }
 }

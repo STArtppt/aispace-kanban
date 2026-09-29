@@ -29,6 +29,8 @@ description: 在 aispace-kanban 中新建或重构 React 组件 / 面板 / 视�
    `Lightbox`（mermaid 全屏等媒体预览）、
    `GalleryStack`（一摞图的入口卡：`cover` / `count` / `size` / `selected`，
    卡片自己限宽，别再在调用方排列数）、
+   `FeatureCard`（点进去的模块瓷砖：`icon` / `title` / `description` / `meta`，
+   网格用 `FeatureCardGrid` 锁 gap-8；默认 button + cursor-pointer）、
    `Alert`（行内提示，`default|destructive`；可关闭用 `AlertAction` + 调用方 state，组件不管可见性）。
 3. **registry 上有但本仓还没拉的**(`drawer` / `confirm-dialog` / `field` / `switch` …)
    —— 用 `shadcn add` 拉,别手写第二遍。add 的来源、命令与注意事项见 [[design-system-loop]]。

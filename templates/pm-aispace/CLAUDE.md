@@ -12,4 +12,5 @@ Claude Code 专有的几点：
 - `.claude/settings.json` 已预授权 `scripts/ingest.py`、`markitdown` 等命令，
   减少权限确认弹窗。
 - `.claude/settings.local.json`（不入库）由新建工作空间的脚本生成，里面的 `deny` 禁止改看板仓库的源码，
-  只放开 `templates/` 下本模板那一份。别删这些条目；看板有缺陷写反馈单，见 AGENTS.md「看板显示不对时」。
+  只放开 `templates/` 下本模板那一份。别删这些条目；看板有缺陷写反馈单，
+  见 AGENTS.md「看板显示不对时」（文件在 `output/feedback/F<编号>.md`，不再用根目录的 `.kanban-feedback/`）。

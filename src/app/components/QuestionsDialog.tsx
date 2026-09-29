@@ -132,7 +132,16 @@ const REOPEN_RULE =
   '写新结论前，先把现有的 `ai_conclusion` 与正文「## 结论」原样搬进「## 轮次记录」，'
   + '**不要覆盖** —— 覆盖掉就没法回答「上次为什么这么答」。';
 
-function buildPrompt(kind: PromptKind, paths: string[]): string {
+/**
+ * `paths` 可以是一串路径，也可以按分组给 —— 批量时按「阻塞了谁」分段列出，
+ * 让 agent 一段一段处理同一份交付物的问题，上下文不被打散。
+ */
+function buildPrompt(kind: PromptKind, paths: string[] | { group: string; paths: string[] }[]): string {
+  const list = paths.flatMap((entry) =>
+    typeof entry === 'string'
+      ? [`- ${entry}`]
+      : [`【${entry.group}】`, ...entry.paths.map((path) => `- ${path}`)],
+  );
   const rules = [
     ...(kind === 'reopen' ? [REOPEN_RULE] : []),
     ...(kind === 'batch' ? [`按各自的 \`human_answer\` 分头处理：${BATCH_MAPPING}`] : []),
@@ -141,7 +150,7 @@ function buildPrompt(kind: PromptKind, paths: string[]): string {
   return [
     PROMPT_TASK[kind],
     '',
-    ...paths.map((path) => `- ${path}`),
+    ...list,
     '',
     '逐条这么做：',
     ...rules.map((rule, i) => `${i + 1}. ${rule}`),
@@ -149,10 +158,15 @@ function buildPrompt(kind: PromptKind, paths: string[]): string {
   ].join('\n');
 }
 
-async function copyPrompt(kind: PromptKind, paths: string[], what: string) {
-  if (!paths.length) return;
+async function copyPrompt(
+  kind: PromptKind,
+  paths: string[] | { group: string; paths: string[] }[],
+  what: string,
+) {
+  const count = paths.reduce((n, entry) => n + (typeof entry === 'string' ? 1 : entry.paths.length), 0);
+  if (!count) return;
   const ok = await writeClipboard(buildPrompt(kind, paths));
-  if (ok) toast.success(`已复制 ${what}（${paths.length} 条），粘给 agent 即可`);
+  if (ok) toast.success(`已复制 ${what}（${count} 条），粘给 agent 即可`);
   else toast.error('复制失败。看板跑在 http 下时浏览器常常不给剪贴板，改用 127.0.0.1 打开再试。');
 }
 
@@ -813,11 +827,22 @@ function QuestionsBody({
   }, [index.items, filter, onlyUnflowed]);
 
   /**
-   * 某个分组里「待 AI 更新」的条目。批量复制取的是它，**不看当前筛选** ——
-   * 用户在「未处理」分组上点批量，想要的仍然是这组已经分派出去、等着发 prompt 的那些。
+   * 全部「待 AI 更新」的条目，按分组分段。批量复制取的是它，**不看当前筛选** ——
+   * 人在哪个筛选下点，想要的都是已经分派出去、等着发 prompt 的那些。
+   * 范围是全局，但 prompt 里按分组分段列出：跨交付物混排会把 agent 的上下文打散。
    */
-  const batchOf = (name: string) =>
-    index.items.filter((i) => (i.blocks || UNSORTED) === name && i.status === 'pending_ai');
+  const batch = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const item of index.items) {
+      if (item.status !== 'pending_ai') continue;
+      const key = groupLabel(item.blocks || UNSORTED);
+      const bucket = map.get(key);
+      if (bucket) bucket.push(item.path);
+      else map.set(key, [item.path]);
+    }
+    return [...map.entries()].map(([group, paths]) => ({ group, paths }));
+  }, [index.items]);
+  const batchCount = batch.reduce((n, entry) => n + entry.paths.length, 0);
 
   /** 翻页走的是这条扁平序列：分组顺序里的全部条目，与折叠与否无关 */
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
@@ -993,53 +1018,29 @@ function QuestionsBody({
           {groups.length ? (
             groups.map((group) => {
               const isOpen = !collapsed.has(group.name);
-              const batch = batchOf(group.name);
               return (
                 <div key={group.name}>
-                  <div className="flex items-center border-b border-border hover:bg-accent">
-                    <button
-                      type="button"
-                      aria-expanded={isOpen}
-                      onClick={() =>
-                        setCollapsed((prev) => {
-                          const next = new Set(prev);
-                          if (next.has(group.name)) next.delete(group.name);
-                          else next.add(group.name);
-                          return next;
-                        })
-                      }
-                      className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 text-left text-sm"
-                    >
-                      <ChevronRight
-                        className={cn('size-3.5 shrink-0 transition-transform', isOpen && 'rotate-90')}
-                      />
-                      <span className="min-w-0 flex-1 truncate">{groupLabel(group.name)}</span>
-                      <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                        {group.items.length}
-                      </span>
-                    </button>
-                    {/*
-                      批量复制，范围**就是这一组**，不是全局待更新 ——
-                      跨交付物的批量会把 agent 的上下文打散，那正是这套东西要消除的问题，
-                      不能从 200 条缩到 10 条就当解决了。分组本来就是注意力单元。
-                    */}
-                    <button
-                      type="button"
-                      disabled={!batch.length}
-                      title={
-                        batch.length
-                          ? `复制「${groupLabel(group.name)}」待 AI 更新的 ${batch.length} 条 prompt`
-                          : '这一组没有待 AI 更新的问题'
-                      }
-                      aria-label={`复制「${groupLabel(group.name)}」的批量 prompt`}
-                      onClick={() =>
-                        void copyPrompt('batch', batch.map((i) => i.path), `「${group.name}」`)
-                      }
-                      className="mr-1 flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-30"
-                    >
-                      <Copy className="size-3.5" />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    aria-expanded={isOpen}
+                    onClick={() =>
+                      setCollapsed((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(group.name)) next.delete(group.name);
+                        else next.add(group.name);
+                        return next;
+                      })
+                    }
+                    className="flex w-full items-center gap-2 border-b border-border py-2 pr-3 pl-3 text-left text-sm hover:bg-accent"
+                  >
+                    <ChevronRight
+                      className={cn('size-3.5 shrink-0 transition-transform', isOpen && 'rotate-90')}
+                    />
+                    <span className="min-w-0 flex-1 truncate">{groupLabel(group.name)}</span>
+                    <span className="shrink-0 rounded-md bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                      {group.items.length}
+                    </span>
+                  </button>
                   {isOpen
                     ? group.items.map((item) => {
                         // 一行一条：截断的是描述，编号永远看得见 —— 它是跟 agent 对话时的口令
@@ -1077,6 +1078,23 @@ function QuestionsBody({
             <p className="px-3 py-6 text-center text-xs text-muted-foreground">这个筛选下没有问题</p>
           )}
         </ScrollArea>
+
+        {/*
+          批量复制固定在左栏底部，范围是**全部**待 AI 更新的问题（不跟筛选、不跟分组）——
+          挂在分组行尾时一次只能发一组，谈不上批量。prompt 里仍按分组分段，见 `batch`。
+        */}
+        <div className="flex h-11 shrink-0 items-center gap-2 border-t border-border pr-1 pl-3">
+          <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+            复制更新 Prompts，发给 AI 批量更新
+          </span>
+          <HeaderIconButton
+            label={batchCount ? `复制 ${batchCount} 条待 AI 更新的 prompt` : '没有待 AI 更新的问题'}
+            disabled={!batchCount}
+            onClick={() => void copyPrompt('batch', batch, '批量更新 prompt')}
+          >
+            <Copy className="size-4" />
+          </HeaderIconButton>
+        </div>
       </div>
 
       {/* ── 右：单条卡片 + 方向键翻页 ── */}

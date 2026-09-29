@@ -22,12 +22,13 @@ import { InputPanel } from '@/components/InputPanel';
 import { OutputPanel } from '@/components/OutputPanel';
 import { OverviewPanel } from '@/components/OverviewPanel';
 import { QuestionsFab, countPending } from '@/components/QuestionsDialog';
-import { Workbench } from '@/components/Workbench';
+import { Workbench, type WorkbenchPage } from '@/components/Workbench';
 import { Reader } from '@/components/Reader';
 import { SidebarRail } from '@/components/SidebarRail';
 import { UnavailableWorkspace, WorkspaceDialog } from '@/components/WorkspaceSettings';
 import { VisualPanel } from '@/components/VisualPanel';
 import { useBoardSession, type View } from '@/hooks/useBoardSession';
+import { useFeedback } from '@/hooks/useFeedback';
 import { useQuestions } from '@/hooks/useQuestions';
 import { useRecords } from '@/hooks/useRecords';
 import { useIngestJob } from '@/hooks/useIngestJob';
@@ -337,13 +338,16 @@ export default function App() {
   const version = useAppVersion();
   const [helpOpen, setHelpOpen] = useState(false);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
-  /** 工作台停在哪一页。放在 App 级：关掉再打开还在原来那一页 */
-  const [workbenchPage, setWorkbenchPage] = useState<'questions' | 'records'>('questions');
+  /** 工作台停在哪一页。放在 App 级：关掉再打开还在原来那一页。首次打开是浏览页 */
+  const [workbenchPage, setWorkbenchPage] = useState<WorkbenchPage>('hub');
   /** 从文档链接点进来要选中的问题。带序号：同一条连点两次也要再选一次 */
   const [questionFocus, setQuestionFocus] = useState<{ id: string; seq: number } | null>(null);
+  /** 从「转成 Word」弹窗跳进模版洗炼时要选中的模板。带序号：同一个连跳两次也要再选一次 */
+  const [templateFocus, setTemplateFocus] = useState<{ name: string; seq: number } | null>(null);
   // 两份索引都在 App 级预取，不挂任何视图的生命周期上：工作台打开与切页都要瞬时，不等网络
   const questions = useQuestions(activeId, changeToken);
   const records = useRecords(activeId, changeToken);
+  const feedback = useFeedback(activeId, changeToken);
   // ⌘K 的接线在 `Workbench` 里（壳负责快捷键），这里只管开关状态
   // 帮助和文件共用预览位，所以互斥：开帮助时先把文件预览关掉，关帮助就回到看板。
   // useMemo 稳住对象身份，否则每次渲染都是新对象，进出场动画会被反复重放。
@@ -411,6 +415,12 @@ export default function App() {
       return 'opened';
     }
     return openPath(path, { viaLink: true });
+  };
+
+  const openTemplateRefine = (name?: string) => {
+    setWorkbenchPage('template');
+    if (name) setTemplateFocus((prev) => ({ name, seq: (prev?.seq ?? 0) + 1 }));
+    setWorkbenchOpen(true);
   };
 
   const changeWorkbenchOpen = (next: boolean) => {
@@ -497,6 +507,7 @@ export default function App() {
               scan={scan}
               openPath={openFile?.path || mountedFile?.path || ''}
               onOpen={selectFileAndCloseHelp}
+              onOpenTemplateRefine={openTemplateRefine}
             />
           ) : null}
           {view === 'prototypes' ? (
@@ -704,7 +715,7 @@ export default function App() {
         />
       ) : null}
       {/*
-        工作台（问题单 / 记录单两页）+ 右下角悬浮入口，都在布局最外层 ——
+        工作台（浏览页 + 四个模块）+ 右下角悬浮入口，都在布局最外层 ——
         任意视图下都能唤出，关掉后原视图状态不变。
 
         悬浮球的计数**只数未决问题**，不改成两页合计 ——
@@ -722,12 +733,16 @@ export default function App() {
         open={workbenchOpen}
         onOpenChange={changeWorkbenchOpen}
         focusQuestion={questionFocus}
+        focusTemplate={templateFocus}
         page={workbenchPage}
         onPageChange={setWorkbenchPage}
         projectId={activeId}
         projectName={activeProject?.name || ''}
+        version={version}
         questions={questions}
         records={records}
+        feedback={feedback}
+        rawFiles={scan?.input?.raw ?? []}
         changeToken={changeToken}
         workspaceAvailable={scan?.available !== false}
       />

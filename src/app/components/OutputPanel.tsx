@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CodeXml,
   Copy,
+  FileOutput,
   FileText,
   FolderOpen,
   Image,
@@ -18,6 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { DocxExportDialog } from '@/components/DocxExportDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -184,6 +186,7 @@ function OutputRow({
   onOpen,
   archiveBlocked,
   onArchive,
+  onConvert,
   selection,
 }: {
   item: FileItem;
@@ -200,6 +203,8 @@ function OutputRow({
   /** 「归档」不能点的理由；空串 = 可以归档 */
   archiveBlocked: string;
   onArchive: (item: FileItem) => void;
+  /** 「转成 Word」。不传（工作空间目录丢失）就不出现这一项；只对 .md 生效 */
+  onConvert?: (item: FileItem) => void;
   /** 批量模式下传：点行 = 勾选 / 取消，不打开预览，行尾菜单也收起来 */
   selection?: { checked: boolean; onToggle: (item: FileItem) => void };
 }) {
@@ -282,6 +287,16 @@ function OutputRow({
                 void api.reveal(projectId, item.path);
               },
             },
+            // docKey 是服务端下发的不透明键：没有它（旧服务进程）就置灰，不在前端拼路径去调
+            ...(onConvert && item.ext === '.md'
+              ? [{
+                  label: '转成 Word',
+                  icon: FileOutput,
+                  disabled: !item.docKey,
+                  hint: item.docKey ? undefined : '看板服务是旧版本，重启后可用',
+                  onSelect: () => onConvert(item),
+                }]
+              : []),
             {
               label: '归档',
               icon: Archive,
@@ -306,6 +321,7 @@ function OutputGroup({
   archivedTotal,
   canArchive,
   onArchive,
+  onConvert,
   searching,
   viewMode,
   pins,
@@ -331,6 +347,7 @@ function OutputGroup({
   archivedTotal: number;
   canArchive: boolean | undefined;
   onArchive: (item: FileItem) => void;
+  onConvert?: (item: FileItem) => void;
   searching: boolean;
   viewMode: ViewMode;
   pins: Set<string>;
@@ -357,6 +374,7 @@ function OutputGroup({
     onOpen,
     archiveBlocked: archiveBlockedReason(item, canArchive),
     onArchive,
+    onConvert,
     selection: selected ? { checked: selected.has(item.path), onToggle: onToggleSelect } : undefined,
   });
   // 搜索时自动展开：归档项要能被搜到，藏在折叠里等于没搜到
@@ -433,10 +451,13 @@ export function OutputPanel({
   scan,
   openPath,
   onOpen,
+  onOpenTemplateRefine,
 }: {
   scan: Scan;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  /** 「转成 Word」弹窗里的「在模版洗炼里查看」：打开工作台的模版洗炼页，可带模板名 */
+  onOpenTemplateRefine?: (name?: string) => void;
 }) {
   const { output } = scan;
   const projectId = scan.project.id;
@@ -444,6 +465,11 @@ export function OutputPanel({
   const [archiving, setArchiving] = useState<{ items: FileItem[]; group: GroupKey } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveError, setArchiveError] = useState('');
+  /** 「转成 Word」弹窗的来源 .md；null = 关着 */
+  const [converting, setConverting] = useState<FileItem | null>(null);
+  // 目录丢失时不给「转成 Word」：扫描结果是空的降级态，点了也只会撞 400
+  const canConvert = scan.available !== false;
+  const allOutputItems = useMemo(() => GROUPS.flatMap(({ key }) => output[key]), [output]);
   const fileManager = useFileManagerName();
   // 「复制绝对路径」要工作空间在磁盘上的位置，scan.project.root 里带着；拿不到时 absolutePath 自己退回相对路径
   const sep = usePathSeparator();
@@ -724,6 +750,7 @@ export function OutputPanel({
                   setArchiveError('');
                   setArchiving({ items: [item], group: key });
                 }}
+                onConvert={canConvert ? setConverting : undefined}
                 searching={searching}
                 viewMode={viewMode}
                 pins={pins}
@@ -740,6 +767,15 @@ export function OutputPanel({
           ))}
         </Tabs>
       </section>
+
+      <DocxExportDialog
+        projectId={projectId}
+        item={converting}
+        outputItems={allOutputItems}
+        onClose={() => setConverting(null)}
+        onConverted={onOpen}
+        onOpenTemplateRefine={onOpenTemplateRefine}
+      />
 
       <Dialog
         open={Boolean(archiving)}

@@ -61,8 +61,8 @@
      (`src/server/questions.mjs` 的 `writeQuestion`)——
      **这是第四条窄例外,范围就是下面六条,越界即为 bug**。
      它与 `spawn` 那几条**形状不同**:第二、三、五条都是「看板只 `spawn`,工作空间自己的脚本写盘」,
-     **这一条是看板服务端自己写**(下面第六条是同一个形状,两条各有自己的六条边界,
-     不要因为「反正已经能写了」再加第三条)。之所以破例:人工反馈没有现成的工作空间脚本可以承接,
+     **这一条是看板服务端自己写**(第六条、第八条是同一个形状,每条各有自己的六条边界,
+     不要因为「反正已经能写了」再开一条没有写进这份清单的写入)。之所以破例:人工反馈没有现成的工作空间脚本可以承接,
      为它造一个子进程入口只是绕路;而且它是高频小写入(消解十条就是十次),
      每次起一个进程的延迟会让交互变钝。作为交换,写入面被压到下面六条:
      ① 只允许**改已存在**的问题文件,不新建、不删除、不改名;文件不存在一律 404;
@@ -157,6 +157,51 @@
      归档不降低可达性:归档项照样扫描、搜索、预览、计入溯源反链。
      二次归档(分堆 + 短索引)由工作空间 agent 走 `pm-output-archive` 技能做,看板不参与,
      也**不产出任何「无需再读」清单**
+   - 保存反馈单的发送记录时写 `output/feedback/F<编号>.md`
+     (`src/server/feedback.mjs` 的 `markSent`)——
+     **这是第八条窄例外,范围就是下面六条,越界即为 bug**。
+     它与第四条(人工反馈)、第六条(记录状态)**同形**:看板服务端自己写盘,不 `spawn`。
+     之所以不走 spawn:发送记录是高频小写入(一份反馈可能发不止一次),
+     没有现成的工作空间脚本能承接,为它造一个子进程入口只是绕路,
+     每次起进程的延迟会让「我已发出」变钝。作为交换,写入面压到下面六条:
+     ① 只允许**改已存在**的 `output/feedback/F<编号>.md`,不新建、不删除、不改名;
+        编号不存在一律 404 —— 写反馈单是工作空间智能体的事;
+     ② 只允许写**人写区**:front-matter 的 `sent_at`,以及正文「## 发送记录」小节
+        (只追加 `###` 子节,不改写已有条目)。
+        载荷里出现 AI 写区字段(`status` / `receipt` / `title` / `id` / `created` 等)一律 400,不落盘;
+     ③ 必须由用户在看板上点「已发送」明确发起。唤起 mailto 本身**不写盘**;
+        没有后台任务、定时,也不从任何信号自动推断「已发送」;
+     ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
+     ⑤ 请求**只带编号**(`F0003` 这种形态),不接受任何路径;
+        落盘路径由服务端用 `resolveInside()` 自己拼;
+     ⑥ `output/feedback/` 下的其它文件、`.kanban-feedback/`、`output/docx-template/`、
+        `input/`、`project.yaml`、`visualization/` 仍然只读。
+        写入走「先写临时文件再原子替换」,失败不留半截文件。
+        结构认不出来(没有 front-matter,或没有「## 发送记录」)一律 409,不硬写
+   - 提炼 Word 模板、把产出 `.md` 转成 Word 时调工作空间的 `scripts/docx_template.py` / `scripts/md2docx.py`
+     (`src/server/docxTools.mjs`,路由在 `http.mjs`)——
+     **这是第九条窄例外,范围就是下面六条,越界即为 bug**。
+     它属于「看板只 `spawn`,工作空间脚本写盘」那一族(与资料转换、第三、五、七条同构),
+     **不是**第四、六、八条那种服务端直写:解析 OOXML、跑 pandoc 是重活,终端和工作空间 AI 也要能跑同一份脚本,
+     看板只是其中一个触发方。与第七条一样**同步等脚本退出**(带超时),不做任务态。
+     ① 看板只 `spawn`,自己不写、不 `rename`、不 `unlink` 工作空间里任何一个字节;
+     ② 必须用户在看板上点「开始分析」「生成模板」「转换」明确发起;没有后台任务、没有定时,不因文件变化自动重跑;
+     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
+     ④ **请求不带任何路径**:来源 `.docx` 与待转换的 `.md` 只用服务端扫描时下发的不透明键 `docKey`
+        (相对路径 SHA-256 前 16 位)指定,服务端重新扫描、在同类条目里反查出路径,查不到就 400,
+        然后过 `resolveInside()` 才交给脚本。**不接受「带路径但我们会校验」**(第七条第 ④ 款的理由原样适用);
+        也不退回「组名 + 基名」,因为产出文档常在组内子目录里,基名不能唯一定位。
+        模板名只接受一层基名(不以 `.` 开头,不含分隔符与 `..`);
+        用户在提炼第 ②③ 步的决定以 JSON 经 stdin 交给脚本,服务端限 256KB、拒绝路径类键名,脚本再校验结构;
+     ⑤ 脚本只允许写两处:`docx_template.py` 只写 `output/docx-template/<模板名>/`
+        (`collect/`、`profile.json`、`reference.docx`、`spec.md`、`sample.docx`);
+        `md2docx.py` 只写与来源 `.md` 同目录、同基名的 `.docx`(中间文件放系统临时目录,结束即删)。
+        `input/`、`project.yaml`、`visualization/`、`.md` 原文以及 `output/` 下的其它一切仍然只读;
+     ⑥ **不覆盖别人的文件**:同名 `.docx` 已存在时,只有它带着工具链的生成标记
+        (`docProps/custom.xml` 的 `aispace-docx-generator`)且用户确认「覆盖」才允许替换,没有标记一律 409;
+        模板名已存在时,只有用户确认「重新生成」才覆盖该模板目录下的上述文件。
+        服务端与脚本各校验一次。脚本不存在、找不到 Python 3 或 pandoc 3 时接口 400 说清出路,
+        不退化成「看板替你写」。上传本期不做:想用本地文件提炼,先把它放进 `input/raw/`
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
@@ -210,12 +255,17 @@ aispace-kanban/
 │   │   ├── frontmatter.mjs #   frontmatter / 标题 / 字数
 │   │   ├── records.mjs     #   扫 output/records/ → 产出物记录索引 + 状态写入(不变量 1 第六条例外)
 │   │   ├── notes.mjs       #   批注文件读写:output/records/notes/(第六条例外的第二种写入,允许新建)
+│   │   ├── feedback.mjs    #   扫 output/feedback/ → 反馈单索引 + 发送记录写入(不变量 1 第八条例外)
+│   │   ├── docxTemplates.mjs # 扫 output/docx-template/ → 模板清单(只读)
+│   │   ├── docxTools.mjs   #   提炼模板 / 转 Word 的参数校验与 spawn(不变量 1 第九条例外)
+│   │   ├── docxMarker.mjs  #   读 .docx 的生成标记(只读;覆盖前服务端自己也校验一次)
+│   │   ├── patchMarkdown.mjs # 问题单 / 记录单 / 反馈单共用的字段级替换与原子写
 │   │   ├── prototypes.mjs  #   扫 visualization/prototypes/ → 原型清单(index.html / zip / url 形态)
 │   │   ├── references.mjs  #   扫 visualization/references/ → 参考清单(子目录 index.html)
 │   │   ├── questions.mjs   #   扫 output/questions/ → 未决问题索引 + 人工反馈写入(第四条例外)
 │   │   ├── capture.mjs     #   ★ 采集写入的唯一收口:贴 URL 采集 → visualization/ 之下(第二条例外)
 │   │   ├── paths.mjs       #   ★ resolveInside 的唯一实现(不变量 2 的载体)
-│   │   └── platform.mjs    #   ★ 三平台差异只写在这:开浏览器 / 定位文件 / 找 python
+│   │   └── platform.mjs    #   ★ 三平台差异只写在这:开浏览器 / 定位文件 / 找 python 与 pandoc
 │   ├── app/                # 平面 3 · 前端 SPA(TS,`@/` 指向这里)
 │   │   ├── App.tsx         #   外壳:侧栏 + 四视图路由 + 主题
 │   │   ├── components/     #   业务面板(*Panel.tsx)、阅读器、通用小件
@@ -226,7 +276,8 @@ aispace-kanban/
 │   └── shared/             # 平面 2 与 3 共用的**纯函数**(.mjs + JSDoc)
 │       ├── textMatch.mjs   #   归一 + 分词:整表检索在服务端判定、片段加粗在前端,口径必须同源
 │       ├── codeLang.mjs    #   代码扩展名 → 语言:扫描标 text、预览高亮,口径必须同源
-│       └── recordStatus.mjs #  产出物记录的三套状态机:服务端校验、前端下拉,口径必须同源
+│       ├── recordStatus.mjs #  产出物记录的三套状态机:服务端校验、前端下拉,口径必须同源
+│       └── feedbackMail.mjs #  项目公开反馈邮箱:mailto 收件人与发送记录必须是同一个地址
 ├── scripts/                # 平面外 · 仓库工具
 │   ├── build-npm-package.mjs  #   组 npm 包(pnpm build:npm),产出 npm-package/
 │   └── smoke-package.mjs      #   ★ 装包冒烟(pnpm smoke:npm),CI 三平台跑的就是它
@@ -240,7 +291,8 @@ aispace-kanban/
 │       ├── template.yaml   #     发现用的元信息(id / name / description)
 │       ├── .claude/skills/ #     pm-* 业务技能 + skill-creator
 │       ├── scripts/        #     工作空间自己的工具;看板只 spawn 其中几支:ingest.py / db_ingest.py /
-│       │                   #     web_ingest.py --inbox / archive_output.py(一次归档,第七条例外)
+│       │                   #     web_ingest.py --inbox / archive_output.py(一次归档,第七条例外) /
+│       │                   #     docx_template.py 与 md2docx.py(提炼模板 / 转 Word,第九条例外;公共代码在 docxkit/)
 │       └── input/ output/ visualization/ project.yaml
 └── dist/                   # 构建产物(gitignore),serve 非 dev 模式伺服它
 ```
@@ -293,6 +345,7 @@ aispace-kanban/
 | 类型检查 | `pnpm typecheck` |
 | 组 npm 包(发布用) | `pnpm build:npm` → `npm-package/` |
 | 打 tgz + 装包冒烟 | `pnpm pack:npm && pnpm smoke:npm` |
+| docx 工具链回归(改了 `templates/pm-aispace/scripts/docxkit/` 必跑;**仅本地**,CI 不装 pandoc) | `pnpm test:docx`(没有 pandoc 3 时只跳过转换段) |
 | 看规划状态(active change / 已落地能力) | `openspec list` / `openspec list --specs` |
 
 **交付闸门(缺一不可):**
@@ -430,9 +483,10 @@ aispace-kanban/
 
 ### 6.2 处理工作空间反馈单
 
-工作空间里的 agent **不许改看板源码**:只读 GitHub 上的源码,发现看板缺陷就在工作空间根目录的
-`.kanban-feedback/` 写一份反馈单(格式与规则见模板 AGENTS.md「看板显示不对时」),由用户带到本仓来。
-看板扫描本来就跳过根目录的 `.` 开头目录,**看板不读、不显示、不写**这个目录。
+工作空间里的 agent **不许改看板源码**:只读 GitHub 上的源码,发现看板缺陷就写
+`output/feedback/F<编号>.md`(字段契约见模板 `output/feedback/README.md`),由用户在工作台反馈单页发出,
+或把文件带到本仓来。旧的 `.kanban-feedback/` 不再新写;看板只统计那里还剩几份 `.md`,
+**不读内容、不移动、不改名、不删除**。
 
 用户把反馈单交给你时:
 

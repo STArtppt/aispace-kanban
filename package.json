@@ -19,13 +19,15 @@
     "typecheck": "tsc --noEmit",
     "test:anchor": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/test-anchor.ts",
     "test:rich-doc": "node scripts/check-rich-doc.mjs",
-    "test:questions": "node scripts/check-questions.mjs"
+    "test:questions": "node scripts/check-questions.mjs",
+    "test:docx": "node scripts/check-docx.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
     "@firecrawl/anydoc": "^0.2.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "docx-preview": "^0.4.1",
     "katex": "^0.18.7",
     "lucide-react": "^0.525.0",
     "mermaid": "^11.16.0",

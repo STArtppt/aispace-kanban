@@ -8,6 +8,7 @@ import path from 'node:path';
 import YAML from 'yaml';
 import { CODE_LANG_BY_EXT } from '../shared/codeLang.mjs';
 import { countAnnotations, linkReferences } from './citations.mjs';
+import { readDocxMarker } from './docxMarker.mjs';
 import { countWords, parseFrontmatter } from './frontmatter.mjs';
 import { readMeta } from './meta.mjs';
 import { scanPrototypes } from './prototypes.mjs';
@@ -77,6 +78,41 @@ export function outputPlacement(relPath) {
     return { group: parts[1], archived: true, pile: rest[0], role: rest.length === 2 && rest[1] === 'INDEX.md' ? 'index' : '' };
   }
   return { group: parts[1], archived: false, nested: inner.length > 1 };
+}
+
+/**
+ * 可转换条目的不透明键：相对路径（`/` 分隔）的 SHA-256 前 16 位十六进制。
+ * 只下发给两类条目：产出三组里的 `.md`（转成 Word 的来源）、`input/raw/` 里的 `.docx`（提炼模板的来源）。
+ *
+ * 写接口只收这个键、**不收路径**（AGENTS.md 不变量 1 第九条第 ④ 款）：
+ * 服务端重新走一遍对应目录、在同一类条目里反查出路径，查不到就 400。
+ * 用路径摘要而不是内存里的临时 id，是为了不维护状态 —— 服务重启后键照样有效。
+ */
+export function docKeyOf(relPath) {
+  return createHash('sha256').update(relPath).digest('hex').slice(0, 16);
+}
+
+/** docKey 的两类来源。反查只在对应的那一类里找，产出的键换不来原件的路径，反之亦然。 */
+const DOC_KEY_KINDS = {
+  'output-md': (root) => OUTPUT_GROUPS.flatMap((g) => listFiles(path.join(root, 'output', g)))
+    .filter((abs) => path.extname(abs).toLowerCase() === '.md'),
+  'raw-docx': (root) => listFiles(path.join(root, 'input', 'raw'))
+    .filter((abs) => path.extname(abs).toLowerCase() === '.docx'),
+};
+
+/**
+ * 按 docKey 反查工作空间相对路径；查不到返回 null。
+ * @param {string} root
+ * @param {'output-md' | 'raw-docx'} kind
+ * @param {string} key
+ */
+export function findDocByKey(root, kind, key) {
+  if (typeof key !== 'string' || !/^[0-9a-f]{16}$/.test(key) || !DOC_KEY_KINDS[kind]) return null;
+  for (const abs of DOC_KEY_KINDS[kind](root)) {
+    const p = rel(root, abs);
+    if (docKeyOf(p) === key) return p;
+  }
+  return null;
 }
 
 function rel(root, abs) {
@@ -737,6 +773,8 @@ function scanInput(root) {
       // 忽略的资料仍留在 raw 列表和总量里 —— 藏起来就等于忘了它还在
       ignored: isIgnored(p),
       ...stat(abs),
+      // 可选：提炼 Word 模板时用它指定来源（第九条例外不收路径）。旧前端不认，忽略即可
+      ...(path.extname(abs).toLowerCase() === '.docx' ? { docKey: docKeyOf(p) } : {}),
     };
   });
 
@@ -821,6 +859,10 @@ function scanOutput(root) {
         if (body) docs.push({ path: item.path, text: body });
         // 归档项仍留在本组数组里，只打标记：旧前端不认这个字段，照旧混在主列表里显示，
         // 等于「功能没启用」；新前端按标记分区。
+        // 可选：「转成 Word」用它指定来源 .md（第九条例外不收路径）。没有它（旧服务进程）菜单项置灰
+        if (item.ext === '.md') item.docKey = docKeyOf(item.path);
+        // 可选：这份 Word 是不是工具链转出来的（带生成标记）。「转成 Word」弹窗据此决定给不给「覆盖」
+        if (item.ext === '.docx') item.docxGenerated = readDocxMarker(abs) !== null;
         const placement = outputPlacement(item.path);
         if (placement?.archived) {
           item.archived = true;
@@ -850,6 +892,10 @@ function scanOutput(root) {
     }
   }
 
+  // 反馈单（`output/feedback/`）和 docx 模板（`output/docx-template/`）同样不进三组、
+  // 不喂溯源反链、不进完整度。它们有自己的入口（⌘K 工作台），上面那轮只遍历三个组名，
+  // 这两个目录天然不在其中。不要为了「让搜索也能搜到反馈单」把它们加进 OUTPUT_GROUPS。
+  //
   // 产出物记录（`output/records/`）**两样都不进**：不进上面三个分组，也不喂溯源反链。
   //
   // 不进分组的理由与问题清单同一条：三类合计的记录数会把「分析中间产物」那份清单整个淹掉，
