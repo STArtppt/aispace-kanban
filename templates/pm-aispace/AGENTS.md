@@ -2,6 +2,8 @@
 
 本文件是所有 AI Agent 在这个工作空间里的**唯一约定来源**。
 `CLAUDE.md` 只是指向本文件的入口，不要把约定重复写在那边。
+本项目专有的约定在工作空间根的 `AGENTS.local.md`（有就一并读；不随模板分发，更新不覆盖），
+见「本项目专有的约定」。
 
 这是**产品经理 / 需求分析师接手一个既有项目**时使用的工作空间。用户是 PM，不是工程师：
 沟通时少用工程术语，多用需求、范围、干系人、验收这类 PM 语言；需要用到脚本或命令时，
@@ -29,7 +31,7 @@ input/  →  （分析）  →  output/  →  visualization/
 | `output/<组>/一次归档/` | 三组各自的归档区：不再作数、从主列表移开的产出物；看板照样能搜、能预览 | 一次归档由看板调 `scripts/archive_output.py` 移入，**只移动不删除**；二次归档（分堆 + 短索引）走 `pm-output-archive`，**不写任何「无需再读」清单** |
 | `output/questions/` | 未决问题，**一问一文件** `Q<四位编号>.md`；**和 `analysis/` 平级，不进任何视图的文件列表**，只在看板 ⌘K 工作台的「问题单」里看和处理 | 走 `pm-open-questions`；字段契约见该目录的 `README.md` |
 | `output/records/` | 产出物记录，**一份产出物一个** `I<四位编号>.md`；和 `analysis/` 平级，**不进任何视图的文件列表**，只在看板 ⌘K 工作台的「记录单」页里看和处理 | 走 `pm-output-record`；字段契约见该目录的 `README.md` |
-| `output/feedback/` | 看板缺陷反馈单，**一份一个** `F<四位编号>.md`。不进文件列表，只在看板 ⌘K 工作台的「反馈单」页里看和发送 | 字段契约见该目录的 `README.md`。见「看板显示不对时」 |
+| `output/feedback/` | 交给看板维护者的单子：缺陷单与贡献单，**一份一个** `F<四位编号>.md`。不进文件列表，只在看板 ⌘K 工作台的「反馈单」页里看和发送 | 字段契约见该目录的 `README.md`。见「看板显示不对时」「贡献改进」 |
 | `output/delivery/` | 去 AI 味后的交付稿：镜像原稿路径，`v<三位序号>.md` 逐版保存。不进文件列表，只从原稿阅读器的版本条进入 | 只由 `pm-deai-writing` 写，**每一版写出后不再改动**；改交付稿走批注，见下文「交付前去 AI 味」和该目录的 `README.md` |
 | `output/docx-template/` | Word 模板，一个模板一个子目录。不进文件列表，在看板 ⌘K 工作台的「模版洗炼」页里看和提炼 | 只由 `scripts/docx_template.py` 写（看板点按钮时也是启动它），见下文「Word 模板与转 Word」和该目录的 `README.md` |
 | `visualization/references/` | 收下来的**别人的**页面：竞品、友商后台、公开文档站 | **一份参考一个目录，入口必须叫 `index.html`**；这是收来的原样材料，不要改它的内容 |
@@ -149,6 +151,7 @@ python3 /path/to/aispace-kanban/templates/init_workspace.py \
 | [`skills/pm-prototype-brief`](skills/pm-prototype-brief/SKILL.md) | 阶段四：把文档收敛成原型输入，衔接 Axhub Make |
 | [`skills/pm-deai-writing`](skills/pm-deai-writing/SKILL.md) | 交付前：按规则库给文档去 AI 味、出交付稿；按交付稿上的批注改出下一版并同步沉淀规则；规则库体检 |
 | [`skills/pm-env-config`](skills/pm-env-config/SKILL.md) | 用户给了数据库连接、API Key 等环境参数时：写 `.env`、配 `input/sources/*.yaml`、验证能连上 |
+| [`skills/pm-template-update`](skills/pm-template-update/SKILL.md) | 用户要更新模板、或发现本工作空间缺模板后来加的技能 / 脚本时：出计划、确认、落盘、合并冲突 |
 | [`skills/skill-creator`](skills/skill-creator/SKILL.md) | 工作中发现重复套路时，把它固化成新技能 |
 
 **发现自己在重复第三遍同一套动作时，主动提议用 `skill-creator` 把它做成技能。**
@@ -452,8 +455,7 @@ python3 scripts/docx_template.py build --name 客户甲 --source input/raw/客�
 ### 旧工作空间没有这两支脚本
 
 本工作空间如果建得早，`scripts/` 下可能没有 `docx_template.py`、`md2docx.py` 和 `docxkit/`。
-按「模板改动回同步源」的反方向，从看板仓库的 `templates/pm-aispace/scripts/` 把这三样原样复制过来
-（源码在 <https://github.com/STArtppt/aispace-kanban>），别的文件不要动。
+走 [`skills/pm-template-update`](skills/pm-template-update/SKILL.md) 更新模板，不要手工复制。
 
 `output/docx-template/` 里是客户的版式材料，不要贴进反馈单或任何公开的地方。
 
@@ -469,8 +471,8 @@ AI 起草的文档读着像 AI 写的：逐句挂「（依据：…）」、句�
 - **体检**：规则库攒多了，查重复、冲突、长期零命中，只给建议。
 - 转 Word 时选交付稿；成品落在交付稿旁边。
 
-旧工作空间没有这个技能：从看板仓库的 `templates/pm-aispace/.claude/skills/pm-deai-writing/` 整个目录复制过来，
-再建一个空的 `output/delivery/`（带 README），别的文件不要动。
+旧工作空间没有这个技能：走 [`skills/pm-template-update`](skills/pm-template-update/SKILL.md) 更新模板，
+技能和 `output/delivery/README.md` 会作为新增文件一起进来。
 
 ## 阶段四：视觉呈现
 
@@ -542,7 +544,7 @@ Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也�
 | `output/questions/` | 语法管；字段以该目录 README 为准 | 未决问题有自己的字段契约，扁平约束与这里是同一条 |
 | `output/records/` | 语法管；字段以该目录 README 为准 | 产出物记录有自己的字段契约（含按 `kind` 分化的三套状态机），扁平约束与这里是同一条 |
 | `output/records/notes/` | 语法管；格式以 `output/records/README.md` 的「批注」为准 | 一份产出物一份批注文件。看板整条追加，agent 只改 `- 状态：` 与 `- 回执：` |
-| `output/feedback/` | 语法管；字段以该目录 README 为准 | 看板缺陷反馈单。智能体写内容和回执，不改 `sent_at` 与发送记录 |
+| `output/feedback/` | 语法管；字段以该目录 README 为准 | 缺陷单与贡献单。智能体写内容和回执，不改 `sent_at` 与发送记录 |
 | `output/delivery/` | **管**；front-matter **必填且扁平**，字段以该目录 README 为准 | 交付稿。看板靠 `source_sha` / `body_sha` 判断原稿是否更新、是否被直接改过 |
 | `output/docx-template/` | `spec.md` 语法管、front-matter 不强制 | 模板的文字规定。其余是 json / docx，不走这一节 |
 | 各目录下的 `README.md` | 语法管、front-matter **不强制** | 目录说明，不是分析产物 |
@@ -645,6 +647,7 @@ GitHub 上的 `main` 可能与用户本机跑的版本有出入，对不上时�
 ### 反馈单 `output/feedback/`
 
 放在 `output/feedback/`，**一个问题一份** `F<四位编号>.md`。目录不存在就建。
+缺陷单写 `kind: bug`（不写也按缺陷单处理）；同一目录里还有贡献单，见「贡献改进」。
 字段、分组和发送记录的写法以 [`output/feedback/README.md`](output/feedback/README.md) 为准，这里不抄第二遍。
 
 - **最小复现必须是合成的**，不贴工作空间里的真实资料、客户名称、截图、本机路径。这份单子可能被带进公开仓库。
@@ -679,29 +682,46 @@ GitHub 上的 `main` 可能与用户本机跑的版本有出入，对不上时�
   自己的单页 HTML 一个子目录一个 `index.html`，见上文。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。
 - 不要用推断填平资料空白，标注出来交给用户去确认。
-- 不要读写本机的看板仓库或看板的 npm 包目录。要看看板源码读 GitHub；看板有缺陷写反馈单
-  （见「看板显示不对时」）。唯一的例外是下面「模板改动回同步源」规定的那几个文件。
+- 不要读写本机的看板仓库或看板的 npm 包目录，`templates/` 也不例外。要看看板源码读 GitHub；
+  看板有缺陷写缺陷单（见「看板显示不对时」），有可推广的改进写贡献单（见「贡献改进」），
+  要更新模板走 `pm-template-update`。
+- 不要把只对本项目成立的约定写进本文件，写进 `AGENTS.local.md`。
 - 不要改反馈单的 `sent_at` 和「## 发送记录」。回执只写 `status` 和 `receipt`。
 - 不要把客户的 docx 原件放进反馈单或公开说明。模板产物留在 `output/docx-template/`。
 
-## 模板改动回同步源
+## 模板更新
 
-本工作空间由 aispace-kanban 仓库的 `templates/pm-aispace` 生成。
-模板随看板仓库一起维护；看板「新建工作空间」调的是仓库里的
-`templates/init_workspace.py --from templates/pm-aispace`。
+本工作空间由 aispace-kanban 仓库的 `templates/pm-aispace` 铺出来。模板之后修了脚本、加了技能，不会自己到这里来。
+用户说「更新一下模板」时，走 [`skills/pm-template-update`](skills/pm-template-update/SKILL.md)：
+先用 `scripts/template_update.py` 从公开仓库取新版、出计划，讲给用户、**确认后**再落盘；
+这边改过的文件不覆盖，两边都改过的逐个合并；`input/`、`output/` 里的资料和产出、`visualization/` 一概不碰
+（各目录自带的 `README.md` 属于模板，会跟着更新）。
 
-**凡是改动了模板自带文件**（如 `scripts/ingest.py`、`skills/` 下的通用技能、`AGENTS.md` 等），
-在改动完成后必须同步回模板源，否则下次新建工作空间会丢失这些优化。
+- 基线记在 `.aispace/template.lock.json`：每次铺设和更新时模板每个文件的哈希。它要入库，别手改。
+- `project.yaml`、`.gitignore`、`input/.ingestignore`、去 AI 味规则库只在新建时铺一次，之后归本工作空间所有，
+  更新时只报告模板那边的变化，不覆盖。
+- 没有 lock 的旧工作空间第一次更新按「首次接入」处理，步骤在技能里。
 
-**能写的范围只有一处**：看板仓库 `templates/pm-aispace/` 下、与本工作空间里同名的那个文件
-（例如本空间的 `skills/pm-project-meta/SKILL.md` → 看板仓库的
-`templates/pm-aispace/.claude/skills/pm-project-meta/SKILL.md`）。
-看板仓库的其余部分 —— 根目录下的 `src/`、`bin/`、`scripts/`、`package.json`，`templates/init_workspace.py`
-以及别的一切 —— **都不在范围内**。问题要改看板代码才能解决的，写反馈单（见「看板显示不对时」）。
+## 本项目专有的约定：`AGENTS.local.md`
 
-同步规则：
+只对本项目成立的约定（原型工程在哪、客户的术语、某个现场系统的特殊字段怎么读）写在工作空间根的 `AGENTS.local.md`，
+**不要写进本文件**。本文件由模板管理，更新时整份按新版替换；`AGENTS.local.md` 不随模板分发，更新不碰它。
 
-- 改动前先确认目标文件在模板源中存在；不存在时向用户确认路径是否正确。
-- 用 `diff` 核对差异，确保只覆盖本次想保留的改动。
-- 同步后 **aispace-kanban** 仓库如有 Git 变更，提醒用户提交（提交的是看板仓，
-  不是本工作空间）。本工作空间只负责复制文件，不替用户 commit。
+开始工作前，有 `AGENTS.local.md` 就一并读（Claude Code 经 `CLAUDE.md` 自动引入，其它 Agent 请主动读）。
+它和本文件冲突时以本文件为准；它只做项目专有的补充。
+
+## 贡献改进
+
+在这里干活时沉淀出**换一个项目也成立**的改进 —— 去 AI 味规则的新增或修改、技能里一条对谁都适用的补充、
+模板脚本的缺陷修复 —— 写一份**贡献单**交回模板源：`output/feedback/` 下 `kind: contribution` 的反馈单，
+形状见 [`output/feedback/README.md`](output/feedback/README.md)。用户在看板反馈单页预览后发给维护者，
+维护者合并进模板，回执写明模板里的位置和提交号。
+
+- 判据：**换一个项目这条还成立吗？** 只对本项目成立的写进 `AGENTS.local.md`，不写贡献单。
+- 合成示例和改动内容**必须合成或脱敏**，不带真实资料、客户名称、截图、本机路径。
+- 本工作空间里的改动照常保留；贡献单只是把它交出去。写完告诉用户贡献单路径，提醒在看板反馈单页预览后发出。
+- 回执回来后只改贡献单的 `status` 和 `receipt`；规则类的另在本地规则里补 `上游：模板 R<编号>`
+  （见 `pm-deai-writing`「规则库怎么改」）。
+
+**不要直接写看板仓库或看板 npm 包目录里的任何文件，`templates/` 也不例外。**
+新建工作空间时写进 `.claude/settings.local.json` 的 `deny` 规则会拦住 Claude Code 的写入。

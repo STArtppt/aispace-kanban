@@ -946,6 +946,11 @@ export interface FeedbackItem {
   path?: string;
   mtime?: string;
   title?: string;
+  /**
+   * `bug`（缺陷单）/ `contribution`（贡献单），服务端缺省报 `bug`；写歪的值原样保留，界面归到「未识别」。
+   * 可选：旧服务进程不报，那时一律按缺陷单显示
+   */
+  kind?: string;
   /** `pending` / `fixed` / `wontfix`，写歪的值原样保留，界面归到「未识别」 */
   status?: string;
   created?: string;

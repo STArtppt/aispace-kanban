@@ -2,16 +2,24 @@ import { useEffect, useMemo, useState } from 'react';
 import { ChevronRight, FileWarning } from 'lucide-react';
 import { toast } from 'sonner';
 import { Markdown } from '@/components/Markdown';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useFeedbackDetail } from '@/hooks/useFeedback';
 import { ApiError, api, type FeedbackDetail, type FeedbackIndex, type FeedbackItem } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { FEEDBACK_EMAIL } from '../../shared/feedbackMail.mjs';
+import {
+  FEEDBACK_EMAIL,
+  FEEDBACK_KINDS,
+  feedbackKind,
+  feedbackMailBody,
+  feedbackMailSubject,
+} from '../../shared/feedbackMail.mjs';
 
 /**
  * 反馈单页。布局与记录单同构：左边按状态分组，右边详情。
- * 分组不存在文件里，由 `status` + `sent_at` 现推。
+ * 分组不存在文件里，由 `status` + `sent_at` 现推；`kind` 写歪的归「未识别」。
+ * 两种单子（缺陷 / 贡献）的节名与邮件拼法在 `src/shared/feedbackMail.mjs`，与服务端同源。
  * 「邮件发送」只唤起 mailto；落盘要等用户点「我已发出」。
  */
 
@@ -40,8 +48,29 @@ sent_at 留空。不要编造「## 发送记录」里的条目，那一节留空
 迁完在看板反馈单页确认能看到，再删掉 .kanban-feedback/。
 回执只改 status 和 receipt，不要改 sent_at，也不要改发送记录。`;
 
+const KNOWN_KINDS: readonly string[] = FEEDBACK_KINDS;
+
+/** 旧服务不报 `kind`，按缺陷单算 —— 与改动前的界面一致。 */
+function kindOf(item: FeedbackItem): string {
+  return feedbackKind(item.kind);
+}
+
+/** 列表标签用短名；详情卡在「未识别」后面带上原文。 */
+function kindLabel(item: FeedbackItem): string {
+  const kind = kindOf(item);
+  if (kind === 'contribution') return '贡献';
+  if (kind === 'bug') return '缺陷';
+  return '未识别';
+}
+
+function kindText(item: FeedbackItem): string {
+  const label = kindLabel(item);
+  return label === '未识别' ? `未识别：${kindOf(item)}` : label;
+}
+
 function groupOf(item: FeedbackItem): GroupKey {
   if (item.broken) return 'unknown';
+  if (!KNOWN_KINDS.includes(kindOf(item))) return 'unknown';
   if (item.status === 'pending' && !item.sent_at) return 'pending';
   if (item.status === 'pending' && item.sent_at) return 'sent';
   if (item.status === 'fixed') return 'fixed';
@@ -57,22 +86,11 @@ function statusText(item: FeedbackItem): string {
   return item.status || '未标状态';
 }
 
-function sectionBody(detail: FeedbackDetail, heading: string): string {
-  return detail.sections?.find((section) => section.heading === heading)?.body || '';
-}
-
-function mailSubject(detail: FeedbackDetail): string {
-  return `[aispace-kanban 反馈] ${detail.id || ''} ${detail.title || ''}`.trim();
-}
-
 function mailBody(detail: FeedbackDetail, version: string): string {
-  const headings = ['现象', '期望', '最小复现', '疑似源码位置', '建议改法', '临时绕法'];
-  const parts = headings.map((heading) => `## ${heading}\n\n${sectionBody(detail, heading) || '（空）'}`);
   const today = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
   const date = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
-  parts.push(`看板版本：${version || '未知'}\n日期：${date}`);
-  return parts.join('\n\n');
+  return feedbackMailBody(detail, version, date);
 }
 
 function mailtoHref(subject: string, body: string): string {
@@ -281,6 +299,11 @@ function FeedbackBody({
                             <span className="mr-1.5 font-mono text-[11px] text-muted-foreground">{item.id}</span>
                             {item.title || item.name}
                           </span>
+                          {item.broken ? null : (
+                            <Badge variant="outline" className="shrink-0 px-1.5 text-[11px] font-normal text-muted-foreground">
+                              {kindLabel(item)}
+                            </Badge>
+                          )}
                           {item.broken || key === 'unknown' ? (
                             <FileWarning className="size-3.5 shrink-0 text-destructive" aria-hidden />
                           ) : null}
@@ -360,8 +383,10 @@ function FeedbackCard({
   }, [feedbackId]);
 
   const shown = detail ?? null;
-  const subject = shown ? mailSubject(shown) : '';
-  const body = shown ? mailBody(shown, version) : '';
+  // 详情里的 kind 比列表项新（刚改过文件还没刷新索引时），有就用详情的
+  const mailItem = shown ? { ...shown, kind: shown.kind ?? listItem.kind } : null;
+  const subject = mailItem ? feedbackMailSubject(mailItem) : '';
+  const body = mailItem ? mailBody(mailItem, version) : '';
   const fullHref = shown ? mailtoHref(subject, body) : '';
   const clipped = fullHref.length > MAILTO_LIMIT;
   const href = clipped ? mailtoHref(subject, '正文已复制到剪贴板，请粘贴') : fullHref;
@@ -416,6 +441,7 @@ function FeedbackCard({
         </p>
       ) : null}
       <dl className="mb-4 space-y-1 text-xs">
+        <Meta label="类型" value={kindText(listItem)} />
         <Meta label="状态" value={statusText(listItem)} />
         <Meta label="创建" value={listItem.created || '—'} />
         <Meta label="最近发送" value={listItem.sent_at || '还没发过'} />

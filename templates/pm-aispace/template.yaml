@@ -1,3 +1,26 @@
 id: pm-aispace
 name: 产品经理AI空间模板
 description: 产品经理接手既有项目：资料入库、需求分析、写 PRD、出原型。
+
+# 模板文件怎么分发、怎么更新。新建工作空间（templates/init_workspace.py）
+# 和已有工作空间更新模板（scripts/template_update.py）读的都是这一段，
+# 而且读的是**本次取到的那一版模板**里的这一段 —— 分类跟着模板版本走，脚本里不写死。
+#
+# 没列在下面的文件都是「模板管理」：更新时按 .aispace/template.lock.json 的基线三方判定。
+# 路径相对模板根，`*` 不跨目录，`**` 跨任意层。
+sync:
+  # 只在新建时铺一次，之后归工作空间所有。更新时不覆盖，只报告「模板这边有新版」并给 diff
+  seedOnly:
+    - project.yaml
+    - .gitignore
+    - input/.ingestignore
+    - .claude/skills/pm-deai-writing/rules/**
+  # 不分发
+  exclude:
+    - template.yaml
+    - visualization/**
+    # input/ 只铺 README.md 和 .ingestignore；下面这些是示例和占位，目录由铺设脚本现建
+    - input/raw/**
+    - input/converted/**
+    - input/assets/**
+    - input/sources/**

@@ -20,7 +20,8 @@
     "test:anchor": "node --experimental-strip-types --no-warnings=ExperimentalWarning scripts/test-anchor.ts",
     "test:rich-doc": "node scripts/check-rich-doc.mjs",
     "test:questions": "node scripts/check-questions.mjs",
-    "test:docx": "node scripts/check-docx.mjs"
+    "test:docx": "node scripts/check-docx.mjs",
+    "test:template-update": "node scripts/check-template-update.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

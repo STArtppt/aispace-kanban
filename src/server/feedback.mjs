@@ -9,11 +9,12 @@
  *
  * 旧目录 `.kanban-feedback/` 只统计 `.md` 份数（`legacyCount`），不读内容、不移动。
  * 字段契约的事实源是工作空间里的 `output/feedback/README.md`。
- * 这里不做状态枚举校验：写歪的状态原样返回，界面归到「未识别」。
+ * 这里不做状态枚举校验：写歪的状态原样返回，界面归到「未识别」。`kind` 同理：
+ * 缺省报 `bug`（旧单没有这个字段），写歪的原样返回。
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { FEEDBACK_EMAIL } from '../shared/feedbackMail.mjs';
+import { FEEDBACK_EMAIL, feedbackHeadings, feedbackKind } from '../shared/feedbackMail.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 import { replaceFileAtomic, setFrontmatterFields } from './patchMarkdown.mjs';
 import { resolveInside } from './paths.mjs';
@@ -27,13 +28,10 @@ const LEGACY_DIR = '.kanban-feedback';
 const FILE_RE = /^(F\d{4})\.md$/;
 const ID_RE = /^F\d{4}$/;
 
-/** 正文里约定的六节，顺序固定。文件里多出来的节照样返回，不丢。 */
-const CONTENT_HEADINGS = ['现象', '期望', '最小复现', '疑似源码位置', '建议改法', '临时绕法'];
-
 const SEND_HEADING = '发送记录';
 
 /** 载荷里出现这些键一律 400。它们属于智能体，看板不写。 */
-const AI_FIELDS = ['id', 'title', 'status', 'created', 'receipt'];
+const AI_FIELDS = ['id', 'title', 'kind', 'status', 'created', 'receipt'];
 
 function badRequest(message) {
   const err = new Error(message);
@@ -91,6 +89,7 @@ function describe(meta, { id, name, relPath, mtime }) {
     path: relPath,
     mtime,
     title: str(meta.title),
+    kind: feedbackKind(str(meta.kind)),
     status: str(meta.status),
     created: str(meta.created),
     receipt: str(meta.receipt),
@@ -105,6 +104,7 @@ function brokenItem({ id, name, relPath, mtime, reason }) {
     path: relPath,
     mtime,
     title: '',
+    kind: 'bug',
     status: '',
     created: '',
     receipt: '',
@@ -172,8 +172,11 @@ export function listFeedback(root) {
   return { dir: FEEDBACK_DIR, available: true, legacyCount, items };
 }
 
-/** 按 `## ` 拆节。发送记录单独拿出去，不跟六个内容节混在一个数组里。 */
-function splitSections(body) {
+/**
+ * 按 `## ` 拆节。发送记录单独拿出去，不跟内容节混在一个数组里。
+ * 约定节的顺序看 `kind`（两套表在 `src/shared/feedbackMail.mjs`），文件里多出来的节排在后面，不丢。
+ */
+function splitSections(body, kind) {
   const re = /^##[ \t]+(.+?)[ \t]*$/gm;
   const marks = [...body.matchAll(re)];
   const sections = [];
@@ -190,14 +193,16 @@ function splitSections(body) {
     }
     sections.push({ heading, body: text });
   }
-  // 六个约定节缺了也补一个空位，界面不用自己猜「这节是没有，还是解析漏了」
+  // 约定节缺了也补一个空位，界面不用自己猜「这节是没有，还是解析漏了」。
+  // kind 写歪时没有约定节，按文件原样排
+  const headings = feedbackHeadings(kind);
   const ordered = [];
-  for (const heading of CONTENT_HEADINGS) {
+  for (const heading of headings) {
     const found = sections.find((section) => section.heading === heading);
     ordered.push(found || { heading, body: '' });
   }
   for (const section of sections) {
-    if (!CONTENT_HEADINGS.includes(section.heading)) ordered.push(section);
+    if (!headings.includes(section.heading)) ordered.push(section);
   }
   return { sections: ordered, sends };
 }
@@ -250,7 +255,7 @@ export function readFeedback(root, id) {
         mtime,
         reason: '没有 front-matter，无法解析',
       });
-  const { sections, sends } = splitSections(body);
+  const { sections, sends } = splitSections(body, base.kind);
   return { ...base, sections, sends };
 }
 

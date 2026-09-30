@@ -9,6 +9,10 @@
 --from 指向某个模板目录（里面要有 template.yaml）。不传时用旁边的 pm-aispace。
 新建时只需要名称和路径，元信息里的其它字段先留 null。
 
+模板的 template.yaml 带 sync 段（并且有 scripts/template_update.py）时，按 sync 段的分类铺，
+铺完写 .aispace/template.lock.json —— 之后工作空间更新模板靠它做三方判定。
+没有 sync 段的模板（用户自建的）照旧按下面 COPY_ENTRIES 铺，不写 lock。
+
 新建时会顺带在 .claude/settings.local.json 里写「禁止改看板源码」的权限规则。
 给已有工作空间补这条规则（只写这一个文件）：
 
@@ -18,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import shutil
 import sys
@@ -133,6 +138,41 @@ def ensure_skill_creator(target: Path) -> None:
     shutil.copytree(src, dest)
 
 
+def load_sync_tool(src_root: Path):
+    """
+    模板自带的 scripts/template_update.py —— 文件怎么分类、lock 长什么样，事实源都在它那里，
+    这边只调它，不再抄一份（抄两份，铺设和更新对「哪些文件归模板管」的判断迟早分叉）。
+    模板没有这个脚本、或 template.yaml 没有 sync 段，返回 None，走老的铺法。
+    """
+    script = src_root / "scripts" / "template_update.py"
+    if not script.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("_aispace_template_update", script)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    meta = module.read_template_meta(src_root)
+    return (module, meta) if meta.get("sync") is not None else None
+
+
+def copy_synced(src_root: Path, target: Path, tool) -> dict[str, str]:
+    """
+    按 sync 段铺：exclude 之外的文件都铺（seedOnly 也铺，它只是之后不再更新）。
+    project.yaml 由 render_project_yaml 另写，这里跳过。返回 {相对路径: 模板那一版的 SHA-256}，写 lock 用。
+    """
+    module, meta = tool
+    hashes: dict[str, str] = {}
+    for rel, info in module.template_files(src_root, meta["sync"]).items():
+        hashes[rel] = module.sha256_file(info["abs"])
+        if rel == "project.yaml":
+            continue
+        dst = target / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(info["abs"], dst)
+    return hashes
+
+
 def kanban_root() -> Path | None:
     """
     看板根目录：本脚本所在 templates/ 的上一级（源码仓库或 npm 包目录）。
@@ -155,34 +195,27 @@ def permission_path(p: Path, is_dir: bool) -> str:
     return f"Edit(/{posix}/**)" if is_dir else f"Edit(/{posix})"
 
 
-def guard_rules(src_root: Path) -> list[str]:
+def guard_rules() -> list[str]:
     """
-    工作空间里的 agent 不许改看板源码（理由见模板 AGENTS.md「看板显示不对时」）。
-    Claude Code 里 deny 压过 allow，没法「整个看板 deny、只放行本模板」，
-    所以逐个列顶层条目：templates/ 以外全 deny，templates/ 里只留本模板（模板改动回同步源要写它）。
+    工作空间里的 agent 不许改看板仓库的任何文件（理由见模板 AGENTS.md「看板显示不对时」）。
+    templates/ 也在内：模板改进走贡献单交回看板维护者，工作空间不直接写模板源。
+    逐个列顶层条目而不是一条「整个根目录」：根目录本身的规则会连带挡住看板根下的工作空间
+    （有人把工作空间建在看板仓库旁的子目录里）。
     Edit 规则对 Claude Code 所有内置写文件工具都生效；shell 写法拦不住，主防线仍是 AGENTS.md。
     """
     root = kanban_root()
     if root is None:
         return []
-    rules = []
-    for item in sorted(root.iterdir()):
-        if item.name == "templates":
-            for sub in sorted(item.iterdir()):
-                if sub.resolve() != src_root:
-                    rules.append(permission_path(sub, sub.is_dir()))
-        else:
-            rules.append(permission_path(item, item.is_dir()))
-    return rules
+    return [permission_path(item, item.is_dir()) for item in sorted(root.iterdir())]
 
 
-def write_guard(target: Path, src_root: Path) -> int:
+def write_guard(target: Path) -> int:
     """
     把 guard_rules 合并进 <工作空间>/.claude/settings.local.json 的 permissions.deny，返回新增条数。
     只动这一个文件的这一个字段：已有条目、allow 和其它字段原样保留，重复跑结果一样。
     写 settings.local.json 而不是 settings.json：里面是本机绝对路径，不该入库、不该跟着工作空间搬走。
     """
-    rules = guard_rules(src_root)
+    rules = guard_rules()
     if not rules:
         return 0
     path = target / ".claude" / "settings.local.json"
@@ -222,14 +255,14 @@ def render_project_yaml(src_root: Path, name: str) -> str:
     return "\n".join(lines)
 
 
-def guard_only(target: Path, src_root: Path, as_json: bool) -> int:
+def guard_only(target: Path, as_json: bool) -> int:
     """--guard-only：给已有工作空间补规则。用户在命令行手动跑，看板不调用。"""
     if not target.is_dir():
         return fail(f"工作空间目录不存在：{target}", as_json)
     if kanban_root() is None:
         return fail("没找到看板根目录（本脚本要放在看板仓库或 npm 包的 templates/ 下才能用）", as_json)
     try:
-        added = write_guard(target, src_root)
+        added = write_guard(target)
     except ValueError as err:
         return fail(str(err), as_json)
     if as_json:
@@ -260,17 +293,22 @@ def main() -> int:
 
     target = Path(args.path).expanduser().resolve()
     if args.guard_only:
-        return guard_only(target, src_root, args.json)
+        return guard_only(target, args.json)
     if not args.name:
         return fail("新建工作空间要给 --name", args.json)
     if target.exists() and any(target.iterdir()) and not args.force:
         return fail(f"目录非空：{target}（要在已有目录上初始化请加 --force）", args.json)
 
     target.mkdir(parents=True, exist_ok=True)
-    for name in COPY_ENTRIES:
-        copy_entry(src_root, name, target)
-    copy_output(src_root, target)
-    copy_input_readme(src_root, target)
+    tool = load_sync_tool(src_root)
+    hashes: dict[str, str] | None = None
+    if tool is not None:
+        hashes = copy_synced(src_root, target, tool)
+    else:
+        for name in COPY_ENTRIES:
+            copy_entry(src_root, name, target)
+        copy_output(src_root, target)
+        copy_input_readme(src_root, target)
     ensure_skill_creator(target)
     link_skills(target)
     for rel in BASE_DIRS:
@@ -281,12 +319,15 @@ def main() -> int:
             keep.touch()
     # .ingestignore 是约定文件不是示例资料，要铺过去；input/ 其它内容一律不带
     ignore_src = src_root / "input" / ".ingestignore"
-    if ignore_src.exists():
+    if tool is None and ignore_src.exists():
         shutil.copy2(ignore_src, target / "input" / ".ingestignore")
 
     (target / "project.yaml").write_text(render_project_yaml(src_root, args.name), encoding="utf-8")
+    if tool is not None and hashes is not None:
+        module, meta = tool
+        module.write_lock(target, module.build_lock(meta.get("id", ""), module.local_source(src_root), hashes))
     try:
-        guard = write_guard(target, src_root)
+        guard = write_guard(target)
     except (OSError, ValueError) as err:
         # 规则是附加防线，写不成不该让新建失败
         print(f"禁改看板源码的权限规则没写成：{err}", file=sys.stderr)

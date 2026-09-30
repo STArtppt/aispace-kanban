@@ -56,7 +56,7 @@ export function WorkbenchHub({
     {
       key: 'feedback',
       title: '反馈单',
-      description: '工作空间智能体写给看板的缺陷单，从这里发邮件。',
+      description: '工作空间智能体写给看板的缺陷单与贡献单，从这里发邮件。',
       icon: <Mail />,
       count: feedbackPending,
       attention: true,

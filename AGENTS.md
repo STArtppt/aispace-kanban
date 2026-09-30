@@ -28,7 +28,7 @@
    真正改工作空间内容的,只能是**用户明确发起、由工作空间自己的工具执行**的子进程:
    - 注册表 `~/.pmwork/dashboard/projects.json`(`src/server/config.mjs` 的 `writeProjects`)—— 不碰工作空间
    - 新建工作空间时调 `templates/init_workspace.py --from <模板目录>`(`src/server/http.mjs` 的 `runInit`)——
-     铺骨架由模板负责,看板不自己造目录
+     铺骨架由模板负责,看板不自己造目录;铺完写的 `.aispace/template.lock.json`(模板更新的基线)也是这个脚本写的
    - 资料转换时调工作空间的 `scripts/ingest.py`(`src/server/http.mjs` 的 `startIngest`)——
      看板只 `spawn`,写 `input/converted/` 的是脚本本身;`ANYDOC_BIN` 由看板注入本地 anydoc 路径,
      解析不到就不注入(用户可能自己装了,脚本走 PATH)
@@ -171,7 +171,7 @@
         编号不存在一律 404 —— 写反馈单是工作空间智能体的事;
      ② 只允许写**人写区**:front-matter 的 `sent_at`,以及正文「## 发送记录」小节
         (只追加 `###` 子节,不改写已有条目)。
-        载荷里出现 AI 写区字段(`status` / `receipt` / `title` / `id` / `created` 等)一律 400,不落盘;
+        载荷里出现 AI 写区字段(`status` / `receipt` / `title` / `kind` / `id` / `created` 等)一律 400,不落盘;
      ③ 必须由用户在看板上点「已发送」明确发起。唤起 mailto 本身**不写盘**;
         没有后台任务、定时,也不从任何信号自动推断「已发送」;
      ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
@@ -357,6 +357,7 @@ aispace-kanban/
 | 组 npm 包(发布用) | `pnpm build:npm` → `npm-package/` |
 | 打 tgz + 装包冒烟 | `pnpm pack:npm && pnpm smoke:npm` |
 | docx 工具链回归(改了 `templates/pm-aispace/scripts/docxkit/` 必跑;**仅本地**,CI 不装 pandoc) | `pnpm test:docx`(没有 pandoc 3 时只跳过转换段) |
+| 模板铺设与更新回归(改了 `templates/init_workspace.py`、`template_update.py` 或模板的 `sync` 段必跑;不联网) | `pnpm test:template-update` |
 | 看规划状态(active change / 已落地能力) | `openspec list` / `openspec list --specs` |
 
 **交付闸门(缺一不可):**
@@ -507,10 +508,25 @@ aispace-kanban/
 3. **给出回执**:一段能直接转发的文字 —— 结论、提交号(不修就写理由)、工作空间那边可以撤掉的临时绕法。
    **不要直接写工作空间里的反馈单**,由用户转给那边的 agent 回写状态。两边的 agent 都不跨目录写。
 
+反馈单分两种,看 front-matter 的 `kind`:缺陷单(`bug`,不写也按缺陷单)走上面三步;
+**贡献单**(`contribution`)是工作空间沉淀出的通用改进(去 AI 味规则、技能文案、模板脚本修复),
+当作对 `templates/pm-aispace/` 的需求处理:
+
+1. **按 6.1 脱敏红线复查「合成示例」和「改动内容」**,带出真实资料的一律改成合成件再进仓,拿不准就不收;
+2. **判断收不收**:判据是「换一个项目这条还成立」;只对个别行业、个别客户成立的不收;
+3. **收下就合进模板**:规则类写进模板规则库 `.claude/skills/pm-deai-writing/rules/` 的下一版
+   (编号取模板的下一个空号,按「短名 + 判据」与已有规则判重;版本号、快照、CHANGELOG 按该技能的「规则库怎么改」),
+   其它类改对应的模板文件;
+4. **过第 4 节的验证闸、提交**(动了 docxkit 另跑 `pnpm test:docx`,动了铺设或更新脚本另跑 `pnpm test:template-update`);
+5. **给出回执**:结论 + 模板里的位置 + 提交号,如「收为模板 R012(模板规则库 v2),提交 abc1234」;
+   不收写理由。工作空间那边据此把贡献单改成 `fixed` / `wontfix`,规则类另在本地规则里补 `上游:模板 R012`。
+
+收下的改进到工作空间,靠那边的 agent 走 `pm-template-update` 更新模板;这边不推送、不写任何工作空间文件。
+
 防误点的硬拦在工作空间的 `.claude/settings.local.json`:`templates/init_workspace.py` 新建时写入
-`deny` 规则,禁止改本仓 `templates/<本模板>/` 以外的一切。已有工作空间用
+`deny` 规则,禁止改本仓的任何文件,`templates/` 也在内(模板改进走贡献单,不由工作空间直接写)。已有工作空间用
 `python3 templates/init_workspace.py --guard-only --path <工作空间>` 补
-(只写这一个文件、可重复运行),再手动同步模板 AGENTS.md 的「看板显示不对时」一节。
+(只写这一个文件、可重复运行);模板约定本身的更新由那边的 agent 走 `pm-template-update`。
 **本仓新增顶层目录或文件后**,已生成的规则覆盖不到它,提醒用户对在用的工作空间重跑一次。
 这层只对 Claude Code 生效、也拦不住 shell 写法,主防线仍是模板里的规则和反馈单这条正路。
 
