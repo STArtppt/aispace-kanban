@@ -1,3 +1,5 @@
+import { deliveryNotesAddon } from '@/lib/deaiPrompt';
+
 /** 提示词里的一条。number 是页面序号，noteId 是批注文件里的 N 编号，两套同时出现。 */
 export interface PromptNote {
   start: number;
@@ -17,6 +19,11 @@ export interface PromptOptions {
   reason?: string;
   /** 重发尚未回写的条目：沿用原来的 N 编号，并说明区间可能已经失效 */
   resend?: boolean;
+  /**
+   * 批注针对的是某一版交付稿：开头改成「以它为底改出下一版」，末尾接 pm-deai-writing 的修订与沉淀要求。
+   * 没落盘（原稿还没有记录）时附加段照样带上，回写段仍然去掉。
+   */
+  delivery?: { version: string; nextPath: string; rulesVersion?: number };
 }
 
 function heading(number: number | undefined, noteId: string | undefined): string {
@@ -62,7 +69,10 @@ export function buildAnnotationPrompt(file: string, notes: PromptNote[], options
       '',
     );
   }
-  lead.push(`请根据以下批注修改文件 \`${file}\`。`);
+  const delivery = options?.delivery;
+  lead.push(delivery
+    ? `以下是对交付稿 ${delivery.version}（\`${file}\`）的批注。请以它为底改出下一版 \`${delivery.nextPath}\`，不要改它本身。`
+    : `请根据以下批注修改文件 \`${file}\`。`);
   if (saved && options?.noteFile) {
     lead.push(
       '',
@@ -86,5 +96,8 @@ export function buildAnnotationPrompt(file: string, notes: PromptNote[], options
     '- 每条同时给了源码字节区间和原文引用：区间用于定位；改完前一条后如果区间对不上，以原文引用为准。',
   ];
 
-  return [...lead, '', ...rules, '', ...blocks].join('\n');
+  const addon = delivery
+    ? ['', deliveryNotesAddon({ file, version: delivery.version, nextPath: delivery.nextPath, rulesVersion: delivery.rulesVersion })]
+    : [];
+  return [...lead, '', ...rules, '', ...blocks, ...addon].join('\n');
 }

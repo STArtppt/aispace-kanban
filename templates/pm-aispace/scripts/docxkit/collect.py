@@ -6,7 +6,8 @@
 
 同一个函数也拿来**反查**生成的样张：逐个角色比对实际格式与规范（见 verify.py）。
 
-报告不含正文原文：段落只保留「编号前缀 + 字数」（如 `（1）[35字]`），页眉页脚只报字数和域。
+报告不含正文原文：段落只保留「编号前缀 + 字数」（如 `（1）[35字]`），页眉页脚只报字数和域，
+前置区（`front`）只报结构与脚本内部判出的角色标签。
 报告的键名是看板界面的契约（src/app/lib/api.ts 的 DocxCollectReport），改名要两边一起改。
 """
 
@@ -412,33 +413,40 @@ def collect(src: Path, source_label: str | None = None) -> tuple[dict, list[dict
                 for el in root.iter(q("w:" + tag)):
                     used_styles[wval(el)] += 1
 
+    # 前置区（封面、签署页、目录……）是原样搬走的骨架，它的段落不参与格式聚类和大纲，免得搅乱正文角色
+    front = _front(src)
+    front_n = front["blocks"] if front else 0
+
     # 顺序遍历正文块（展开 sdt：目录一般包在 sdt 里）
     blocks = []
+    top = [el for el in body if el.tag in (q("w:p"), q("w:tbl"), q("w:sdt"))]
+    front_els = set(top[:front_n])  # 与 front.py 的顶层块切分同一口径：body 下的 p / tbl / sdt
 
-    def walk(container, in_table=False, in_sdt=False):
+    def walk(container, in_table=False, in_sdt=False, in_front=False):
         for el in container:
+            f = in_front or el in front_els
             if el.tag == q("w:p"):
-                blocks.append(("p", el, in_table, in_sdt))
+                blocks.append(("p", el, in_table, in_sdt, f))
             elif el.tag == q("w:tbl"):
-                blocks.append(("tbl", el, in_table, in_sdt))
+                blocks.append(("tbl", el, in_table, in_sdt, f))
                 tp = el.find("w:tblPr", NS)
                 ts = (wval(tp.find("w:tblStyle", NS)) if tp is not None else None) or styles.default_table
                 for ri, tr in enumerate(el.findall("w:tr", NS)):
                     for tc in tr.findall("w:tc", NS):
-                        walk(tc, (ts, ri == 0), in_sdt)
+                        walk(tc, (ts, ri == 0), in_sdt, f)
             elif el.tag == q("w:sdt"):
                 c = el.find("w:sdtContent", NS)
                 if c is not None:
-                    walk(c, in_table, True)
+                    walk(c, in_table, True, f)
 
     walk(body)
 
     paras = []
     used_abstract = set()
     top_seq = []  # 顶层（非表格内）块序列，用于相邻关系
-    for kind, el, in_table, in_sdt in blocks:
+    for kind, el, in_table, in_sdt, in_front in blocks:
         if kind == "tbl":
-            if not in_table:
+            if not in_table and not in_front:
                 top_seq.append({"kind": "tbl", "el": el})
             continue
         ppr = el.find("w:pPr", NS)
@@ -472,9 +480,10 @@ def collect(src: Path, source_label: str | None = None) -> tuple[dict, list[dict
             "fmt": describe(p_eff, r_eff, theme),
             "directPpr": dp,
             "directRpr": dr,
+            "inFront": in_front,
         }
         paras.append(info)
-        if not in_table:
+        if not in_table and not in_front:
             top_seq.append({"kind": "p", "info": info})
 
     # 相邻关系：表格 / 图片的前后一段是什么（判断题注在上还是在下）
@@ -566,7 +575,7 @@ def collect(src: Path, source_label: str | None = None) -> tuple[dict, list[dict
 
     groups = defaultdict(list)
     for p in paras:
-        if p["len"] == 0 or p["inToc"]:
+        if p["len"] == 0 or p["inToc"] or p["inFront"]:
             continue
         groups[("table" if p["inTable"] else "body", fmt_key(p))].append(p)
 
@@ -601,7 +610,7 @@ def collect(src: Path, source_label: str | None = None) -> tuple[dict, list[dict
     # 大纲：按级别汇总（正文区）
     levels = defaultdict(list)
     for p in paras:
-        if not p["inTable"] and p["len"] and not p["inToc"] and p["fmt"]["outline"]:
+        if not p["inTable"] and p["len"] and not p["inToc"] and not p["inFront"] and p["fmt"]["outline"]:
             levels[p["fmt"]["outline"]].append(p)
     outline = []
     for lv in sorted(levels):
@@ -652,8 +661,17 @@ def collect(src: Path, source_label: str | None = None) -> tuple[dict, list[dict
         "sections": sections,
         "headersFooters": hf,
         "clusters": clusters,
+        # 前置区（封面 / 签署页 / 版本表 / 目录）：只有结构与角色标签，见 front.py；没有前置区时为 None
+        "front": front,
     }
     return report, paras
+
+
+def _front(src: Path):
+    from .front import analyze
+    from .ooxml import Package
+
+    return analyze(Package.read(src))
 
 
 def write_report(out_dir: Path, report: dict, paras: list[dict]) -> list[Path]:

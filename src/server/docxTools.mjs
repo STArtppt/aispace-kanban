@@ -4,6 +4,7 @@
  * **AGENTS.md 不变量 1 的第九条窄例外**（「看板只 spawn，工作空间脚本写盘」一族，与第七条同构）：
  * - 看板只 spawn 工作空间的 `scripts/docx_template.py` / `scripts/md2docx.py`，自己不写、不 rename、不 unlink 任何一个字节；
  * - 请求**不带任何路径**：来源只用扫描时下发的 `docKey` 指定，这里重新走目录反查，查不到 400；
+ *   待转换的 .md 可以是产出三组里的，也可以是交付稿（成品落在交付稿旁边，原稿目录不动）；
  *   模板名只接受一层基名；决定 JSON 限 256KB、拒绝路径类键名，经 stdin 交给脚本（脚本再校验结构）；
  * - 同名 `.docx` 没有生成标记一律 409，带标记也要用户确认 `overwrite`（脚本再校验一次）；
  * - 同步等脚本退出、带超时；同一模板 / 同一目标文件在前一个没结束时直接 409。
@@ -90,7 +91,10 @@ async function requirePython() {
 }
 
 function resolveDoc(root, kind, docKey) {
-  const rel = findDocByKey(root, kind, docKey);
+  // 「转成 Word」的来源既可以是产出三组里的 .md，也可以是交付稿（output/delivery/**/v<序号>.md）
+  const rel = kind === 'output-md'
+    ? findDocByKey(root, 'output-md', docKey) || findDocByKey(root, 'delivery-md', docKey)
+    : findDocByKey(root, kind, docKey);
   if (!rel) {
     throw httpError(400, kind === 'raw-docx'
       ? '在 input/raw/ 里找不到这份 Word（列表可能已经变了），刷新后重新选择。'

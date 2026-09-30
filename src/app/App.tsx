@@ -344,6 +344,10 @@ export default function App() {
   const [questionFocus, setQuestionFocus] = useState<{ id: string; seq: number } | null>(null);
   /** 从「转成 Word」弹窗跳进模版洗炼时要选中的模板。带序号：同一个连跳两次也要再选一次 */
   const [templateFocus, setTemplateFocus] = useState<{ name: string; seq: number } | null>(null);
+  /** 从批注回执的沉淀标签跳进「去 AI 味」时要展开的规则 */
+  const [deaiFocus, setDeaiFocus] = useState<{ rule: string; seq: number } | null>(null);
+  /** 从工作台跳到阅读器里原稿的某一版交付稿 */
+  const [deliveryFocus, setDeliveryFocus] = useState<{ source: string; version: string; seq: number } | null>(null);
   // 两份索引都在 App 级预取，不挂任何视图的生命周期上：工作台打开与切页都要瞬时，不等网络
   const questions = useQuestions(activeId, changeToken);
   const records = useRecords(activeId, changeToken);
@@ -365,6 +369,13 @@ export default function App() {
   // 转换任务提到这一层：待转换列表和预览页的「重新转换」共用同一轮任务
   // （服务端每个项目只允许一个，各持一份状态会让第二处显示成「没反应」）
   const canIngest = Boolean(scan?.input?.canIngest);
+  // 「给文档去 AI 味」可选的原稿：产出三组里的 .md，不含已归档
+  const outputDocs = useMemo(
+    () => (['analysis', 'docs', 'decisions'] as const)
+      .flatMap((g) => scan?.output?.[g] ?? [])
+      .filter((f) => f.ext === '.md' && !f.archived),
+    [scan],
+  );
   const ingest = useIngestJob(activeId, canIngest);
   const isWide = useIsWide();
   // 布局侧：真正打开中（含离场动画期）
@@ -421,6 +432,19 @@ export default function App() {
     setWorkbenchPage('template');
     if (name) setTemplateFocus((prev) => ({ name, seq: (prev?.seq ?? 0) + 1 }));
     setWorkbenchOpen(true);
+  };
+
+  const openDeaiRule = (rule: string) => {
+    setWorkbenchPage('deai');
+    setDeaiFocus((prev) => ({ rule, seq: (prev?.seq ?? 0) + 1 }));
+    setWorkbenchOpen(true);
+  };
+
+  // 交付稿不在扫描里：打开的是原稿，再由阅读器的版本条切到那一版并打开批注清单
+  const openDelivery = (source: string, version: string) => {
+    if (openPath(source) === 'external') return;
+    setWorkbenchOpen(false);
+    setDeliveryFocus((prev) => ({ source, version, seq: (prev?.seq ?? 0) + 1 }));
   };
 
   const changeWorkbenchOpen = (next: boolean) => {
@@ -698,6 +722,10 @@ export default function App() {
                   pathSet={pathSet}
                   onOpenPath={openLinkedPath}
                   onBack={canGoBack ? goBack : undefined}
+                  workspaceAvailable={scan?.available !== false}
+                  refreshToken={changeToken}
+                  deliveryFocus={deliveryFocus}
+                  onOpenDeaiRule={openDeaiRule}
                 />
               )}
             </section>
@@ -734,6 +762,9 @@ export default function App() {
         onOpenChange={changeWorkbenchOpen}
         focusQuestion={questionFocus}
         focusTemplate={templateFocus}
+        focusDeaiRule={deaiFocus}
+        outputDocs={outputDocs}
+        onOpenDelivery={openDelivery}
         page={workbenchPage}
         onPageChange={setWorkbenchPage}
         projectId={activeId}

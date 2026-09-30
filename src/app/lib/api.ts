@@ -705,6 +705,19 @@ export interface NoteHistoryItem {
   receipt?: string;
   /** 从看板缓存迁过来的。缺了就当不是 */
   migrated?: boolean;
+  /**
+   * 回执末尾的沉淀标记「沉淀为 R014（规则库 v4）」解析出来的规则。
+   * 可选：旧服务不给、没沉淀的也不给；回执原文仍在 `receipt` 里
+   */
+  deposits?: NoteDeposit[];
+}
+
+/** 一条交付稿批注沉淀成的规则 */
+export interface NoteDeposit {
+  /** `R014` */
+  rule: string;
+  /** 沉淀时规则库的版本 */
+  version: number;
 }
 
 export interface NoteHistoryBatch {
@@ -714,6 +727,11 @@ export interface NoteHistoryBatch {
   /** 缺字段 = 旧服务。不要把缺字段当成「看板缓存」去显示来源文案 */
   source?: NoteSource;
   recordId?: string;
+  /**
+   * 这一批针对的文件（批注文件里的「- 对象：」行）：原稿，或某一版交付稿 `output/delivery/…/v002.md`。
+   * 可选：旧服务不给，缺了就当是当前打开的文件
+   */
+  target?: string;
 }
 
 /**
@@ -963,10 +981,12 @@ export interface FeedbackDetail extends FeedbackItem {
   sends?: FeedbackSend[];
 }
 
-/** docx 模板目录里约定的六样。缺的 `exists` 为 false，界面标「缺」。 */
+/** docx 模板目录里约定的几样。缺的 `exists` 为 false，界面标「缺」。 */
 export interface DocxTemplateFiles {
   profile?: { exists?: boolean; mtime?: string };
   reference?: { exists?: boolean; mtime?: string };
+  /** 前置区骨架（封面 / 签署页 / 版本表 / 目录）。可选：旧服务不报，那时概要不显示「前置区」一行 */
+  front?: { exists?: boolean; mtime?: string };
   cover?: { exists?: boolean; mtime?: string };
   spec?: { exists?: boolean; mtime?: string };
   collect?: { exists?: boolean; mtime?: string };
@@ -985,6 +1005,21 @@ export interface DocxTemplateItem {
   source?: string;
   /** 来源还在 `input/raw/` 里时给出它的 docKey，「继续」「重新提炼」据此接着做 */
   sourceDocKey?: string;
+  /** `profile.json#front`：有 front.docx 时才给。可选：旧服务、不带前置区的模板都没有 */
+  front?: DocxProfileFront;
+}
+
+/** 字段角色：标题 / 客户单位 / 编制单位 / 日期 / 文档类型 / 保持原样 */
+export type DocxFrontRole = 'title' | 'client' | 'vendor' | 'date' | 'doctype' | 'keep';
+/** 前置区表格的清空规则 */
+export type DocxTableRule = 'keepHeader' | 'keepLabels' | 'keepHeaderAndLabels' | 'keepAll';
+
+/** profile.json 的 front 段 */
+export interface DocxProfileFront {
+  fields?: Record<string, DocxFrontRole | (string & {})>;
+  tables?: Record<string, DocxTableRule | (string & {})>;
+  /** 分节 id → 名称（封面、签署页……） */
+  sections?: Record<string, string>;
 }
 
 /** 模板索引。目录不在时 `available: false`、`items` 为空，状态码仍是 200。 */
@@ -1069,6 +1104,56 @@ export interface DocxCollectReport {
   outline?: DocxOutlineLevel[];
   tables?: { total: number; borderKinds: Record<string, number> };
   clusters: DocxCluster[];
+  /** 前置区结构（只有结构与角色标签，不含文字）。没有前置区时为 null；旧脚本采的报告里缺省 */
+  front?: DocxFrontReport | null;
+}
+
+export interface DocxFrontSection {
+  id: string;
+  index: number;
+  /** 脚本猜的分节类型 */
+  guess: 'cover' | 'signoff' | 'revisions' | 'toc' | 'other' | (string & {});
+  paragraphs: number;
+  tables: string[];
+  hasToc: boolean;
+  hasImage: boolean;
+}
+
+/** 前置区里的一个字段（段落）。文本框和它的兼容回退副本归为一个，`occurrences` 记出现次数 */
+export interface DocxFrontField {
+  id: string;
+  /** 所在节的 index */
+  section: number;
+  /** 节内序号，从 1 起 */
+  order: number;
+  chars: number;
+  inTextbox: boolean;
+  occurrences: number;
+  size: number | null;
+  bold: boolean;
+  jc: string;
+  /** 是否「XX单位：」这种带标签的段落（替换时只换冒号后面） */
+  labeled?: boolean;
+  guess: Exclude<DocxFrontRole, 'keep'> | null;
+}
+
+export interface DocxFrontTable {
+  id: string;
+  section: number;
+  rows: number;
+  cols: number;
+  headerLike: boolean;
+  labelColumn: boolean;
+  defaultRule: DocxTableRule;
+}
+
+export interface DocxFrontReport {
+  blocks: number;
+  hasToc: boolean;
+  sections: DocxFrontSection[];
+  fields: DocxFrontField[];
+  tables: DocxFrontTable[];
+  sig?: string;
 }
 
 /** 簇的决定：三选一。没写到的簇采用报告里的 suggestedRole。 */
@@ -1083,6 +1168,13 @@ export interface DocxDecisions {
   clusters?: Record<string, DocxClusterDecision>;
   /** 同一角色格式不一致时选定的值，键是「角色.属性」，如 `BodyText.line` */
   choices?: Record<string, string | number | boolean>;
+  /** 第 ④ 步的前置区确认。没写到的字段 / 表格用报告里的猜测；`disabled` = 不要前置区 */
+  front?: {
+    disabled?: boolean;
+    fields?: Record<string, DocxFrontRole>;
+    tables?: Record<string, DocxTableRule>;
+    sections?: Record<string, string>;
+  };
 }
 
 export interface DocxConflict {
@@ -1172,6 +1264,8 @@ export interface NoteHistory {
 export interface NoteSaveResult {
   recordId: string;
   noteFile: string;
+  /** 这一批写进「- 对象：」行的路径。可选：旧服务不给 */
+  target?: string;
   /** 这次是不是新建了批注文件。追加到已有文件上为 false */
   created?: boolean;
   items: Array<{
@@ -1180,6 +1274,89 @@ export interface NoteSaveResult {
     /** 文件里已经有同一条（区间 + 原文 + 意见），没有再追加 */
     duplicate?: boolean;
   }>;
+}
+
+/** 规则库里的一条规则（`rules.md` 的 `### R001 短名` 及其列表项） */
+export interface DeaiRule {
+  id: string;
+  name: string;
+  /** 引用 / 强调 / 结构 / 措辞 / 格式 */
+  category: string;
+  /** 启用 / 停用（原文） */
+  status: string;
+  enabled: boolean;
+  criteria?: string;
+  bad?: string;
+  good?: string;
+  fix?: string;
+  /** 来源：模板首版、某份交付稿的批注 N0002、某次体检…… */
+  source?: string;
+}
+
+/** 还有待处理批注的交付稿版本（工作台「批注 → 修改 → 沉淀」卡片用） */
+export interface DeaiPendingDelivery {
+  path: string;
+  source: string;
+  version: string;
+  recordId?: string;
+  pending: number;
+}
+
+/** GET deai/rules。技能没装时只有 `installed: false` */
+export interface DeaiRules {
+  installed: boolean;
+  version?: number;
+  updated?: string;
+  rules?: DeaiRule[];
+  /** `history/` 下已有的快照，按版本倒序 */
+  versions?: Array<{ version: number; mtime: string }>;
+  /** `CHANGELOG.md` 原文 */
+  changelog?: string;
+  pendingDeliveries?: DeaiPendingDelivery[];
+  /** 解析不出来的条目等 */
+  warnings?: string[];
+}
+
+/** GET deai/rules/versions/:n：某一版快照 */
+export interface DeaiRuleVersion {
+  version: number;
+  updated?: string;
+  text: string;
+  rules?: DeaiRule[];
+}
+
+/** 一版交付稿 */
+export interface DeliveryVersion {
+  /** `v002` */
+  version: string;
+  path: string;
+  /** 转成 Word 用 */
+  docKey: string;
+  mtime?: string;
+  created: string;
+  /** `source`（去味首版）或 `v001` */
+  basedOn: string;
+  /** 本版处理的批注编号 */
+  notes: string[];
+  rulesVersion: number | null;
+  /** 形如 `R001×13, R004×40` */
+  hits: string;
+  note: string;
+  /** 原稿在这一版之后又改过 */
+  sourceChanged: boolean;
+  /** 有人绕过批注直接改了这一版 */
+  directlyEdited: boolean;
+  /** 这一版上还有几条待处理批注。可选：旧服务不给 */
+  pendingNotes?: number;
+}
+
+/** GET delivery?docKey=：某份原稿的交付稿 */
+export interface DeliveryList {
+  source: string;
+  dir?: string;
+  versions: DeliveryVersion[];
+  /** 原稿的记录编号；没有记录时缺省（交付稿上的批注会退回看板缓存） */
+  recordId?: string;
 }
 
 /**
@@ -1558,11 +1735,26 @@ export const api = {
    * 只提交编号和批注内容，不带路径。返回每条的 `N` 编号，提示词用它。
    * 非环回 403，记录不存在 404，超限或载荷带路径 400。
    */
-  saveNotes: (id: string, recordId: string, notes: NoteHistoryItem[]) =>
+  saveNotes: (id: string, recordId: string, notes: NoteHistoryItem[], deliveryVersion?: string) =>
     request<NoteSaveResult>(`/api/projects/${id}/note-history`, {
       method: 'POST',
-      body: JSON.stringify({ recordId, notes }),
+      // 交付稿上的批注只多带版本号（v002），对象路径由服务端用记录的 target 拼，请求仍不带路径
+      body: JSON.stringify(deliveryVersion ? { recordId, notes, deliveryVersion } : { recordId, notes }),
     }),
+  /**
+   * 去 AI 味规则库（只读）。技能没装时 `installed: false`。
+   * **旧服务进程 404，调用方用 `isUnsupported` 识别**：工作台卡片不显示计数，模块页提示重启。
+   */
+  deaiRules: (id: string) => request<DeaiRules>(`/api/projects/${id}/deai/rules`),
+  /** 某一版规则库快照。版本号不是正整数 400，没有这一版 404（不是「未知接口」） */
+  deaiRuleVersion: (id: string, version: number) =>
+    request<DeaiRuleVersion>(`/api/projects/${id}/deai/rules/versions/${encodeURIComponent(String(version))}`),
+  /**
+   * 某份原稿的交付稿版本（只读）。只收原稿的 docKey。
+   * **旧服务进程 404 时阅读器不显示版本条、不报错**（`isUnsupported`）。
+   */
+  deliveryVersions: (id: string, docKey: string) =>
+    request<DeliveryList>(`/api/projects/${id}/delivery?docKey=${encodeURIComponent(docKey)}`),
   /** 只清看板缓存那一半。工作空间里的批注文件不动，响应里它们还在。 */
   clearNoteHistory: (id: string, file: string) =>
     request<NoteHistory>(`/api/projects/${id}/note-history?file=${encodeURIComponent(file)}`, {

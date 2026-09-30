@@ -133,7 +133,10 @@
         落盘路径由服务端用 `resolveInside()` 自己拼;
      ⑥ 写入走「先写临时文件再原子替换」,失败不留半截文件。
         单条意见上限 1000 字、单批上限 50 条,超限 400 且整批不落盘。
-        看板写入的状态只能是 `pending`
+        看板写入的状态只能是 `pending`。
+     交付稿(`output/delivery/<组>/<子路径>/v<序号>.md`)上的批注按**镜像路径**还原成原稿
+     `output/<组>/<子路径>.md`,落到**原稿那份记录**的 `notes/I<编号>.md`,批次多一行 `- 对象：` 注明针对哪个文件;
+     映射只用路径规则、不读交付稿 front-matter。上面的边界一字不变 —— 变的只是「从被批注的文件解析记录编号」这一步
    - 一次归档时调工作空间的 `scripts/archive_output.py`(`src/server/http.mjs` 的 `runArchive`)——
      **这是第七条窄例外,范围就是下面六条,越界即为 bug**。
      它属于「看板只 `spawn`,工作空间脚本写盘」那一族(与第三、五条、资料转换同构),
@@ -187,21 +190,26 @@
      ① 看板只 `spawn`,自己不写、不 `rename`、不 `unlink` 工作空间里任何一个字节;
      ② 必须用户在看板上点「开始分析」「生成模板」「转换」明确发起;没有后台任务、没有定时,不因文件变化自动重跑;
      ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
-     ④ **请求不带任何路径**:来源 `.docx` 与待转换的 `.md` 只用服务端扫描时下发的不透明键 `docKey`
+     ④ **请求不带任何路径**:来源 `.docx` 与待转换的 `.md`(产出三组里的 `.md`,以及交付稿 `output/delivery/**/v<序号>.md`)
+        只用服务端扫描时下发的不透明键 `docKey`
         (相对路径 SHA-256 前 16 位)指定,服务端重新扫描、在同类条目里反查出路径,查不到就 400,
         然后过 `resolveInside()` 才交给脚本。**不接受「带路径但我们会校验」**(第七条第 ④ 款的理由原样适用);
         也不退回「组名 + 基名」,因为产出文档常在组内子目录里,基名不能唯一定位。
         模板名只接受一层基名(不以 `.` 开头,不含分隔符与 `..`);
         用户在提炼第 ②③ 步的决定以 JSON 经 stdin 交给脚本,服务端限 256KB、拒绝路径类键名,脚本再校验结构;
      ⑤ 脚本只允许写两处:`docx_template.py` 只写 `output/docx-template/<模板名>/`
-        (`collect/`、`profile.json`、`reference.docx`、`spec.md`、`sample.docx`);
-        `md2docx.py` 只写与来源 `.md` 同目录、同基名的 `.docx`(中间文件放系统临时目录,结束即删)。
+        (`collect/`、`profile.json`、`reference.docx`、`front.docx`、`spec.md`、`sample.docx`);
+        `md2docx.py` 只写与来源 `.md` 同目录、同基名的 `.docx`(中间文件放系统临时目录,结束即删);
+        来源是交付稿时成品落在交付稿旁边,原稿目录一个字节都不动。
         `input/`、`project.yaml`、`visualization/`、`.md` 原文以及 `output/` 下的其它一切仍然只读;
      ⑥ **不覆盖别人的文件**:同名 `.docx` 已存在时,只有它带着工具链的生成标记
         (`docProps/custom.xml` 的 `aispace-docx-generator`)且用户确认「覆盖」才允许替换,没有标记一律 409;
         模板名已存在时,只有用户确认「重新生成」才覆盖该模板目录下的上述文件。
         服务端与脚本各校验一次。脚本不存在、找不到 Python 3 或 pandoc 3 时接口 400 说清出路,
         不退化成「看板替你写」。上传本期不做:想用本地文件提炼,先把它放进 `input/raw/`
+   - **去 AI 味这条线看板不新增任何写入**(`src/server/deai.mjs` 只读):交付稿 `output/delivery/`、
+     规则库 `.claude/skills/pm-deai-writing/rules/`(含 `history/` 快照与 `CHANGELOG.md`)全由工作空间 AI 按技能写;
+     改交付稿走「批注 → AI 修改 → 同步沉淀」,看板唯一的写入是上面第六条第二种写入的批注落盘,不提供在线编辑
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
    新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
@@ -259,6 +267,7 @@ aispace-kanban/
 │   │   ├── docxTemplates.mjs # 扫 output/docx-template/ → 模板清单(只读)
 │   │   ├── docxTools.mjs   #   提炼模板 / 转 Word 的参数校验与 spawn(不变量 1 第九条例外)
 │   │   ├── docxMarker.mjs  #   读 .docx 的生成标记(只读;覆盖前服务端自己也校验一次)
+│   │   ├── deai.mjs        #   去 AI 味:读规则库(版本 / 快照 / CHANGELOG)、列交付稿版本(只读,不新增写入)
 │   │   ├── patchMarkdown.mjs # 问题单 / 记录单 / 反馈单共用的字段级替换与原子写
 │   │   ├── prototypes.mjs  #   扫 visualization/prototypes/ → 原型清单(index.html / zip / url 形态)
 │   │   ├── references.mjs  #   扫 visualization/references/ → 参考清单(子目录 index.html)
@@ -294,6 +303,8 @@ aispace-kanban/
 │       │                   #     web_ingest.py --inbox / archive_output.py(一次归档,第七条例外) /
 │       │                   #     docx_template.py 与 md2docx.py(提炼模板 / 转 Word,第九条例外;公共代码在 docxkit/)
 │       └── input/ output/ visualization/ project.yaml
+│                           #     output/delivery/ = 去 AI 味后的交付稿(按原稿路径镜像、v<序号>.md 逐版存),
+│                           #     不进产出列表,只从阅读器版本条进入;规则库在 .claude/skills/pm-deai-writing/rules/
 └── dist/                   # 构建产物(gitignore),serve 非 dev 模式伺服它
 ```
 

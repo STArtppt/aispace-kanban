@@ -27,6 +27,7 @@ import { captureStatus, startCapture } from './capture.mjs';
 import { CAPTURE_PACKAGE_PATH, readPackageBody, receiveCapturePackage } from './capture-inbox.mjs';
 import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-history.mjs';
 import { appendNotes, mergeNoteHistory } from './notes.mjs';
+import { listDelivery, readDeaiRuleVersion, readDeaiRules } from './deai.mjs';
 import { resolveInside } from './paths.mjs';
 import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
 import { PYTHON_CANDIDATES, findPython, pickDirectory, revealInSystem } from './platform.mjs';
@@ -1757,6 +1758,21 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return json(res, 200, listDocxTemplates(project.root));
   }
 
+  // 去 AI 味：规则库与交付稿版本，**只读**（不变量 1：这条线看板不新增写入，见 deai.mjs）。
+  // 路径全部由服务端拼、过 resolveInside；版本号只收正整数，交付稿只收原稿的 docKey。
+  if (head === 'projects' && id && action === 'deai' && segments[3] === 'rules') {
+    if (req.method !== 'GET') return json(res, 405, { error: '只接受 GET' });
+    const project = requireProject(id);
+    if (segments.length === 4) return json(res, 200, readDeaiRules(project.root));
+    if (segments.length === 6 && segments[4] === 'versions') return json(res, 200, readDeaiRuleVersion(project.root, segments[5]));
+    return json(res, 400, { error: '规则库接口只有 rules 与 rules/versions/<正整数>' });
+  }
+  if (head === 'projects' && id && action === 'delivery' && segments.length === 3) {
+    if (req.method !== 'GET') return json(res, 405, { error: '只接受 GET' });
+    const project = requireProject(id);
+    return json(res, 200, listDelivery(project.root, url.searchParams.get('docKey') || ''));
+  }
+
   // 产出 .md 转成 Word：**第九条窄例外**。看板只 spawn 工作空间的 md2docx.py，
   // 载荷只有 docKey、模板名与 overwrite，不收路径；成品落在 .md 同目录、同名（见 docxTools.mjs）。
   if (head === 'projects' && id && action === 'docx' && segments[3] === 'convert' && segments.length === 4) {
@@ -2044,7 +2060,8 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
             error: `写入批注不接受路径（${forbidden.join('、')}）。请求只带编号和批注内容。`,
           });
         }
-        return json(res, 200, appendNotes(project.root, recordId, payload.notes));
+        // 交付稿上的批注只多带一个版本号（v002），对象路径由 notes.mjs 用记录的 target 拼
+        return json(res, 200, appendNotes(project.root, recordId, payload.notes, payload.deliveryVersion));
       }
       const file = typeof payload.file === 'string' ? payload.file.trim() : '';
       if (!file) return json(res, 400, { error: '缺少文件路径' });

@@ -10,6 +10,7 @@ import { useNoteHistory } from '@/hooks/useNoteHistory';
 import { buildAnnotationPrompt, type PromptNote } from '@/lib/annotationPrompt';
 import { formatRelative } from '@/lib/format';
 import { ApiError, type NoteHistoryItem } from '@/lib/api';
+import { deliveryOf } from '@/lib/deaiPrompt';
 import { cn } from '@/lib/utils';
 
 /** 浮层统一宽度：够放下一条批注，又不至于把正文盖掉半边。 */
@@ -25,6 +26,11 @@ const STATUS_LABEL: Record<string, string> = {
 
 function statusLabel(status: string) {
   return STATUS_LABEL[status] ?? status;
+}
+
+/** 回执里去掉沉淀标记（标记另外显示成标签） */
+function stripDeposits(receipt: string) {
+  return receipt.replace(/沉淀为\s*R\d{3}\s*[（(]规则库\s*v\d+[)）][。；;，,\s]*/g, '').trim() || '（只有沉淀标记）';
 }
 
 function fingerprintOf(notes: Array<{ start: number; end: number; quote: string; comment: string }>) {
@@ -59,6 +65,8 @@ export function AnnotationToolbar({
   session,
   onRemove,
   onClear,
+  delivery,
+  onOpenDeaiRule,
 }: {
   projectId: string;
   file: string;
@@ -68,6 +76,10 @@ export function AnnotationToolbar({
   session: AnnotationSession;
   onRemove: (id: string) => void;
   onClear: () => void;
+  /** 正在批注某一版交付稿：提示词换成「以它为底改出下一版 + 同步沉淀」 */
+  delivery?: { version: string; nextPath: string; rulesVersion?: number };
+  /** 回执里的沉淀标签被点中 */
+  onOpenDeaiRule?: (rule: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
   const [fallback, setFallback] = useState<string | null>(null);
@@ -186,7 +198,9 @@ export function AnnotationToolbar({
       try {
         await append(snapshot);
         persisted.current.add(`${file}\0${fingerprintOf(notes)}`);
-        reason = '这份还没有产出物记录，批注暂存在看板缓存里。让 agent 建一份记录之后可以迁过去。这次没有落进工作空间，agent 无处回写。';
+        reason = delivery
+          ? '原稿还没有产出物记录，交付稿上的批注暂存在看板缓存里。让 agent 先给原稿建记录，之后可以迁过去。这次没有落进工作空间，agent 无处回写。'
+          : '这份还没有产出物记录，批注暂存在看板缓存里。让 agent 建一份记录之后可以迁过去。这次没有落进工作空间，agent 无处回写。';
       } catch (err) {
         reason = explainSaveFailure(err);
       }
@@ -203,6 +217,7 @@ export function AnnotationToolbar({
       noteFile: saved ? currentNoteFile : undefined,
       saved,
       reason: saved ? undefined : reason,
+      delivery,
     });
     const okMessage = saved
       ? `已复制 ${notes.length} 条批注的提示词，并写入 ${currentNoteFile}。粘给你的 agent 就行。`
@@ -225,6 +240,7 @@ export function AnnotationToolbar({
       noteFile,
       saved: Boolean(noteFile),
       resend: true,
+      delivery,
     });
     await publish(text, `已复制 ${pendingNotes.length} 条还没处理的批注。区间可能已经失效，提示词里写了以原文为准。`);
   };
@@ -365,6 +381,7 @@ export function AnnotationToolbar({
                       <p className="text-xs text-muted-foreground">
                         {formatRelative(batch.archivedAt)} · {batch.notes.length} 条
                         {batch.source === 'workspace' ? ' · 工作空间' : batch.source === 'cache' ? ' · 看板缓存' : ''}
+                        {batch.target && deliveryOf(batch.target) ? ` · 交付稿 ${deliveryOf(batch.target)?.version}` : ''}
                       </p>
                       {batch.notes.map((note, index) => (
                         <div
@@ -381,7 +398,25 @@ export function AnnotationToolbar({
                           </p>
                           <p className="mt-1 text-sm">{note.comment}</p>
                           {note.receipt ? (
-                            <p className="mt-1 text-xs text-muted-foreground">回执：{note.receipt}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              回执：{note.deposits?.length ? stripDeposits(note.receipt) : note.receipt}
+                            </p>
+                          ) : null}
+                          {note.deposits?.length ? (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {note.deposits.map((d) => (
+                                <button
+                                  key={`${d.rule}-${d.version}`}
+                                  type="button"
+                                  disabled={!onOpenDeaiRule}
+                                  title={onOpenDeaiRule ? '在工作台「去 AI 味」里看这条规则' : undefined}
+                                  onClick={() => onOpenDeaiRule?.(d.rule)}
+                                  className="rounded border border-border px-1.5 font-mono text-[11px] text-muted-foreground hover:bg-accent disabled:hover:bg-transparent"
+                                >
+                                  {d.rule} · v{d.version}
+                                </button>
+                              ))}
+                            </div>
                           ) : null}
                         </div>
                       ))}

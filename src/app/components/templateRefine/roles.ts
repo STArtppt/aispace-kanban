@@ -30,11 +30,12 @@ export const HEADING_ROLES = ['Heading1', 'Heading2', 'Heading3', 'Heading4'] as
 /** spec.md 里写 md 用法时各角色对应的写法（第 ④ 步的文字规定预览用） */
 export const ROLE_MD: Record<string, string> = {
   BodyText: '普通段落',
-  Heading1: '`#`',
-  Heading2: '`##`',
-  Heading3: '`###`',
-  Heading4: '`####`',
-  Title: 'front-matter 的 `title:`',
+  // 开头唯一的 `#` 是文档标题，`##` 起是一级标题（与 docxkit/filters/deai-format.lua 的标题平移一致）
+  Heading1: '`##`',
+  Heading2: '`###`',
+  Heading3: '`####`',
+  Heading4: '`#####`',
+  Title: '开头唯一的 `#`（或 front-matter 的 `title:`）',
   Caption: '题注',
   TableCaption: '表格下方一行 `Table: 表 N 标题`',
   ImageCaption: '`![图 N 标题](路径)` 的方括号',

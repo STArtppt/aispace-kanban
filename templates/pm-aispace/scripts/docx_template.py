@@ -20,6 +20,8 @@
       collect/paragraphs.jsonl 逐段快照（同样脱敏）
       profile.json             相对通用规范的客户差异，每项 _src 注明来源
       reference.docx           清洗、重建样式后的 pandoc 参照模板（不是客户原件）
+      front.docx               前置区骨架（封面 / 签署页 / 版本表 / 目录；字段是占位符、样例数据已清空）；
+                               来源没有前置区或决定里 front.disabled 为 true 时不写
       spec.md                  写给写 md 的人看的文字规定
       sample.docx              合成样张的转换效果（需要 pandoc；没有就跳过）
 
@@ -48,8 +50,9 @@ from docxkit import (EXIT_ARGS, EXIT_CONFLICT, EXIT_FAIL, VERSION, ToolError,  #
                      finish, force_utf8)
 from docxkit.build import build_reference  # noqa: E402
 from docxkit.collect import collect, write_report  # noqa: E402
-from docxkit.decisions import MAX_BYTES, DecisionError, derive_profile, validate  # noqa: E402
-from docxkit.ooxml import Package, add_marker, write_atomic  # noqa: E402
+from docxkit.decisions import MAX_BYTES, DecisionError, derive_profile, front_profile, validate  # noqa: E402
+from docxkit.front import assemble, build_front, fill_values  # noqa: E402
+from docxkit.ooxml import Package, add_marker, heading_numbered, write_atomic  # noqa: E402
 from docxkit.pandoc import PandocMissing, find_pandoc, md_to_docx  # noqa: E402
 from docxkit.postprocess import postprocess  # noqa: E402
 from docxkit.spec import load_base, merged  # noqa: E402
@@ -134,13 +137,24 @@ def cmd_build(args) -> tuple[dict, str]:
         profile, plan = derive_profile(report, dec, base)
     except DecisionError as e:
         raise ToolError(str(e), EXIT_ARGS, None, "bad-decisions")
-    spec = merged({k: v for k, v in profile.items() if not k.startswith("_")})
+    fp = front_profile(dec["front"])
+    if fp:
+        profile["front"] = fp
+    spec = merged({k: v for k, v in profile.items() if not k.startswith("_") and k != "front"})
 
     pkg, log, _ = build_reference(src, spec)
     add_marker(pkg, VERSION)
     ref_bytes = pkg.to_bytes()
+    front_pkg = None
+    if fp:
+        try:
+            front_pkg, flog = build_front(Package.read(src), report["front"], dec["front"])
+        except ValueError as e:
+            raise ToolError(str(e), EXIT_ARGS, "在看板第 ② 步重新「开始分析」，或终端里重跑 collect", "stale-report")
+        add_marker(front_pkg, VERSION)
+        log += flog
     today = dt.date.today().isoformat()
-    spec_text = spec_markdown(name, spec, profile["_roles"], VERSION, today)
+    spec_text = spec_markdown(name, spec, profile["_roles"], VERSION, today, fp)
 
     warnings: list[str] = []
     sample_bytes = None
@@ -156,11 +170,18 @@ def cmd_build(args) -> tuple[dict, str]:
             shutil.copy(kit / "sample.md", t / "sample.md")
             shutil.copy(kit / "diagram.png", t / "diagram.png")
             (t / "reference.docx").write_bytes(ref_bytes)
-            warnings += md_to_docx(pandoc_bin, t / "sample.md", t / "reference.docx", t / "out.docx")
+            sw, fmt = md_to_docx(pandoc_bin, t / "sample.md", t / "reference.docx", t / "out.docx",
+                                 strip_numbers=heading_numbered(pkg), front=front_pkg is not None)
+            warnings += sw
             out = Package.read(t / "out.docx")
             log += postprocess(out, VERSION)
+            if front_pkg is not None:
+                # 样张的封面填示例值，不读 project.yaml：它只是效果预览
+                values = fill_values({"client": "示例客户单位", "vendor": "示例编制单位", "doctype": "示例文档"},
+                                     fmt["title"], {}, dt.date.today())
+                assemble(out, front_pkg, values)
             (t / "sample.docx").write_bytes(out.to_bytes())
-            vw, _ = verify(t / "sample.docx", spec)
+            vw, _ = verify(t / "sample.docx", spec, skip=("Title",) if front_pkg is not None else ())
             warnings += vw
             sample_bytes = (t / "sample.docx").read_bytes()
 
@@ -169,6 +190,12 @@ def cmd_build(args) -> tuple[dict, str]:
                         ("reference.docx", ref_bytes), ("spec.md", spec_text.encode("utf-8"))):
         write_atomic(tdir / fname, data)
         written.append(rel(tdir / fname))
+    if front_pkg is not None:
+        write_atomic(tdir / "front.docx", front_pkg.to_bytes())
+        written.append(rel(tdir / "front.docx"))
+    elif (tdir / "front.docx").exists():
+        # 这次不要前置区（或来源没有）：旧的骨架留着会被转换误用
+        (tdir / "front.docx").unlink()
     if sample_bytes is not None:
         write_atomic(tdir / "sample.docx", sample_bytes)
         written.append(rel(tdir / "sample.docx"))

@@ -4,6 +4,15 @@
     python3 scripts/md2docx.py output/docs/方案.md --template @base      # 通用规范
     python3 scripts/md2docx.py output/docs/方案.md --template 客户甲      # output/docx-template/客户甲/
     python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --overwrite --json
+    python3 scripts/md2docx.py output/delivery/docs/方案/v002.md --template 客户甲   # 交付稿，成品落在交付稿旁边
+    python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --keep-bold     # 不解除段中加粗
+
+转换前由 docxkit/filters/deai-format.lua 做格式处理（只动格式、不改文字，每项计数写进结果的 log）：
+开头唯一的 `#` 取作文档标题、其余标题上移一级；模板标题样式带编号时剥掉手写编号；`> [!note]` 转提示框；
+只保留段首标签式加粗。
+模板带 front.docx（前置区）时，成品 = 前置区 + 正文：封面字段依次取自 md front-matter（title / client / vendor /
+date / doctype）→ 开头的 `#` 标题（title）→ project.yaml 的 identity.甲方 / 承建方 → 当天日期；取不到的写
+「【待填：…】」并给 warning。目录保留为域，成品打开时提示更新域。
 
 需要 pandoc 3（查找顺序：PANDOC_BIN 环境变量 → 工作空间 .env 的 PANDOC_BIN → PATH）。
 模板的写作规定在 `output/docx-template/<模板名>/spec.md`；通用规范的在 `scripts/docxkit/base-spec.json`。
@@ -22,6 +31,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import sys
 import tempfile
 from pathlib import Path
@@ -33,7 +43,8 @@ sys.path.insert(0, str(HERE))
 from docxkit import (EXIT_ARGS, EXIT_CONFLICT, EXIT_DEPENDENCY, EXIT_FAIL, VERSION,  # noqa: E402
                      ToolError, finish, force_utf8)
 from docxkit.build import build_reference  # noqa: E402
-from docxkit.ooxml import Package, add_marker, marker_of, write_atomic  # noqa: E402
+from docxkit.front import assemble, fill_values, read_front_matter, read_identity  # noqa: E402
+from docxkit.ooxml import Package, add_marker, heading_numbered, marker_of, write_atomic  # noqa: E402
 from docxkit.pandoc import PandocMissing, default_reference, find_pandoc, md_to_docx  # noqa: E402
 from docxkit.postprocess import postprocess  # noqa: E402
 from docxkit.spec import merged  # noqa: E402
@@ -68,6 +79,8 @@ def convert(args) -> tuple[dict, str]:
         raise ToolError(f"来源不是一个存在的 .md 文件：{md}", EXIT_ARGS, None, "no-source")
     md = md.resolve()
     ref = resolve_template(args.template)
+    front_path = ref.parent / "front.docx" if ref is not None else None
+    front = Package.read(front_path) if front_path is not None and front_path.is_file() else None
     target = md.with_suffix(".docx")
     overwritten = False
     if target.exists():
@@ -91,9 +104,17 @@ def convert(args) -> tuple[dict, str]:
             add_marker(pkg, VERSION)
             ref = _bytes_file(t / "reference.docx", pkg.to_bytes())
         out_tmp = t / "out.docx"
-        warnings = md_to_docx(pandoc_bin, md, ref, out_tmp)
+        numbered = heading_numbered(Package.read(ref))
+        warnings, fmt = md_to_docx(pandoc_bin, md, ref, out_tmp, strip_numbers=numbered, keep_bold=args.keep_bold,
+                                   front=front is not None)
         out = Package.read(out_tmp)
-        log = postprocess(out, VERSION)
+        log = fmt["log"] + postprocess(out, VERSION)
+        if front is not None:
+            values = fill_values(read_front_matter(md.read_text(encoding="utf-8")), fmt["title"],
+                                 read_identity(WS), dt.date.today())
+            flog, fw = assemble(out, front, values)
+            log += flog
+            warnings += fw
         write_atomic(target, out.to_bytes())
 
     human = "\n".join([f"已生成 {rel(target)}（模板：{args.template}）", *log, *(f"注意：{w}" for w in warnings)])
@@ -112,6 +133,7 @@ def main() -> int:
     ap.add_argument("source", help="来源 .md")
     ap.add_argument("--template", required=True, help="模板名（output/docx-template/ 下的目录名）或 @base（通用规范）")
     ap.add_argument("--overwrite", action="store_true", help="同名 .docx 是上次转换生成的时，替换它")
+    ap.add_argument("--keep-bold", action="store_true", help="保留 md 里的全部加粗（默认只保留段首标签式加粗）")
     ap.add_argument("--json", action="store_true", help="最后一行打印结果 JSON（给看板用）")
     args = ap.parse_args()
     try:

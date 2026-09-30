@@ -37,7 +37,48 @@ def describe(eff: dict) -> str:
     return "，".join(parts)
 
 
-def generate(name: str, spec: dict, roles: dict, version: str, date: str) -> str:
+FIELD_SOURCE = {
+    "title": "front-matter 的 `title` → 开头唯一的 `#` 标题",
+    "client": "front-matter 的 `client` → `project.yaml` 的 `identity.甲方`",
+    "vendor": "front-matter 的 `vendor` → `project.yaml` 的 `identity.承建方`",
+    "date": "front-matter 的 `date` → 转换当天（YYYY年M月）",
+    "doctype": "front-matter 的 `doctype`（没有兜底，随文档而变）",
+}
+FIELD_LABEL = {"title": "标题", "client": "客户单位", "vendor": "编制单位", "date": "日期", "doctype": "文档类型"}
+
+
+def front_lines(front: dict | None) -> list[str]:
+    if not front:
+        return []
+    roles = [r for r in FIELD_LABEL if r in front["fields"].values()]
+    keeps = sum(1 for v in front["fields"].values() if v == "keep")
+    lines = [
+        "## 封面字段从哪里取值",
+        "",
+        f"这个模板带前置区（{'、'.join(front['sections'].values())}），骨架在 `front.docx`。"
+        "转换时前置区原样放在正文前面，封面上的字段按下表取值；都取不到时成品里显示「【待填：…】」，转换结果里会有提醒。",
+        "",
+        "| 字段 | 取值顺序 |",
+        "| --- | --- |",
+        *[f"| {FIELD_LABEL[r]} | {FIELD_SOURCE[r]} |" for r in roles],
+        "",
+        "```markdown",
+        "---",
+        "client: 某某单位        # 需要时写在 md 开头，优先于 project.yaml",
+        "doctype: 实施方案",
+        "---",
+        "```",
+        "",
+        "- 签署页、版本跟踪表只留了空格子，交付前在 Word 里填。",
+        "- 目录保留为 Word 的目录域：用 Word 打开时会提示更新域，选「是」；没提示就右键目录 → 更新域。",
+    ]
+    if keeps:
+        lines.append(f"- 前置区里有 {keeps} 段设成了「保持原样」，模板里的原文会出现在每一份成品里。")
+    lines.append("")
+    return lines
+
+
+def generate(name: str, spec: dict, roles: dict, version: str, date: str, front: dict | None = None) -> str:
     def src(role):
         return FROM_CUSTOMER if role in roles else FILLED
 
@@ -64,14 +105,17 @@ def generate(name: str, spec: dict, roles: dict, version: str, date: str) -> str
         "",
         "| Markdown | Word 样式 | 编号 | 格式 | 来源 |",
         "| --- | --- | --- | --- | --- |",
-        row("`#`", "Heading1", hn[0].replace("%1", "1") if hn else ""),
-        row("`##`", "Heading2", hn[1].replace("%1", "1").replace("%2", "1") if len(hn) > 1 else ""),
-        row("`###`", "Heading3", hn[2].replace("%1", "1").replace("%2", "1").replace("%3", "1") if len(hn) > 2 else ""),
-        row("`####`", "Heading4", "无编号"),
+        row("`##`", "Heading1", hn[0].replace("%1", "1") if hn else ""),
+        row("`###`", "Heading2", hn[1].replace("%1", "1").replace("%2", "1") if len(hn) > 1 else ""),
+        row("`####`", "Heading3", hn[2].replace("%1", "1").replace("%2", "1").replace("%3", "1") if len(hn) > 2 else ""),
+        row("`#####`", "Heading4", "无编号"),
         "",
-        "- 标题里**不要手写编号**（「1.1 概述」「一、」），编号由样式自动生成，手写会出现双重编号。",
-        "- 最多用到 `####`：它是无编号小标题，不进目录。更深的层级改用加粗段落或列表。",
-        "- 文档标题写在 front-matter 的 `title:` 里，成品首段套 Title 样式；正文不要再写一个 `#` 当文档标题。",
+        "- **文档标题**写成开头唯一的一个 `#`（或 front-matter 的 `title:`，两个都写以 front-matter 为准）。"
+        "转换时它被取作文档标题（有封面就填进封面，没有就是首段的 Title），`##` 起依次是一级、二级……标题。"
+        "全文有多个 `#` 时不做这层平移，`#` 就是一级标题，转换结果里会提醒。",
+        "- 标题里不必手写编号（「1.1 概述」「一、」）：编号由样式生成，转换时会自动剥掉手写的，避免双重编号。",
+        "- 最多用到无编号小标题那一级，它不进目录。更深的层级改用段首加粗的标签或列表。",
+        "- 加粗只用于段首标签（`**调研对象：** …`）；句中的加粗转换时会解除。`> [!note]` 这类批注块转成提示框。",
         "",
         "## 正文与列表",
         "",
@@ -122,6 +166,7 @@ def generate(name: str, spec: dict, roles: dict, version: str, date: str) -> str
         "",
         "- 行内代码用反引号，套 Verbatim Char（等宽字体）。",
         "",
+        *front_lines(front),
         "## 转换后要检查",
         "",
         "1. 标题编号连续，没有双重编号；",

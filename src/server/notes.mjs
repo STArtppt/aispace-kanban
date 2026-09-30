@@ -8,13 +8,19 @@
  * **别在这个模块里加第二个写入口。**
  *
  * 格式的唯一事实源是工作空间 `output/records/README.md` 的「批注」一节。
+ *
+ * 交付稿（`output/delivery/<组>/<子路径>/v<序号>.md`）上的批注按镜像路径落到**原稿那份记录**的批注文件里，
+ * 批次标题下多一行 `- 对象：<被批注文件>`。请求仍然不带路径：交付稿只带版本号 `deliveryVersion`，
+ * 对象路径由这里用记录的 `target` 按镜像规则拼出来。写入面的六条边界不变。
  * 读失败、整份认不出条目时，返回「这份读不出来」，而不是空列表 ——
  * 空列表在界面上就是「没有批注」，坏文件会被人当成已经处理完。
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseFrontmatter } from './frontmatter.mjs';
 import { resolveInside } from './paths.mjs';
 import { RECORDS_DIR, scanRecords } from './records.mjs';
+import { deliveryDirOf, deliveryOf } from './scan.mjs';
 
 export const NOTES_DIR = `${RECORDS_DIR}/notes`;
 
@@ -29,6 +35,11 @@ const BATCH_RE = /^##[ \t]+(\d{4}-\d{2}-\d{2})[ \t]*·[ \t]*第[ \t]*(\d+)[ \t]*
 const NOTE_RE = /^###[ \t]+(N\d{4})[ \t]*·[ \t]*(\S+)[ \t]*$/;
 const FIELD_RE = /^-[ \t]*(状态|回执|源码区间|来源)[ \t]*[:：][ \t]?(.*)$/;
 const OPINION_RE = /^(?:-[ \t]*)?意见[ \t]*[:：][ \t]?(.*)$/;
+/** 批次标题下的「- 对象：<路径>」。旧批次没有它，视为针对记录的 target */
+const TARGET_RE = /^-[ \t]*对象[ \t]*[:：][ \t]*(\S.*)$/;
+/** 回执末尾的沉淀标记：「沉淀为 R014（规则库 v4）」，可以有多个 */
+const DEPOSIT_RE = /沉淀为[ \t]*(R\d{3})[ \t]*[（(]规则库[ \t]*v(\d+)[)）]/g;
+const VERSION_RE = /^v\d{3}$/;
 
 
 function badRequest(message) {
@@ -73,8 +84,19 @@ function codePoints(value) {
  * @returns {string | null}
  */
 export function findRecordByTarget(root, file) {
-  const wanted = normalizeWorkspacePath(file);
+  let wanted = normalizeWorkspacePath(file);
   if (!wanted) return null;
+  // 交付稿：按镜像路径还原成原稿，再用原稿找记录。组名不对、原稿不在都算没有记录（退回缓存）
+  const delivery = deliveryOf(wanted);
+  if (delivery) {
+    if (!delivery.original) return null;
+    try {
+      if (!fs.existsSync(resolveInside(root, delivery.original))) return null;
+    } catch {
+      return null;
+    }
+    wanted = delivery.original;
+  }
   let items = [];
   try {
     items = scanRecords(root).items || [];
@@ -110,6 +132,8 @@ export function parseNoteDocument(text) {
     }
     const quote = note.quoteLines.join('\n');
     const comment = note.commentLines.join('\n');
+    const deposits = [...String(note.receipt || '').matchAll(DEPOSIT_RE)]
+      .map((m) => ({ rule: m[1], version: Number(m[2]) }));
     const item = {
       noteId: note.noteId,
       structure: note.structure,
@@ -118,6 +142,7 @@ export function parseNoteDocument(text) {
       quote,
       comment,
       migrated: note.migrated || batch.migrated || undefined,
+      ...(deposits.length ? { deposits } : {}),
     };
     if (Number.isFinite(note.start) && Number.isFinite(note.end)) {
       item.start = note.start;
@@ -143,6 +168,7 @@ export function parseNoteDocument(text) {
         date: batchMatch[1],
         index: Number(batchMatch[2]),
         migrated: /迁移/.test(batchMatch[3] || ''),
+        target: '',
         notes: [],
       };
       continue;
@@ -152,7 +178,7 @@ export function parseNoteDocument(text) {
       finishNote();
       if (!batch) {
         // 条目不在批次标题下：仍收进来，让坏格式在界面上看得见，而不是整份消失
-        batch = { date: '', index: 0, migrated: false, notes: [] };
+        batch = { date: '', index: 0, migrated: false, target: '', notes: [] };
       }
       note = {
         noteId: noteMatch[1],
@@ -172,7 +198,11 @@ export function parseNoteDocument(text) {
       finishBatch();
       continue;
     }
-    if (!note) continue;
+    if (!note) {
+      const target = batch ? TARGET_RE.exec(line) : null;
+      if (target && !batch.notes.length) batch.target = normalizeWorkspacePath(target[1].trim());
+      continue;
+    }
     const field = FIELD_RE.exec(line);
     if (field) {
       mode = '';
@@ -221,6 +251,7 @@ function toBatches(recordId, parsed) {
     id: `ws-${recordId}-${batch.date || 'loose'}-${batch.index}`,
     archivedAt: batch.date ? `${batch.date}T12:00:00.000Z` : '',
     recordId,
+    ...(batch.target ? { target: batch.target } : {}),
     notes: batch.notes,
   }));
 }
@@ -298,9 +329,14 @@ export function mergeNoteHistory(root, file, cacheBatches) {
     return { file, recordId: null, batches: sortBatches(cache) };
   }
   const read = readNoteFile(root, recordId);
+  // 同一份批注文件里混着原稿批次和各版交付稿批次：只留对象是当前文件的。没有「对象」行的旧批次归原稿
+  const wanted = normalizeWorkspacePath(file);
+  const original = deliveryOf(wanted)?.original || wanted;
   const workspace = read.broken
     ? []
-    : read.batches.map((batch) => ({ ...batch, source: 'workspace', recordId }));
+    : read.batches
+      .map((batch) => ({ ...batch, target: batch.target || original, source: 'workspace', recordId }))
+      .filter((batch) => batch.target === wanted);
   return {
     file,
     recordId,
@@ -405,8 +441,32 @@ function renderNote(noteId, note) {
   ].join('\n');
 }
 
-function renderBatch(date, index, blocks) {
-  return [`## ${date} · 第 ${index} 批`, '', ...blocks].join('\n');
+function renderBatch(date, index, target, blocks) {
+  return [`## ${date} · 第 ${index} 批`, ...(target ? [`- 对象：${target}`] : []), '', ...blocks].join('\n');
+}
+
+/**
+ * 这一批的对象：原稿就是记录的 target；交付稿是 target 按镜像规则拼出的 `v<序号>.md`，而且那一版必须存在。
+ * 版本号不合法、记录的 target 不是产出三组里的 .md、那一版不在，一律 400 —— 不写一行指向不存在文件的「对象」。
+ */
+function batchTarget(root, recordAbs, deliveryVersion) {
+  let target = '';
+  try {
+    target = normalizeWorkspacePath(parseFrontmatter(fs.readFileSync(recordAbs, 'utf8')).meta.target || '');
+  } catch {
+    target = '';
+  }
+  if (deliveryVersion === undefined || deliveryVersion === null || deliveryVersion === '') return target;
+  if (typeof deliveryVersion !== 'string' || !VERSION_RE.test(deliveryVersion)) {
+    throw badRequest(`交付稿版本号不合法：${String(deliveryVersion)}。只接受 v 加三位数字。`);
+  }
+  const dir = deliveryDirOf(target);
+  if (!dir) throw badRequest('这份记录指向的不是产出三组里的 .md，没有交付稿。');
+  const rel = `${dir}/${deliveryVersion}.md`;
+  if (!fs.existsSync(resolveInside(root, rel))) {
+    throw badRequest(`交付稿 ${deliveryVersion} 不存在（${rel}），没有落盘。`);
+  }
+  return rel;
 }
 
 /**
@@ -417,7 +477,7 @@ function renderBatch(date, index, blocks) {
  * @param {string} recordId 只接受 `I0007` 这种编号
  * @param {object[]} rawNotes
  */
-export function appendNotes(root, recordId, rawNotes) {
+export function appendNotes(root, recordId, rawNotes, deliveryVersion) {
   const id = assertRecordId(recordId);
   const incoming = normalizeIncoming(rawNotes);
 
@@ -428,6 +488,7 @@ export function appendNotes(root, recordId, rawNotes) {
     err.statusCode = 404;
     throw err;
   }
+  const target = batchTarget(root, recordAbs, deliveryVersion);
 
   const noteRel = `${NOTES_DIR}/${id}.md`;
   const noteAbs = resolveInside(root, noteRel);
@@ -445,10 +506,12 @@ export function appendNotes(root, recordId, rawNotes) {
     }
   }
 
+  // 去重按「对象 + 指纹」：同一句话在 v001 和 v002 上各批一次是两条批注
+  const recordTarget = batchTarget(root, recordAbs, undefined);
   const seen = new Map();
   if (existing.trim()) {
     for (const batch of parseNoteDocument(existing)) {
-      for (const note of batch.notes) seen.set(noteFingerprint(note), note.noteId);
+      for (const note of batch.notes) seen.set(`${batch.target || recordTarget}\0${noteFingerprint(note)}`, note.noteId);
     }
   }
 
@@ -456,7 +519,7 @@ export function appendNotes(root, recordId, rawNotes) {
   const items = [];
   const fresh = [];
   for (const note of incoming) {
-    const fp = noteFingerprint(note);
+    const fp = `${target}\0${noteFingerprint(note)}`;
     const prev = seen.get(fp);
     if (prev) {
       items.push({ number: note.number, noteId: prev, duplicate: true });
@@ -474,7 +537,7 @@ export function appendNotes(root, recordId, rawNotes) {
 
   if (fresh.length) {
     const batchIndex = maxBatchIndex(existing) + 1;
-    const section = renderBatch(today(), batchIndex, fresh);
+    const section = renderBatch(today(), batchIndex, target, fresh);
     let next = existing;
     if (next && !next.endsWith('\n')) next += '\n';
     if (next.trim()) next += '\n';
@@ -486,6 +549,7 @@ export function appendNotes(root, recordId, rawNotes) {
   return {
     recordId: id,
     noteFile: noteRel,
+    ...(target ? { target } : {}),
     created: !existed && fresh.length > 0,
     items,
   };

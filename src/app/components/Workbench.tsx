@@ -9,11 +9,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { DeaiPane } from '@/components/DeaiPane';
 import { FeedbackPane } from '@/components/FeedbackPane';
 import { QuestionsPane } from '@/components/QuestionsDialog';
 import { RecordsPane } from '@/components/RecordsPane';
 import { TemplateRefinePane } from '@/components/TemplateRefinePane';
 import { WorkbenchHub, type HubModule } from '@/components/WorkbenchHub';
+import { useDeaiRules } from '@/hooks/useDeaiRules';
 import { useDocxTemplates } from '@/hooks/useDocxTemplates';
 import { useGlobalHotkey } from '@/hooks/useGlobalHotkey';
 import {
@@ -26,8 +28,8 @@ import {
 import { cn } from '@/lib/utils';
 
 /**
- * ⌘K 工作台：先是模块浏览页，再进四个模块 ——
- * 问题单、记录单、反馈单、模版洗炼。
+ * ⌘K 工作台：先是模块浏览页，再进五个模块 ——
+ * 问题单、记录单、反馈单、模版洗炼、去 AI 味。
  *
  * **这一层只管壳**：Dialog、标题栏、浏览页 / 模块切换、⌘K。
  * 各页内脏各自一份状态，彼此不共享。
@@ -43,6 +45,7 @@ const MODULES: { key: HubModule; label: string }[] = [
   { key: 'records', label: '记录单' },
   { key: 'feedback', label: '反馈单' },
   { key: 'template', label: '模版洗炼' },
+  { key: 'deai', label: '去 AI 味' },
 ];
 
 function countOrNull(
@@ -70,6 +73,9 @@ export function Workbench({
   workspaceAvailable = true,
   focusQuestion,
   focusTemplate,
+  focusDeaiRule,
+  outputDocs = [],
+  onOpenDelivery,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -107,10 +113,18 @@ export function Workbench({
   focusQuestion?: { id: string; seq: number } | null;
   /** 从「转成 Word」弹窗跳进来时要选中的模板 */
   focusTemplate?: { name: string; seq: number } | null;
+  /** 从批注回执的沉淀标签跳进来时要展开的规则 */
+  focusDeaiRule?: { rule: string; seq: number } | null;
+  /** 产出三组里的 .md（「给文档去 AI 味」从这里选） */
+  outputDocs?: FileItem[];
+  /** 跳到阅读器里原稿 source 的某一版交付稿（并打开批注清单） */
+  onOpenDelivery?: (source: string, version: string) => void;
 }) {
   useGlobalHotkey('k', () => onOpenChange(!open));
   // 模板清单在这一层取：浏览页的卡片计数和模版洗炼页共用一份
   const templates = useDocxTemplates(projectId, changeToken);
+  // 规则库不在 SSE 监听范围里（.claude/skills/ 下）：每次打开工作台重拉一次
+  const deai = useDeaiRules(projectId, changeToken, open);
 
   const questionCount = countOrNull(
     questions.unsupported || Boolean(questions.error),
@@ -142,6 +156,13 @@ export function Workbench({
         (item) => item.generated ?? Boolean(item.files?.reference?.exists),
       ).length,
   );
+
+  const deaiRules = deai.rules;
+  const deaiLabel = deai.unsupported || deai.error || !deaiRules
+    ? null
+    : deaiRules.installed === false
+      ? '未安装'
+      : `v${deaiRules.version ?? '?'} · ${(deaiRules.rules ?? []).filter((r) => r.enabled).length} 条`;
 
   const onHub = page === 'hub';
 
@@ -203,6 +224,7 @@ export function Workbench({
               recordCount={recordCount}
               feedbackPending={feedbackPending}
               templateCount={templateCount}
+              deaiLabel={deaiLabel}
               onOpen={onPageChange}
             />
           </div>
@@ -265,6 +287,18 @@ export function Workbench({
               rawFiles={rawFiles}
               active={open && page === 'template'}
               focus={focusTemplate}
+            />
+          </div>
+          <div
+            className={cn('flex min-h-0 flex-1 flex-col', page !== 'deai' && 'hidden')}
+            inert={page !== 'deai'}
+          >
+            <DeaiPane
+              projectId={projectId}
+              state={deai}
+              outputDocs={outputDocs}
+              focusRule={focusDeaiRule}
+              onOpenDelivery={(source, version) => onOpenDelivery?.(source, version)}
             />
           </div>
         </DialogPopup>

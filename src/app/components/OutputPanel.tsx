@@ -5,6 +5,7 @@ import {
   Check,
   ChevronRight,
   CodeXml,
+  Eraser,
   Copy,
   FileOutput,
   FileText,
@@ -49,6 +50,7 @@ import { codePreviewLanguage } from '@/components/CodeFileView';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { usePins } from '@/hooks/usePins';
 import { api, type FileItem, type Scan } from '@/lib/api';
+import { deaiPrompt } from '@/lib/deaiPrompt';
 import { absolutePath, datePrefix, formatRelative, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
@@ -187,6 +189,7 @@ function OutputRow({
   archiveBlocked,
   onArchive,
   onConvert,
+  onDeai,
   selection,
 }: {
   item: FileItem;
@@ -205,6 +208,8 @@ function OutputRow({
   onArchive: (item: FileItem) => void;
   /** 「转成 Word」。不传（工作空间目录丢失）就不出现这一项；只对 .md 生效 */
   onConvert?: (item: FileItem) => void;
+  /** 「去 AI 味…」：只复制提示词，不发写请求。只对 .md 生效 */
+  onDeai?: (item: FileItem) => void;
   /** 批量模式下传：点行 = 勾选 / 取消，不打开预览，行尾菜单也收起来 */
   selection?: { checked: boolean; onToggle: (item: FileItem) => void };
 }) {
@@ -297,6 +302,13 @@ function OutputRow({
                   onSelect: () => onConvert(item),
                 }]
               : []),
+            ...(onDeai && item.ext === '.md'
+              ? [{
+                  label: '去 AI 味…',
+                  icon: Eraser,
+                  onSelect: () => onDeai(item),
+                }]
+              : []),
             {
               label: '归档',
               icon: Archive,
@@ -322,6 +334,7 @@ function OutputGroup({
   canArchive,
   onArchive,
   onConvert,
+  onDeai,
   searching,
   viewMode,
   pins,
@@ -348,6 +361,7 @@ function OutputGroup({
   canArchive: boolean | undefined;
   onArchive: (item: FileItem) => void;
   onConvert?: (item: FileItem) => void;
+  onDeai?: (item: FileItem) => void;
   searching: boolean;
   viewMode: ViewMode;
   pins: Set<string>;
@@ -375,6 +389,7 @@ function OutputGroup({
     archiveBlocked: archiveBlockedReason(item, canArchive),
     onArchive,
     onConvert,
+    onDeai,
     selection: selected ? { checked: selected.has(item.path), onToggle: onToggleSelect } : undefined,
   });
   // 搜索时自动展开：归档项要能被搜到，藏在折叠里等于没搜到
@@ -470,6 +485,22 @@ export function OutputPanel({
   // 目录丢失时不给「转成 Word」：扫描结果是空的降级态，点了也只会撞 400
   const canConvert = scan.available !== false;
   const allOutputItems = useMemo(() => GROUPS.flatMap(({ key }) => output[key]), [output]);
+  // 「去 AI 味…」：只写剪贴板。取一次规则库只为写上版本号、判断要不要先补齐技能；
+  // 取不到（旧服务 404、出错）也照样复制，只是不带版本号
+  const copyDeai = async (item: FileItem) => {
+    let installed = true;
+    let rulesVersion: number | undefined;
+    try {
+      const rules = await api.deaiRules(projectId);
+      installed = rules.installed !== false;
+      rulesVersion = rules.version;
+    } catch {
+      // 旧服务没有这个接口、或读失败：按已安装处理，提示词里不写版本号
+    }
+    const ok = await writeClipboard(deaiPrompt({ sourcePath: item.path, rulesVersion, installed }));
+    if (ok) toast.success(installed ? '已复制，粘贴给工作空间 AI' : '已复制（含先补齐技能的步骤），粘贴给工作空间 AI');
+    else toast.error('复制失败：浏览器没给剪贴板权限');
+  };
   const fileManager = useFileManagerName();
   // 「复制绝对路径」要工作空间在磁盘上的位置，scan.project.root 里带着；拿不到时 absolutePath 自己退回相对路径
   const sep = usePathSeparator();
@@ -751,6 +782,7 @@ export function OutputPanel({
                   setArchiving({ items: [item], group: key });
                 }}
                 onConvert={canConvert ? setConverting : undefined}
+                onDeai={(item) => void copyDeai(item)}
                 searching={searching}
                 viewMode={viewMode}
                 pins={pins}

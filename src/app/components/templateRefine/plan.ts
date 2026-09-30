@@ -1,4 +1,13 @@
-import type { DocxCluster, DocxClusterDecision, DocxCollectReport, DocxFmt } from '@/lib/api';
+import type {
+  DocxCluster,
+  DocxClusterDecision,
+  DocxCollectReport,
+  DocxDecisions,
+  DocxFmt,
+  DocxFrontReport,
+  DocxFrontRole,
+  DocxTableRule,
+} from '@/lib/api';
 import { ROLE_LABEL, ROLE_MD, ROLES } from '@/components/templateRefine/roles';
 
 /**
@@ -194,7 +203,7 @@ export function describeProps(props: Partial<Record<PropKey, PropValue | null>>,
  * 第 ④ 步「生成前」的文字规定预览：客户旧文档里有的角色写出决定后的格式，其余标「由通用规范补齐」。
  * 真正落盘的 spec.md 由脚本按合并后的规范生成（数值会带上通用规范补齐的部分），这里只是提前看个大概。
  */
-export function previewSpec(name: string, plans: RolePlan[]): string {
+export function previewSpec(name: string, plans: RolePlan[], front?: FrontPlan | null): string {
   const have = new Map(plans.map((p) => [p.role, p]));
   const rows = ROLES.map((r) => {
     const p = have.get(r.key);
@@ -211,10 +220,91 @@ export function previewSpec(name: string, plans: RolePlan[]): string {
     '| --- | --- | --- | --- |',
     ...rows,
     '',
-    '- 标题里不要手写编号，编号由样式自动生成；最多用到 `####`。',
+    '- 开头唯一的 `#` 是文档标题，`##` 起是一级标题；手写编号、`> [!note]`、句中加粗转换时会自动处理。',
     '- 表题写在表格下方一行 `Table: 表 N 标题`，成品里在表格上方；图题写在图片的方括号里。',
     '',
+    ...previewFront(front),
   ].join('\n');
+}
+
+/* ---------- 前置区（第 ④ 步）：口径镜像 docxkit/decisions.py 的 _validate_front / front.py ---------- */
+
+export const FRONT_ROLE_LABEL: Record<DocxFrontRole, string> = {
+  title: '标题',
+  client: '客户单位',
+  vendor: '编制单位',
+  date: '日期',
+  doctype: '文档类型',
+  keep: '保持原样',
+};
+export const FRONT_ROLES = Object.keys(FRONT_ROLE_LABEL) as DocxFrontRole[];
+
+export const TABLE_RULE_LABEL: Record<DocxTableRule, string> = {
+  keepHeader: '保留表头行，清空其余单元格',
+  keepLabels: '保留首列标签，清空其余单元格',
+  keepHeaderAndLabels: '保留首行和首列',
+  keepAll: '原样保留',
+};
+export const TABLE_RULES = Object.keys(TABLE_RULE_LABEL) as DocxTableRule[];
+
+/** 分节的默认名（decisions.py 的 SECTION_NAME） */
+export const SECTION_NAME: Record<string, string> = {
+  cover: '封面', signoff: '签署页', revisions: '版本跟踪表', toc: '目录', other: '其它',
+};
+
+/** 字段取值顺序（与 spec_md.py 的 FIELD_SOURCE 同一口径） */
+const FIELD_SOURCE: Record<Exclude<DocxFrontRole, 'keep'>, string> = {
+  title: 'front-matter 的 `title` → 开头唯一的 `#` 标题',
+  client: 'front-matter 的 `client` → `project.yaml` 的 `identity.甲方`',
+  vendor: 'front-matter 的 `vendor` → `project.yaml` 的 `identity.承建方`',
+  date: 'front-matter 的 `date` → 转换当天（YYYY年M月）',
+  doctype: 'front-matter 的 `doctype`（没有兜底，随文档而变）',
+};
+
+export interface FrontPlan {
+  disabled: boolean;
+  fields: Record<string, DocxFrontRole>;
+  tables: Record<string, DocxTableRule>;
+  sections: Record<string, string>;
+}
+
+/** 报告的猜测 → 第 ④ 步的初始决定（没写到的字段用 guess，没有 guess 就保持原样） */
+export function initialFront(front: DocxFrontReport): FrontPlan {
+  return {
+    disabled: false,
+    fields: Object.fromEntries(front.fields.map((f) => [f.id, f.guess ?? 'keep'])),
+    tables: Object.fromEntries(front.tables.map((t) => [t.id, t.defaultRule])),
+    sections: Object.fromEntries(front.sections.map((s) => [s.id, SECTION_NAME[s.guess] || '其它'])),
+  };
+}
+
+/** 并进决定 JSON 的 `front` 键；报告里没有前置区时不带 */
+export function frontDecision(plan: FrontPlan | null): DocxDecisions['front'] | undefined {
+  if (!plan) return undefined;
+  if (plan.disabled) return { disabled: true };
+  // 名称留空的节不带：脚本按猜测补默认名（空串会被脚本当成不合法的名称拒绝）
+  const sections = Object.fromEntries(
+    Object.entries(plan.sections).map(([k, v]) => [k, v.trim()]).filter(([, v]) => v),
+  );
+  return { fields: plan.fields, tables: plan.tables, sections };
+}
+
+function previewFront(plan?: FrontPlan | null): string[] {
+  if (!plan || plan.disabled) return [];
+  const roles = (Object.keys(FIELD_SOURCE) as Array<keyof typeof FIELD_SOURCE>)
+    .filter((r) => Object.values(plan.fields).includes(r));
+  const keeps = Object.values(plan.fields).filter((r) => r === 'keep').length;
+  return [
+    '## 封面字段取值',
+    '',
+    `前置区（${Object.values(plan.sections).join('、')}）原样放在正文前面，封面字段按下表取值；都取不到时成品里显示「【待填：…】」。`,
+    '',
+    '| 字段 | 取值顺序 |',
+    '| --- | --- |',
+    ...roles.map((r) => `| ${FRONT_ROLE_LABEL[r]} | ${FIELD_SOURCE[r]} |`),
+    '',
+    ...(keeps ? [`- 有 ${keeps} 段设成了「保持原样」：模板里的原文会出现在每一份成品里。`, ''] : []),
+  ];
 }
 
 export const roleLabel = (role: string | null | undefined) => (role ? ROLE_LABEL[role] || role : '丢弃');

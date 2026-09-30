@@ -82,7 +82,8 @@ export function outputPlacement(relPath) {
 
 /**
  * 可转换条目的不透明键：相对路径（`/` 分隔）的 SHA-256 前 16 位十六进制。
- * 只下发给两类条目：产出三组里的 `.md`（转成 Word 的来源）、`input/raw/` 里的 `.docx`（提炼模板的来源）。
+ * 只下发给三类条目：产出三组里的 `.md`（转成 Word 的来源）、`input/raw/` 里的 `.docx`（提炼模板的来源）、
+ * 交付稿 `output/delivery/<组>/…/v<三位序号>.md`（去 AI 味后的版本，也能转成 Word；由 deai.mjs 的交付稿接口下发）。
  *
  * 写接口只收这个键、**不收路径**（AGENTS.md 不变量 1 第九条第 ④ 款）：
  * 服务端重新走一遍对应目录、在同一类条目里反查出路径，查不到就 400。
@@ -92,18 +93,55 @@ export function docKeyOf(relPath) {
   return createHash('sha256').update(relPath).digest('hex').slice(0, 16);
 }
 
-/** docKey 的两类来源。反查只在对应的那一类里找，产出的键换不来原件的路径，反之亦然。 */
+/** 交付稿目录（去 AI 味）。不进 OUTPUT_GROUPS：不进产出列表、搜索、完整度，只从原稿的阅读器版本条进入 */
+export const DELIVERY_DIR = 'output/delivery';
+/** 交付稿文件名：`v` + 三位序号 */
+export const DELIVERY_FILE_RE = /^v\d{3}\.md$/;
+
+/**
+ * 交付稿路径 ↔ 原稿路径的镜像规则，**只写这一处**（批注落点、交付稿列表都调它）。
+ *
+ * - `output/delivery/<三组之一>/<子路径>/v<三位>.md` → `{ original: 'output/<组>/<子路径>.md', version: 'v002' }`
+ * - 在 `output/delivery/` 下但不合这个形状（组名不对、文件名不对）→ `{ original: null }`，视为没有原稿
+ * - 不在 `output/delivery/` 下 → null
+ *
+ * 只看路径，不读交付稿 front-matter 的 `source`：front-matter 可以手改，落点不该由一个可编辑字段决定。
+ * @param {string} relPath
+ */
+export function deliveryOf(relPath) {
+  const text = String(relPath || '');
+  if (!text.startsWith(`${DELIVERY_DIR}/`)) return null;
+  const parts = text.slice(DELIVERY_DIR.length + 1).split('/');
+  const file = parts.pop();
+  if (parts.length < 2 || !OUTPUT_GROUPS.includes(parts[0]) || !DELIVERY_FILE_RE.test(file || '')
+      || parts.some((p) => !p || p === '.' || p === '..')) {
+    return { original: null };
+  }
+  return { original: `output/${parts.join('/')}.md`, version: file.replace(/\.md$/, '') };
+}
+
+/** 原稿的交付稿目录：`output/docs/a/b.md` → `output/delivery/docs/a/b`。不是产出三组里的 .md 返回 null */
+export function deliveryDirOf(originalRel) {
+  const placement = outputPlacement(originalRel);
+  if (!placement || !/\.md$/i.test(originalRel)) return null;
+  return `${DELIVERY_DIR}/${originalRel.slice('output/'.length).replace(/\.md$/i, '')}`;
+}
+
+/** docKey 的三类来源。反查只在对应的那一类里找，产出的键换不来原件的路径，反之亦然。 */
 const DOC_KEY_KINDS = {
   'output-md': (root) => OUTPUT_GROUPS.flatMap((g) => listFiles(path.join(root, 'output', g)))
     .filter((abs) => path.extname(abs).toLowerCase() === '.md'),
   'raw-docx': (root) => listFiles(path.join(root, 'input', 'raw'))
     .filter((abs) => path.extname(abs).toLowerCase() === '.docx'),
+  // 只收三组镜像目录下的 v<序号>.md；组名不对的（output/delivery/misc/…）不算交付稿
+  'delivery-md': (root) => OUTPUT_GROUPS.flatMap((g) => listFiles(path.join(root, DELIVERY_DIR, g)))
+    .filter((abs) => DELIVERY_FILE_RE.test(path.basename(abs))),
 };
 
 /**
  * 按 docKey 反查工作空间相对路径；查不到返回 null。
  * @param {string} root
- * @param {'output-md' | 'raw-docx'} kind
+ * @param {'output-md' | 'raw-docx' | 'delivery-md'} kind
  * @param {string} key
  */
 export function findDocByKey(root, kind, key) {

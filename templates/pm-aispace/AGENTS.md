@@ -30,6 +30,7 @@ input/  →  （分析）  →  output/  →  visualization/
 | `output/questions/` | 未决问题，**一问一文件** `Q<四位编号>.md`；**和 `analysis/` 平级，不进任何视图的文件列表**，只在看板 ⌘K 弹窗里看和处理 | 走 `pm-open-questions`；字段契约见该目录的 `README.md` |
 | `output/records/` | 产出物记录，**一份产出物一个** `I<四位编号>.md`；和 `analysis/` 平级，**不进任何视图的文件列表**，只在看板 ⌘K 工作台的「记录单」页里看和处理 | 走 `pm-output-record`；字段契约见该目录的 `README.md` |
 | `output/feedback/` | 看板缺陷反馈单，**一份一个** `F<四位编号>.md`。不进文件列表，只在看板 ⌘K 工作台的「反馈单」页里看和发送 | 字段契约见该目录的 `README.md`。见「看板显示不对时」 |
+| `output/delivery/` | 去 AI 味后的交付稿：镜像原稿路径，`v<三位序号>.md` 逐版保存。不进文件列表，只从原稿阅读器的版本条进入 | 只由 `pm-deai-writing` 写，**每一版写出后不再改动**；改交付稿走批注，见下文「交付前去 AI 味」和该目录的 `README.md` |
 | `output/docx-template/` | Word 模板，一个模板一个子目录。不进文件列表，在看板 ⌘K 工作台的「模版洗炼」页里看和提炼 | 只由 `scripts/docx_template.py` 写（看板点按钮时也是启动它），见下文「Word 模板与转 Word」和该目录的 `README.md` |
 | `visualization/references/` | 收下来的**别人的**页面：竞品、友商后台、公开文档站 | **一份参考一个目录，入口必须叫 `index.html`**；这是收来的原样材料，不要改它的内容 |
 | `visualization/prototypes/` | 可预览原型库：Axhub Make 客户端、zip 导出包、自己写的单页 HTML | **一个东西一个子目录，入口必须叫 `index.html`**，见下文 |
@@ -146,6 +147,7 @@ python3 /path/to/aispace-kanban/templates/init_workspace.py \
 | [`skills/pm-list-diff`](skills/pm-list-diff/SKILL.md) | 阶段二之外：两份清单（甲方给的 vs 我方已接入的）交叉比对，产出对外可回填核对件 |
 | [`skills/pm-prd-writing`](skills/pm-prd-writing/SKILL.md) | 阶段三：写 PRD / 需求规格说明书 |
 | [`skills/pm-prototype-brief`](skills/pm-prototype-brief/SKILL.md) | 阶段四：把文档收敛成原型输入，衔接 Axhub Make |
+| [`skills/pm-deai-writing`](skills/pm-deai-writing/SKILL.md) | 交付前：按规则库给文档去 AI 味、出交付稿；按交付稿上的批注改出下一版并同步沉淀规则；规则库体检 |
 | [`skills/pm-env-config`](skills/pm-env-config/SKILL.md) | 用户给了数据库连接、API Key 等环境参数时：写 `.env`、配 `input/sources/*.yaml`、验证能连上 |
 | [`skills/skill-creator`](skills/skill-creator/SKILL.md) | 工作中发现重复套路时，把它固化成新技能 |
 
@@ -422,8 +424,12 @@ python3 scripts/md2docx.py output/docs/方案.md --template 客户甲      # 客
 ```
 
 1. 转之前对照写作规定检查 md：客户模板看 `output/docx-template/<模板名>/spec.md`，通用规范看 `scripts/docxkit/base-spec.json`。
-   要点：标题不要手写编号（编号由样式生成）；最多用到 `####`；表题写在表格**下方**一行 `Table: 表 N 标题`；
-   图题写在 `![图 N 标题](路径)` 的方括号里；文档标题写在 front-matter 的 `title:`。需要改就改 md 的写法，不改内容。
+   要点：文档标题写成开头唯一的 `#`（或 front-matter 的 `title:`），`##` 起是一级标题；标题里的手写编号、
+   `> [!note]` 批注块、句中加粗转换时会自动处理（结果里的 `log` 列出处理了几处）；表题写在表格**下方**一行 `Table: 表 N 标题`；
+   图题写在 `![图 N 标题](路径)` 的方括号里。需要改就改 md 的写法，不改内容。
+   模板带封面（`front.docx`）时，封面的客户单位、编制单位取自 `project.yaml` 的 `identity.甲方` / `identity.承建方`，
+   文档类型要在 md 的 front-matter 写 `doctype:`；转换结果里有「【待填：…】」的提醒就补上再转。
+   **要交付的文档先去 AI 味，转交付稿**（见下一节），不要转原稿。
 2. 同名 `.docx` 已存在时：带生成标记（上次转出来的）才能加 `--overwrite` 覆盖，覆盖会丢掉在 Word 里的修改，先问用户；
    没有标记的（人手改过另存的、客户给的原件）脚本会拒绝 —— **不要删它、不要改名绕过**，问用户怎么处理。
 3. 转完检查：标题编号连续、表格有边框和表头、图片都在；脚本输出里的「注意」（warnings）为空。有缺图等提示就先修 md 再转。
@@ -450,6 +456,21 @@ python3 scripts/docx_template.py build --name 客户甲 --source input/raw/客�
 （源码在 <https://github.com/STArtppt/aispace-kanban>），别的文件不要动。
 
 `output/docx-template/` 里是客户的版式材料，不要贴进反馈单或任何公开的地方。
+
+## 交付前去 AI 味
+
+AI 起草的文档读着像 AI 写的：逐句挂「（依据：…）」、句中零散加粗、「赋能」「闭环」、排比三连、段尾再总结一遍。
+**要发给客户的文档，先去味、出交付稿**，再转 Word。做法全在技能 [`skills/pm-deai-writing`](skills/pm-deai-writing/SKILL.md)：
+
+- **去味**：按规则库（`.claude/skills/pm-deai-writing/rules/rules.md`，带版本）把原稿改写成交付稿，
+  写到 `output/delivery/<原稿路径去掉 .md>/v<序号>.md`。**原稿一个字节都不动**，事实、数字不变。
+- **改交付稿走批注**：人在看板上对某一版交付稿写批注、复制提示词给你；你改出**下一版**（不改那一版本身），
+  同一轮把能推广的写法偏好沉淀进规则库（规则库只升一个版本、写快照和 CHANGELOG），回执里写「沉淀为 R0xx（规则库 vN）」。
+- **体检**：规则库攒多了，查重复、冲突、长期零命中，只给建议。
+- 转 Word 时选交付稿；成品落在交付稿旁边。
+
+旧工作空间没有这个技能：从看板仓库的 `templates/pm-aispace/.claude/skills/pm-deai-writing/` 整个目录复制过来，
+再建一个空的 `output/delivery/`（带 README），别的文件不要动。
 
 ## 阶段四：视觉呈现
 
@@ -522,6 +543,7 @@ Axhub Make 服务端是**后台常驻服务，不在本项目里启动**，也�
 | `output/records/` | 语法管；字段以该目录 README 为准 | 产出物记录有自己的字段契约（含按 `kind` 分化的三套状态机），扁平约束与这里是同一条 |
 | `output/records/notes/` | 语法管；格式以 `output/records/README.md` 的「批注」为准 | 一份产出物一份批注文件。看板整条追加，agent 只改 `- 状态：` 与 `- 回执：` |
 | `output/feedback/` | 语法管；字段以该目录 README 为准 | 看板缺陷反馈单。智能体写内容和回执，不改 `sent_at` 与发送记录 |
+| `output/delivery/` | **管**；front-matter **必填且扁平**，字段以该目录 README 为准 | 交付稿。看板靠 `source_sha` / `body_sha` 判断原稿是否更新、是否被直接改过 |
 | `output/docx-template/` | `spec.md` 语法管、front-matter 不强制 | 模板的文字规定。其余是 json / docx，不走这一节 |
 | 各目录下的 `README.md` | 语法管、front-matter **不强制** | 目录说明，不是分析产物 |
 | `input/converted/` | **不管** | 由转换脚本生成，重跑即覆盖；要改形态就改脚本 |

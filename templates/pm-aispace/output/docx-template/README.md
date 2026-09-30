@@ -24,9 +24,17 @@ output/docx-template/<模板名>/
                     按「通用规范 + 客户差异」重建样式。它**不是**客户原件
   spec.md           写给写 md 的人（和 AI）看的文字规定：每个角色 md 怎么写、成品长什么样，
                     客户原文没有、由通用规范补齐的角色逐条标出
-  sample.docx       合成样张（scripts/docxkit/sample.md）按这个模板转出的效果。生成时本机没有 pandoc 就没有它
-  cover.docx        可选，封面。本期不生成
+  sample.docx       合成样张（scripts/docxkit/sample.md）按这个模板转出的效果。生成时本机没有 pandoc 就没有它；
+                    有前置区时样张前几页是封面、签署页、目录
+  front.docx        可选，前置区骨架：旧文档正文之前的封面、签署页、版本跟踪表、目录。
+                    封面上映射成字段的段落写的是占位符 {{title}} 这类（原文不留），签署页和版本表只剩空格子，
+                    目录只留 Word 的目录域。提炼第 ④ 步勾「不要前置区」、或旧文档没有前置区时不写
 ```
+
+有 `front.docx` 的模板，转出来的成品 = 前置区 + 正文。封面字段依次取自 md 的 front-matter（`title` / `client` / `vendor` /
+`date` / `doctype`）→ 开头唯一的 `#` 标题（只用于标题）→ `project.yaml` 的 `identity.甲方` / `identity.承建方` →
+转换当天的「YYYY年M月」（只用于日期）；都取不到的显示「【待填：…】」，转换结果里会提醒。字段映射与表格清空规则记在
+`profile.json` 的 `front` 段。已有模板要带上前置区，在看板里「重新提炼」一次。
 
 `<模板名>` 是一层目录名：不以 `.` 开头，不含 `/ \ : * ? " < > |` 和 `..`。
 
@@ -42,6 +50,6 @@ python3 scripts/md2docx.py output/docs/方案.md --template <模板名>
 
 ## 别把这些文件外传
 
-`collect/`、`profile.json`、`reference.docx`、`sample.docx` 里是客户的版式材料（页眉、单位名称、字体、页面设置）。
+`collect/`、`profile.json`、`reference.docx`、`front.docx`、`sample.docx` 里是客户的版式材料（页眉、单位名称、字体、页面设置）。
 这个目录随工作空间留在本机：不要贴进反馈单、提交说明或公开仓库。
 反馈单里的最小复现一律用合成内容。

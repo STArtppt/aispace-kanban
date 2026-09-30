@@ -9,7 +9,13 @@
         "c2": {"merge": "c1"},            # 并入另一簇（跟随它的角色）
         "c8": {"drop": true}              # 丢弃（目录项、封面残留等）
       },
-      "choices": {"BodyText.line": 1.5}   # 同一角色格式不一致时选定的值；没写就取段数多的
+      "choices": {"BodyText.line": 1.5},  # 同一角色格式不一致时选定的值；没写就取段数多的
+      "front": {                          # 前置区（报告里 front 不为空时才有意义），见 front.py
+        "disabled": false,                # true = 不要前置区，不写 front.docx
+        "fields": {"f1": "title", "f3": "keep"},   # 字段 → title / client / vendor / date / doctype / keep；没写的用 guess
+        "tables": {"t1": "keepLabels"},    # 表 → keepHeader / keepLabels / keepHeaderAndLabels / keepAll；没写的用 defaultRule
+        "sections": {"s1": "封面"}          # 分节改名（只影响 spec.md 与 profile.json 里的显示）
+      }
     }
 
 决定里**不允许出现路径**：键名带 path / file / dir / url 一律拒绝，字符串值里有路径分隔符也拒绝。
@@ -55,7 +61,7 @@ def validate(dec, report: dict) -> dict:
     if not isinstance(dec, dict):
         raise DecisionError("决定必须是一个 JSON 对象")
     _scan_forbidden(dec)
-    unknown = set(dec) - {"schema", "clusters", "choices"}
+    unknown = set(dec) - {"schema", "clusters", "choices", "front"}
     if unknown:
         raise DecisionError(f"决定里有不认识的字段：{', '.join(sorted(unknown))}")
     ids = {c["id"] for c in report["clusters"]}
@@ -83,7 +89,56 @@ def validate(dec, report: dict) -> dict:
         role, _, prop = key.partition(".")
         if role not in ROLES or prop not in props_of(role):
             raise DecisionError(f"choices 的键 {key!r} 应写成「角色.属性」")
-    return {"clusters": clusters, "choices": choices}
+    return {"clusters": clusters, "choices": choices, "front": _validate_front(dec.get("front"), report.get("front"))}
+
+
+def _validate_front(fd, rf) -> dict:
+    """前置区决定 → 规范化后的完整决定（没写到的字段、表格按报告的猜测补齐）。报告里没有前置区时一律视为不要。"""
+    from .front import FIELD_CHOICES, TABLE_RULES
+
+    if fd is None:
+        fd = {}
+    if not isinstance(fd, dict):
+        raise DecisionError("front 必须是对象")
+    unknown = set(fd) - {"disabled", "fields", "tables", "sections"}
+    if unknown:
+        raise DecisionError(f"front 里有不认识的字段：{', '.join(sorted(unknown))}")
+    if "disabled" in fd and not isinstance(fd["disabled"], bool):
+        raise DecisionError("front.disabled 只能是 true / false")
+    if not rf or fd.get("disabled"):
+        return {"disabled": True}
+    parts = {"fields": ({f["id"]: f for f in rf["fields"]}, FIELD_CHOICES),
+             "tables": ({t["id"]: t for t in rf["tables"]}, TABLE_RULES),
+             "sections": ({s["id"]: s for s in rf["sections"]}, None)}
+    out = {"disabled": False}
+    for key, (known, allowed) in parts.items():
+        got = fd.get(key) or {}
+        if not isinstance(got, dict):
+            raise DecisionError(f"front.{key} 必须是对象")
+        for k, v in got.items():
+            if k not in known:
+                raise DecisionError(f"采集报告的前置区里没有 {k}（报告可能已重新采集，请回到第 ② 步）")
+            if allowed is not None and v not in allowed:
+                raise DecisionError(f"front.{key}.{k} 的取值 {v!r} 不认识")
+            if allowed is None and (not isinstance(v, str) or not v.strip() or len(v) > 20):
+                raise DecisionError(f"front.sections.{k} 的名称要是 1–20 字的文字")
+    out["fields"] = {i: (fd.get("fields") or {}).get(i, f["guess"] or "keep") for i, f in parts["fields"][0].items()}
+    out["tables"] = {i: (fd.get("tables") or {}).get(i, t["defaultRule"]) for i, t in parts["tables"][0].items()}
+    out["sections"] = {i: (fd.get("sections") or {}).get(i, SECTION_NAME.get(s["guess"], "其它"))
+                       for i, s in parts["sections"][0].items()}
+    return out
+
+
+SECTION_NAME = {"cover": "封面", "signoff": "签署页", "revisions": "版本跟踪表", "toc": "目录", "other": "其它"}
+
+
+def front_profile(fd: dict) -> dict | None:
+    """profile.json 的 front 段：字段映射、表格清空规则、分节名。不要前置区时为 None（profile 里不出现 front）。"""
+    if fd.get("disabled"):
+        return None
+    return {"_about": "前置区（封面 / 签署页 / 版本跟踪表 / 目录）的骨架在 front.docx；fields 是字段 → 角色（keep = 保持原样），"
+                      "tables 是表格清空规则。转换时封面字段依次取自 md front-matter → 文档标题 → project.yaml → 当天日期。",
+            "fields": fd["fields"], "tables": fd["tables"], "sections": fd["sections"]}
 
 
 def role_map(report: dict, dec: dict) -> dict:

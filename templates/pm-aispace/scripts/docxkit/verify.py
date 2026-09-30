@@ -21,14 +21,18 @@ PROP_LABEL = {"eastAsia": "中文字体", "ascii": "西文字体", "size": "字�
               "firstLineChars": "首行缩进(字符)", "line": "行距"}
 
 
-def verify(docx: Path, spec: dict) -> tuple[list[str], dict]:
-    """返回 (warnings, 明细)。明细：角色 → {prop: [期望, 实际]}，只列不一致的。"""
+def verify(docx: Path, spec: dict, skip: tuple[str, ...] = ()) -> tuple[list[str], dict]:
+    """返回 (warnings, 明细)。明细：角色 → {prop: [期望, 实际]}，只列不一致的。
+
+    skip：不核对的角色。模板有前置区时文档标题填在封面上，样张里没有 Title 段。"""
     _, paras = collect(docx)
     warnings, detail = [], {}
     missing = Counter(p["styleId"] for p in paras if p.get("styleMissing") and p["len"])
     for sid, n in missing.items():
         warnings.append(f"样张用到了参照模板里没有定义的样式 {sid}（{n} 段），这些段落会按 Normal 显示")
     for role in CHECK_ROLES:
+        if role in skip:
+            continue
         if role == "Table":
             ps = [p for p in paras if p["inTable"] and p["len"]]
             props = [k for k in CHECK_PROPS if k not in ("jc", "bold")]  # 列对齐与表头加粗由表格自己决定

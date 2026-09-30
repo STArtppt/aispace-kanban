@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type NoteHistory, type NoteHistoryBatch, type NoteHistoryItem, type NoteSaveResult } from '@/lib/api';
+import { deliveryOf } from '@/lib/deaiPrompt';
 
 /**
  * 一篇文档上已经落盘的批注。工作空间的批注文件和看板缓存合并在同一份列表里。
@@ -73,11 +74,12 @@ export function useNoteHistory(projectId: string, file: string) {
       if (!id) {
         throw new Error('这份文件还没有产出物记录，不能写入批注文件。');
       }
-      const data = await api.saveNotes(projectId, id, notes);
+      // 交付稿：批注落到原稿记录的批注文件里，请求只多带版本号（v002），对象路径由服务端拼
+      const data = await api.saveNotes(projectId, id, notes, deliveryOf(file)?.version);
       await load();
       return data;
     },
-    [load, projectId],
+    [load, projectId, file],
   );
 
   const clear = useCallback(async () => {

@@ -16,7 +16,7 @@ import sys
 
 # 写进生成标记与结果 JSON。改了生成逻辑（样式、后处理）就升一位，
 # 看板靠它提示「工作空间里的脚本比看板自带的旧」。
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 EXIT_OK, EXIT_FAIL, EXIT_ARGS, EXIT_CONFLICT, EXIT_DEPENDENCY = 0, 1, 2, 3, 4
 

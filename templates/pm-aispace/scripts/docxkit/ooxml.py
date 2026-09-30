@@ -59,7 +59,9 @@ class Package:
         return self.files[part].decode("utf-8")
 
     def set_text(self, part: str, s: str) -> None:
-        if part not in self.files:
+        # remove() 只删内容不删顺序：删了再加回来的部件（前置区切出时的 custom.xml）不能在顺序表里出现两次，
+        # 否则 zip 里会有两个同名条目，Word 会报文件损坏
+        if part not in self.order:
             self.order.append(part)
         self.files[part] = s.encode("utf-8")
 
@@ -72,7 +74,7 @@ class Package:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
             # [Content_Types].xml 放第一个，部分阅读器按顺序识别
-            names = [n for n in self.order if n in self.files]
+            names = [n for n in dict.fromkeys(self.order) if n in self.files]
             names.sort(key=lambda n: n != "[Content_Types].xml")
             for n in names:
                 z.writestr(n, self.files[n])
@@ -141,3 +143,29 @@ def marker_of(path: Path) -> str | None:
         return None
     m = re.search(r'name="%s"[^>]*>\s*<vt:lpwstr>([^<]*)</vt:lpwstr>' % re.escape(MARKER), x)
     return m.group(1) if m else None
+
+
+def heading_numbered(pkg: Package) -> bool:
+    """`heading 1` 样式（沿 basedOn 链）上有没有挂自动编号。有才剥 md 标题里的手写编号，没有就保留原样。"""
+    try:
+        styles = pkg.text("word/styles.xml")
+    except KeyError:
+        return False
+    blocks = {}
+    by_name = {}
+    for b in re.findall(r"<w:style\b.*?</w:style>", styles, re.S):
+        sid = re.search(r'w:styleId="([^"]+)"', b)
+        name = re.search(r'<w:name w:val="([^"]+)"', b)
+        if sid:
+            blocks[sid.group(1)] = b
+            if name:
+                by_name[name.group(1).lower()] = sid.group(1)
+    sid, seen = by_name.get("heading 1"), set()
+    while sid and sid in blocks and sid not in seen:
+        seen.add(sid)
+        m = re.search(r'<w:numId w:val="(\d+)"', blocks[sid])
+        if m:
+            return m.group(1) != "0"
+        based = re.search(r'<w:basedOn w:val="([^"]+)"', blocks[sid])
+        sid = based.group(1) if based else None
+    return False

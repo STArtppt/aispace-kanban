@@ -14,13 +14,13 @@ import { cn } from '@/lib/utils';
  * 写盘只经服务端 spawn 工作空间的 `scripts/docx_template.py`（AGENTS.md 不变量 1 第九条），看板自己不写。
  */
 
-const PART_LABEL: { key: 'collect' | 'profile' | 'reference' | 'spec' | 'sample' | 'cover'; label: string; note: string }[] = [
+const PART_LABEL: { key: 'collect' | 'profile' | 'reference' | 'spec' | 'sample' | 'front'; label: string; note: string }[] = [
   { key: 'collect', label: 'collect/', note: '采集报告，不含正文' },
   { key: 'profile', label: 'profile.json', note: '相对通用规范的客户差异' },
   { key: 'reference', label: 'reference.docx', note: '清洗、重建样式后的参照模板（不是客户原件）' },
   { key: 'spec', label: 'spec.md', note: '写给写 md 的人看的文字规定' },
   { key: 'sample', label: 'sample.docx', note: '合成样张的转换效果' },
-  { key: 'cover', label: 'cover.docx', note: '封面（本期不生成）' },
+  { key: 'front', label: 'front.docx', note: '前置区骨架（封面 / 签署页 / 版本表 / 目录），可选' },
 ];
 
 const isGenerated = (t: DocxTemplateItem) => t.generated ?? Boolean(t.files?.reference?.exists);
@@ -252,6 +252,7 @@ function Detail({
           {detail.source ? ` · 来源 ${detail.source}` : ''}
           {detail.mtime ? ` · ${formatRelative(detail.mtime)}` : ''}
         </p>
+        {generated && detail.files?.front ? <FrontLine detail={detail} /> : null}
       </div>
       <div className="flex flex-wrap gap-2">
         {generated ? (
@@ -292,6 +293,8 @@ function Detail({
       <ul className="flex flex-col gap-1 text-xs">
         {PART_LABEL.map(({ key, label, note }) => {
           const part = detail.files?.[key];
+          // 旧服务不报 front.docx：整行不显示，免得把「服务不认识」说成「缺」
+          if (key === 'front' && !part) return null;
           return (
             <li key={key} className="flex gap-3">
               <span className="w-32 shrink-0 font-mono">{label}</span>
@@ -307,5 +310,22 @@ function Detail({
         detail.spec ? <Markdown>{detail.spec}</Markdown> : <p className="text-xs text-muted-foreground">没有 spec.md。</p>
       ) : null}
     </div>
+  );
+}
+
+/** 概要里的「前置区」一行：有没有、几个字段写成了占位符 */
+function FrontLine({ detail }: { detail: DocxTemplateItem }) {
+  if (!detail.files?.front?.exists) {
+    return <p className="text-xs text-muted-foreground">前置区：无（成品只有正文）</p>;
+  }
+  const roles = Object.values(detail.front?.fields ?? {});
+  const mapped = roles.filter((r) => r !== 'keep').length;
+  const sections = Object.values(detail.front?.sections ?? {});
+  return (
+    <p className="text-xs text-muted-foreground">
+      前置区：有{sections.length ? `（${sections.join('、')}）` : ''}
+      {detail.front ? ` · ${mapped} 个字段转换时填值` : ''}
+      {roles.length - mapped > 0 ? `，${roles.length - mapped} 段保持原样` : ''}
+    </p>
   );
 }

@@ -16,6 +16,9 @@ import {
   type DocxCluster,
   type DocxClusterDecision,
   type DocxCollectReport,
+  type DocxFrontReport,
+  type DocxFrontRole,
+  type DocxTableRule,
   type DocxTemplateDetail,
   type FileItem,
 } from '@/lib/api';
@@ -24,7 +27,14 @@ import { cn } from '@/lib/utils';
 import {
   describeProps,
   formatValue,
+  FRONT_ROLE_LABEL,
+  FRONT_ROLES,
+  frontDecision,
+  initialFront,
   planRoles,
+  TABLE_RULE_LABEL,
+  TABLE_RULES,
+  type FrontPlan,
   PROP_LABEL,
   propValues,
   roleLabel,
@@ -117,6 +127,8 @@ export function RefineWizard({
   const [dirOwned, setDirOwned] = useState(Boolean(init.report));
   const [decisions, setDecisions] = useState<Record<string, DocxClusterDecision>>({});
   const [choices, setChoices] = useState<Record<string, PropValue>>({});
+  // 第 ④ 步的前置区确认；报告里没有前置区（或旧脚本采的报告）时为 null，不出现这一块
+  const [front, setFront] = useState<FrontPlan | null>(() => (init.report?.front ? initialFront(init.report.front) : null));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ErrorState>(null);
   const [built, setBuilt] = useState<{ result: DocxBuildResult; detail: DocxTemplateDetail | null } | null>(null);
@@ -148,6 +160,7 @@ export function RefineWizard({
       setReport(detail.report);
       setDecisions({});
       setChoices({});
+      setFront(detail.report.front ? initialFront(detail.report.front) : null);
       setBuilt(null);
     } catch (err) {
       setError(describeError(err, '提炼'));
@@ -166,7 +179,7 @@ export function RefineWizard({
       const picked = Object.fromEntries(conflicts.filter((c) => c.key in choices).map((c) => [c.key, c.chosen]));
       const result = await api.docxBuild(projectId, name, {
         docKey: sourceKey,
-        decisions: { schema: 1, clusters: decisions, choices: picked },
+        decisions: { schema: 1, clusters: decisions, choices: picked, ...(front ? { front: frontDecision(front) } : {}) },
         regenerate: regenerate || existing.get(name) === true,
       });
       const detail = await api.docxTemplate(projectId, name).catch(() => null);
@@ -355,6 +368,18 @@ export function RefineWizard({
           </div>
           {writeBlocked && !error ? <p className="text-xs text-muted-foreground">{writeBlocked}。</p> : null}
           {errorLine}
+          {report.front && front ? (
+            <FrontSection
+              projectId={projectId}
+              sourcePath={sourcePath}
+              report={report.front}
+              plan={front}
+              onChange={(next) => {
+                setFront(next);
+                setBuilt(null);
+              }}
+            />
+          ) : null}
           {built ? (
             <div className="flex flex-col gap-2 text-xs">
               {(built.result.warnings ?? []).length ? (
@@ -377,7 +402,7 @@ export function RefineWizard({
               mtime={built.detail.files?.sample?.mtime || ''}
             />
           ) : null}
-          <Markdown>{built?.detail?.spec || previewSpec(name, plans)}</Markdown>
+          <Markdown>{built?.detail?.spec || previewSpec(name, plans, front)}</Markdown>
         </div>
       ) : null}
 
@@ -586,5 +611,135 @@ function OutlineTree({
         })}
       </ul>
     </div>
+  );
+}
+
+const JC_TEXT: Record<string, string> = { left: '左对齐', center: '居中', both: '两端对齐', right: '右对齐' };
+
+/**
+ * 第 ④ 步的「前置区」确认：左边是来源文档本身（它就在 input/raw/，看板本来就能预览），右边是报告里的结构。
+ * 报告不含文字，所以字段只按「第几节第几段、几个字、多大字号」列出来，对照左边的原件认。
+ */
+function FrontSection({
+  projectId,
+  sourcePath,
+  report,
+  plan,
+  onChange,
+}: {
+  projectId: string;
+  sourcePath: string;
+  report: DocxFrontReport;
+  plan: FrontPlan;
+  onChange: (plan: FrontPlan) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const setField = (id: string, role: DocxFrontRole) => onChange({ ...plan, fields: { ...plan.fields, [id]: role } });
+  const setTable = (id: string, rule: DocxTableRule) => onChange({ ...plan, tables: { ...plan.tables, [id]: rule } });
+  const setName = (id: string, value: string) => onChange({ ...plan, sections: { ...plan.sections, [id]: value } });
+  return (
+    <section className="rounded-lg border border-border">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-2">
+        <button type="button" className="text-sm font-medium" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          前置区 · {report.sections.length} 节{open ? '' : '（已收起）'}
+        </button>
+        <label className="flex items-center gap-2 text-xs">
+          <span>不要前置区</span>
+          <Switch aria-label="不要前置区" checked={plan.disabled} onCheckedChange={(v) => onChange({ ...plan, disabled: v })} />
+        </label>
+      </div>
+      {plan.disabled ? (
+        <p className="px-3 py-2 text-xs text-muted-foreground">不写 front.docx：转出来的成品只有正文，与没有前置区的模板一样。</p>
+      ) : open ? (
+        <div className="grid gap-3 p-3 lg:grid-cols-2">
+          {/* 纸张比这一栏宽：可滚动，别把封面右半边裁掉 */}
+          <div className="max-h-[36rem] min-h-80 overflow-auto rounded-md border border-border">
+            <DocxView projectId={projectId} path={sourcePath} title={sourcePath.split('/').pop() || sourcePath} size={0} mtime="" />
+          </div>
+          <div className="flex flex-col gap-4 text-xs">
+            <p className="text-muted-foreground">
+              对照左边的原件，把封面上的每一段标成对应的字段：转换时换成这份文档的信息，模板原文不留在模板包里。
+              签署页、版本表只清空样例数据，目录保留为 Word 的目录域。
+            </p>
+            {report.sections.map((sec) => {
+              const fields = report.fields.filter((f) => f.section === sec.index);
+              const tables = report.tables.filter((t) => t.section === sec.index);
+              return (
+                <div key={sec.id} className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-muted-foreground">第 {sec.index + 1} 节</span>
+                    <Input
+                      aria-label={`第 ${sec.index + 1} 节的名称`}
+                      className="h-7 w-32 text-xs"
+                      maxLength={20}
+                      value={plan.sections[sec.id] ?? ''}
+                      onChange={(e) => setName(sec.id, e.target.value)}
+                    />
+                    <span className="text-muted-foreground">
+                      {[sec.hasImage ? '有图片' : '', sec.hasToc ? '目录域' : ''].filter(Boolean).join(' · ')}
+                    </span>
+                  </div>
+                  {fields.map((f) => {
+                    const role = plan.fields[f.id] ?? 'keep';
+                    return (
+                      <div key={f.id} className="flex flex-wrap items-center gap-2 pl-3">
+                        <span className="w-44 shrink-0">
+                          第 {f.order} 段 · {f.chars} 字
+                          <span className="block text-muted-foreground">
+                            {[
+                              f.size ? `${f.size}pt` : '',
+                              f.bold ? '加粗' : '',
+                              JC_TEXT[f.jc] || f.jc,
+                              f.inTextbox ? `文本框${f.occurrences > 1 ? `（${f.occurrences} 份）` : ''}` : '',
+                              f.labeled ? '带标签，只换冒号后面' : '',
+                            ].filter(Boolean).join(' · ')}
+                          </span>
+                        </span>
+                        <select
+                          aria-label={`第 ${sec.index + 1} 节第 ${f.order} 段的字段`}
+                          className={SELECT}
+                          value={role}
+                          onChange={(e) => setField(f.id, e.target.value as DocxFrontRole)}
+                        >
+                          {FRONT_ROLES.map((r) => (
+                            <option key={r} value={r}>{FRONT_ROLE_LABEL[r]}</option>
+                          ))}
+                        </select>
+                        {role === 'keep' ? (
+                          <span className="text-destructive">这段原文会出现在每一份成品里</span>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                  {tables.map((t) => (
+                    <div key={t.id} className="flex flex-wrap items-center gap-2 pl-3">
+                      <span className="w-44 shrink-0">
+                        表格 · {t.rows} 行 × {t.cols} 列
+                        <span className="block text-muted-foreground">
+                          {[t.labelColumn ? '首列像标签' : '', t.headerLike ? '首行像表头' : ''].filter(Boolean).join(' · ') || '看不出结构'}
+                        </span>
+                      </span>
+                      <select
+                        aria-label={`第 ${sec.index + 1} 节表格的清空规则`}
+                        className={cn(SELECT, 'max-w-56')}
+                        value={plan.tables[t.id] ?? t.defaultRule}
+                        onChange={(e) => setTable(t.id, e.target.value as DocxTableRule)}
+                      >
+                        {TABLE_RULES.map((r) => (
+                          <option key={r} value={r}>{TABLE_RULE_LABEL[r]}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                  {!fields.length && !tables.length ? (
+                    <p className="pl-3 text-muted-foreground">{sec.hasToc ? '目录：保留域，清掉样例目录项，打开时更新。' : '没有可设置的内容，原样保留。'}</p>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
+    </section>
   );
 }

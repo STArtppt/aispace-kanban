@@ -10,10 +10,14 @@ import { docKeyOf } from './scan.mjs';
 
 export const DOCX_TEMPLATE_DIR = 'output/docx-template';
 
-/** 一个模板目录里约定的六样。`collect` 是目录，其余是文件。 */
+/**
+ * 一个模板目录里约定的几样。`collect` 是目录，其余是文件。
+ * `front.docx` 是前置区骨架（封面 / 签署页 / 版本表 / 目录）；`cover` 是早先预留的键，留一版不删（前端可能还在读）。
+ */
 const PARTS = [
   { key: 'profile', name: 'profile.json', dir: false },
   { key: 'reference', name: 'reference.docx', dir: false },
+  { key: 'front', name: 'front.docx', dir: false },
   { key: 'cover', name: 'cover.docx', dir: false },
   { key: 'spec', name: 'spec.md', dir: false },
   { key: 'collect', name: 'collect', dir: true },
@@ -63,6 +67,16 @@ function statPart(dirAbs, part) {
   }
 }
 
+/** profile.json 的 front 段（字段映射、表格清空规则、分节名）；没有或读不了返回 null */
+function readProfileFront(root, relDir) {
+  try {
+    const front = JSON.parse(fs.readFileSync(resolveInside(root, `${relDir}/profile.json`), 'utf8')).front;
+    return front && typeof front === 'object' && !Array.isArray(front) ? front : null;
+  } catch {
+    return null;
+  }
+}
+
 function describeDir(root, name) {
   const relPath = `${DOCX_TEMPLATE_DIR}/${name}`;
   const abs = resolveInside(root, relPath);
@@ -78,6 +92,9 @@ function describeDir(root, name) {
     // 有 reference.docx 才算「已生成」：只采集过的目录能继续做，但不能拿来转 Word
     generated: files.reference.exists,
   };
+  // 前置区：有 front.docx 才算「带前置区」；映射摘自 profile.json#front，概要里显示「前置区 · N 个字段」
+  const front = files.front.exists && files.profile.exists ? readProfileFront(root, relPath) : null;
+  if (front) item.front = front;
   // 来源：采集报告里记的工作空间相对路径。给出 docKey，「继续」「重新提炼」才能不收路径地接着做
   const report = files.collect.exists ? readReport(root, relPath) : null;
   if (report && typeof report.source === 'string') {

@@ -5,5 +5,10 @@
     "c11": {"drop": true},
     "c13": {"merge": "c1"}
   },
-  "choices": {"BodyText.line": 1.5}
+  "choices": {"BodyText.line": 1.5},
+  "front": {
+    "fields": {"f5": "keep"},
+    "tables": {"t2": "keepHeader"},
+    "sections": {"s1": "封面"}
+  }
 }

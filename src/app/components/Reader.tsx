@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import Papa from 'papaparse';
 import {
   ArrowLeft,
@@ -32,6 +32,8 @@ import { AnnotationLayer } from '@/components/AnnotationLayer';
 import { AnnotationToolbar } from '@/components/AnnotationToolbar';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { CodeFileView, codePreviewLabel, codePreviewLanguage } from '@/components/CodeFileView';
+import { DeliveryBar, DeliveryDiff, useDeliveryVersions, type CompareMode } from '@/components/DeliveryBar';
+import { DocxExportDialog } from '@/components/DocxExportDialog';
 import { DocxView } from '@/components/DocxView';
 import {
   DocumentToc,
@@ -57,6 +59,7 @@ import { collectBlocks, createSearchJumper, type SearchJumper } from '@/lib/bloc
 import { queryTokens, searchBlocks, toSnippetParts } from '@/lib/fuzzySearch';
 import { shouldPassthroughUrl } from '@/lib/markdownUrls';
 import { utf8Len } from '@/lib/sourceAnchor';
+import { deliveryDirOf, nextVersion } from '@/lib/deaiPrompt';
 import {
   api,
   ApiError,
@@ -944,18 +947,7 @@ function isGallery(item: FileItem): item is AssetGroup {
   return 'images' in item;
 }
 
-export function Reader({
-  projectId,
-  item,
-  onClose,
-  expanded = false,
-  onToggleExpand,
-  canIngest,
-  ingest,
-  pathSet = EMPTY_PATHS,
-  onOpenPath,
-  onBack,
-}: {
+interface ReaderProps {
   projectId: string;
   item: FileItem;
   onClose: () => void;
@@ -976,7 +968,38 @@ export function Reader({
   canIngest?: boolean;
   /** 与待转换列表共用的转换任务；不传则溯源栏只有「校验原件」 */
   ingest?: IngestControl;
-}) {
+}
+
+interface ReaderBodyExtras {
+  /** 顶栏下面的一条（交付稿版本条）。不给就没有 */
+  topBar?: ReactNode;
+  /** 给了就替换掉正文区（交付稿对比视图） */
+  replaceBody?: ReactNode;
+  /** 每变一次就打开批注模式（版本条上的「批注」） */
+  annotateSignal?: number;
+  /** 正在看某一版交付稿：批注提示词换成「改出下一版 + 同步沉淀」 */
+  delivery?: { version: string; nextPath: string; rulesVersion?: number };
+  /** 批注回执里的沉淀标签被点中：跳到工作台里这条规则 */
+  onOpenDeaiRule?: (rule: string) => void;
+}
+
+function ReaderBody({
+  projectId,
+  item,
+  onClose,
+  expanded = false,
+  onToggleExpand,
+  canIngest,
+  ingest,
+  pathSet = EMPTY_PATHS,
+  onOpenPath,
+  onBack,
+  topBar,
+  replaceBody,
+  annotateSignal = 0,
+  delivery,
+  onOpenDeaiRule,
+}: ReaderProps & ReaderBodyExtras) {
   const fileManager = useFileManagerName();
   // 清单和预览共用一份收藏状态：点这里立刻反映到对应列表的置顶
   const { pins, togglePin } = usePins(projectId);
@@ -1065,6 +1088,9 @@ export function Reader({
     // 只跟 path：用户手动收起后，不要因为 notesDirty 还是 true 又被拉开
     setAnnotating(isDocumentChanged(annotations.seenMtime, item.mtime, annotations.notes.length));
   }, [item.path]);
+  useEffect(() => {
+    if (annotateSignal) setAnnotating(true);
+  }, [annotateSignal, setAnnotating]);
   const annotateLabel = annotate.active
     ? '收起批注'
     : annotations.notes.length
@@ -1346,11 +1372,17 @@ export function Reader({
         </div>
       </header>
 
+      {topBar}
+
       {/*
         带目录的文档面：markdown 正文，以及表格包的「摘要」页。
         目录 absolute 贴预览右缘：展开/收起时位置固定，不参与 flex 分宽（避免左右摇摆）
       */}
-      {mode === 'markdown' ? (
+      {replaceBody ? (
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
+          <div className="mx-auto w-full max-w-[76ch]">{replaceBody}</div>
+        </div>
+      ) : mode === 'markdown' ? (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             {previewToolbar}
             <div
@@ -1425,6 +1457,8 @@ export function Reader({
               session={annotate}
               onRemove={annotations.remove}
               onClear={annotations.clear}
+              delivery={delivery}
+              onOpenDeaiRule={onOpenDeaiRule}
             />
         </div>
       ) : tablePackage ? (
@@ -1710,5 +1744,126 @@ export function Reader({
         </div>
       )}
     </aside>
+  );
+}
+
+/** 产出三组里的 .md 才可能有交付稿（交付稿目录镜像原稿路径） */
+const DELIVERY_SOURCE_RE = /^output\/(analysis|docs|decisions)\/.+\.md$/i;
+
+/**
+ * 预览区。外面这一层只管去 AI 味的交付稿：原稿有交付稿时在顶栏下显示版本条，
+ * 切到某一版就把那一版当成一份 .md 交给 ReaderBody（批注、目录、搜索都照常），
+ * 选了对比就用对比视图替换正文。没有交付稿、旧服务进程（接口 404）、工作空间目录丢失时，
+ * 与改动前完全一样。
+ */
+export function Reader({
+  workspaceAvailable = true,
+  refreshToken,
+  deliveryFocus,
+  onOpenDeaiRule,
+  ...props
+}: ReaderProps & {
+  /** 工作空间目录丢失（`available === false`）时不请求交付稿接口 */
+  workspaceAvailable?: boolean;
+  /** SSE 变化令牌：交付稿目录有新版本时重拉 */
+  refreshToken?: unknown;
+  /** 从工作台跳进来：选中原稿 source 的某一版，并打开批注清单 */
+  deliveryFocus?: { source: string; version: string; seq: number } | null;
+  onOpenDeaiRule?: (rule: string) => void;
+}) {
+  const { projectId, item } = props;
+  const eligible = workspaceAvailable && Boolean(item.docKey) && DELIVERY_SOURCE_RE.test(item.path);
+  const list = useDeliveryVersions(projectId, eligible ? item.docKey : undefined, refreshToken);
+  const versions = list?.source === item.path ? list.versions : [];
+  const [selected, setSelected] = useState('source');
+  const [compare, setCompare] = useState<CompareMode | null>(null);
+  const [annotateSignal, setAnnotateSignal] = useState(0);
+  const [converting, setConverting] = useState<FileItem | null>(null);
+  const [rulesVersion, setRulesVersion] = useState<number | undefined>(undefined);
+
+  useEffect(() => {
+    setSelected('source');
+    setCompare(null);
+  }, [item.path]);
+
+  useEffect(() => {
+    if (!deliveryFocus || deliveryFocus.source !== item.path) return;
+    if (!versions.some((v) => v.version === deliveryFocus.version)) return;
+    setSelected(deliveryFocus.version);
+    setCompare(null);
+    setAnnotateSignal((n) => n + 1);
+    // versions 到位之后再对一次：从工作台跳进来时列表往往还在路上
+  }, [deliveryFocus, item.path, versions]);
+
+  // 批注提示词里要写「规则库当前 vN」：有交付稿时顺手取一次，取不到就不写版本号
+  const hasVersions = versions.length > 0;
+  useEffect(() => {
+    if (!hasVersions) return;
+    let alive = true;
+    api.deaiRules(projectId)
+      .then((r) => { if (alive) setRulesVersion(r.version); })
+      .catch(() => { if (alive) setRulesVersion(undefined); });
+    return () => {
+      alive = false;
+    };
+  }, [projectId, hasVersions]);
+
+  const current = versions.find((v) => v.version === selected);
+  const bodyItem: FileItem = current
+    ? {
+      path: current.path,
+      name: `${current.version}.md`,
+      ext: '.md',
+      reader: 'markdown',
+      size: 0,
+      mtime: current.mtime || item.mtime,
+      title: `${item.title || item.name} · 交付稿 ${current.version}`,
+      docKey: current.docKey,
+    }
+    : item;
+  const nextPath = `${deliveryDirOf(item.path)}/${nextVersion(versions.map((v) => v.version))}.md`;
+
+  return (
+    <>
+      <ReaderBody
+        {...props}
+        item={bodyItem}
+        topBar={hasVersions ? (
+          <DeliveryBar
+            versions={versions}
+            selected={current ? current.version : 'source'}
+            onSelect={(v) => {
+              setSelected(v);
+              setCompare(null);
+            }}
+            compare={compare}
+            onCompare={setCompare}
+            onAnnotate={() => {
+              setCompare(null);
+              setAnnotateSignal((n) => n + 1);
+            }}
+            onConvert={() => setConverting(bodyItem)}
+          />
+        ) : undefined}
+        replaceBody={current && compare ? (
+          <DeliveryDiff projectId={projectId} source={item.path} versions={versions} current={current} mode={compare} />
+        ) : undefined}
+        annotateSignal={annotateSignal}
+        delivery={current ? { version: current.version, nextPath, rulesVersion } : undefined}
+        onOpenDeaiRule={onOpenDeaiRule}
+      />
+      {/* 交付稿不在扫描里：目标 .docx 在不在由服务端判断（409 时再给「覆盖」） */}
+      <DocxExportDialog
+        projectId={projectId}
+        item={converting}
+        outputItems={[]}
+        onClose={() => setConverting(null)}
+        onConverted={(target) => {
+          if ((props.onOpenPath?.(target.path) ?? 'external') === 'external') {
+            window.open(api.fileUrl(projectId, target.path), '_blank', 'noreferrer');
+          }
+        }}
+      />
+    </>
   );
 }

@@ -78,16 +78,44 @@ def default_reference(bin_: str) -> bytes:
 
 
 MISSING_RE = re.compile(r"Could not (?:fetch|find) (?:resource|image) '?([^'\n]+?)'?(?::|$)", re.M)
+FILTER = Path(__file__).resolve().parent / "filters" / "deai-format.lua"
+DEAI_RE = re.compile(r"^\[aispace-deai\] (\w+)=(.*)$", re.M)
 
 
-def md_to_docx(bin_: str, md: Path, reference: Path, out: Path, timeout: int = 110) -> list[str]:
-    """把 md 转成 docx 写到 out（调用方给的临时路径）。返回 warnings（缺图等）。
+def _deai_report(stderr: str, keep_bold: bool) -> tuple[list[str], list[str], str | None]:
+    """把过滤器写在 stderr 的计数翻成 (log, warnings, 文档标题)。"""
+    got = {m.group(1): m.group(2).strip() for m in DEAI_RE.finditer(stderr)}
+    n = lambda k: int(got.get(k) or 0)  # noqa: E731
+    log, warnings = [], []
+    if n("shifted"):
+        log.append("标题：开头唯一的 # 取作文档标题，其余标题上移一级")
+    elif n("h1") > 1:
+        warnings.append(f"有 {n('h1')} 个一级标题，未把第一个当作文档标题（标题层级按原样转换）")
+    if n("numbers"):
+        log.append(f"标题编号：剥离手写编号 {n('numbers')} 处（编号由模板样式生成）")
+    if n("callouts"):
+        log.append(f"批注块：{n('callouts')} 个转成「提示框」，[!类型] 标记已去掉")
+    if got.get("unknownCallouts"):
+        warnings.append(f"不认识的批注块类型：{got['unknownCallouts']}（已按提示框处理）")
+    if not keep_bold and n("bold") > 0:
+        log.append(f"加粗：解除段中加粗 {n('bold')} 处（只保留段首标签式加粗）")
+    return log, warnings, got.get("title") or None
 
+
+def md_to_docx(bin_: str, md: Path, reference: Path, out: Path, timeout: int = 110, *,
+               strip_numbers: bool = False, keep_bold: bool = False, front: bool = False) -> tuple[list[str], dict]:
+    """把 md 转成 docx 写到 out（调用方给的临时路径）。返回 (warnings, 格式处理)。
+
+    格式处理 = {"log": [...], "title": 文档标题或 None}，由过滤器 filters/deai-format.lua 回报（见它的文件头）。
     以 .md 所在目录为资源路径，`![](../assets/a.png)` 这种相对路径才找得到图。
-    `east_asian_line_breaks`：中文段落里的换行不插空格。
+    读入时不开 east_asian_line_breaks：它在过滤器之前就吞掉中文行间的换行，批注块的标题和正文会粘在一起；
+    同一规则由过滤器在处理完批注块之后补做。
     """
-    cmd = [bin_, str(md.name), "-f", "markdown+east_asian_line_breaks", "-t", "docx",
+    cmd = [bin_, str(md.name), "-f", "markdown", "-t", "docx", "--lua-filter", str(FILTER),
            "--reference-doc", str(reference), "--resource-path", str(md.parent), "-o", str(out)]
+    for key, on in (("strip-heading-numbers", strip_numbers), ("keep-bold", keep_bold), ("aispace-front", front)):
+        if on:
+            cmd += ["-M", f"{key}=true"]
     r = subprocess.run(cmd, cwd=str(md.parent), capture_output=True, timeout=timeout,
                        encoding="utf-8", errors="replace")
     if r.returncode != 0:
@@ -98,4 +126,5 @@ def md_to_docx(bin_: str, md: Path, reference: Path, out: Path, timeout: int = 1
     for line in r.stderr.splitlines():
         if "[WARNING]" in line and "Could not" not in line:
             warnings.append("pandoc 提示：" + line.replace("[WARNING]", "").strip())
-    return warnings
+    log, fw, title = _deai_report(r.stderr, keep_bold)
+    return warnings + fw, {"log": log, "title": title}

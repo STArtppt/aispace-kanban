@@ -18,8 +18,12 @@ wikilink、callout、行首标签、`%%注释%%`、段尾 `^id`、数学公式�
 理由是记录文件本来就在 `output/**` 的扫描范围里，而要查的东西
 （`kind` 决定 `status` 的合法取值、终态必须有 `resolved_by`、`status` 与正文流水末条一致）
 只有几十行，再开一个脚本会让「两份契约实现」的老问题多一处。
-`output/records/notes/` 的批注文件也在这里查（四个状态、`rejected` 必须有回执、`N` 编号唯一）。
+`output/records/notes/` 的批注文件也在这里查（四个状态、`rejected` 必须有回执、`N` 编号唯一；
+批次下的 `- 对象：` 行与回执末尾的「沉淀为 R<编号>（规则库 v<版本>）」标记认得，但沉淀标记不算拒绝原因）。
 契约的事实源是 [`output/records/README.md`](../output/records/README.md)。
+
+`output/delivery/**/v<三位序号>.md`（去 AI 味的交付稿）的 front-matter 必填，字段见
+[`output/delivery/README.md`](../output/delivery/README.md)。
 
 用法
 ----
@@ -84,6 +88,15 @@ NOTE_STATUS = {"pending", "adopted", "rejected", "unclear"}
 NOTE_HEADING_RE = re.compile(r"^###[ \t]+(N\d{4})[ \t]*·[ \t]*(\S+)[ \t]*$")
 NOTE_BATCH_RE = re.compile(r"^##[ \t]+\d{4}-\d{2}-\d{2}[ \t]*·[ \t]*第[ \t]*\d+[ \t]*批")
 NOTE_FIELD_RE = re.compile(r"^-[ \t]*(状态|回执|源码区间)[ \t]*[:：]")
+# 批次标题下紧跟的「- 对象：<被批注文件>」：看板追加批次时写，旧批次没有它（视为针对记录的 target）
+NOTE_TARGET_RE = re.compile(r"^-[ \t]*对象[ \t]*[:：][ \t]*(\S.*)$")
+# 回执末尾的沉淀标记（交付稿批注沉淀进去 AI 味规则库）
+NOTE_DEPOSIT_RE = re.compile(r"沉淀为[ \t]*R\d{3}[ \t]*[（(]规则库[ \t]*v\d+[)）][。；;，,\s]*")
+
+# ── 交付稿（output/delivery/）───────────────────────────────────────────────
+DELIVERY_DIR = "delivery"
+DELIVERY_FILE_RE = re.compile(r"^v\d{3}\.md$")
+DELIVERY_KEYS = ("source", "source_sha", "version", "based_on", "notes", "rules_version", "created", "body_sha", "hits", "note")
 
 INLINE_ARRAY_RE = re.compile(r"^([\w.-]+):\s*\[")
 NESTED_KEY_RE = re.compile(r"^\s+[\w.-]+:\s*")
@@ -224,9 +237,22 @@ def check_note(body: str, where: str, report: Report) -> None:
     sections: list[tuple[int, str, list[str]]] = []
     current: tuple[int, str, list[str]] | None = None
     in_batch = False
+    batch_line = 0
     for i, line in enumerate(body.splitlines(), start=1):
         if NOTE_BATCH_RE.match(line):
             in_batch = True
+            batch_line = i
+            continue
+        target = NOTE_TARGET_RE.match(line)
+        if target and not current and in_batch:
+            if not target.group(1).startswith("output/"):
+                report.error(
+                    "批次对象不是工作空间相对路径",
+                    f"{where}:{i}",
+                    "`- 对象：` 写的是被批注文件的工作空间相对路径（`output/…`）。这一行由看板写，不要手改",
+                )
+            if i != batch_line + 1:
+                report.warn("批次对象不在批次标题下一行", f"{where}:{i}", "`- 对象：` 应紧跟在 `## 日期 · 第 N 批` 下一行")
             continue
         matched = NOTE_HEADING_RE.match(line)
         if matched:
@@ -301,12 +327,40 @@ def check_note(body: str, where: str, report: Report) -> None:
                 f"{where}:{line_no}",
                 f"`{note_id}` 的状态是 `{status}`。只能是 pending / adopted / rejected / unclear",
             )
-        if status == "rejected" and not receipt:
+        if status == "rejected" and not NOTE_DEPOSIT_RE.sub("", receipt).strip():
             report.error(
                 "拒绝没写原因",
                 f"{where}:{line_no}",
-                f"`{note_id}` 是 `rejected`，回执是空的。没有原因的拒绝等于没有回答",
+                f"`{note_id}` 是 `rejected`，回执里没有原因（只有沉淀标记不算原因）。没有原因的拒绝等于没有回答",
             )
+
+
+def is_delivery(path: Path, output_root: Path) -> bool:
+    """这份文件是不是 `output/delivery/**/v<三位序号>.md`。"""
+    try:
+        parts = path.resolve().relative_to(output_root.resolve()).parts
+    except ValueError:
+        return False
+    return len(parts) >= 3 and parts[0] == DELIVERY_DIR and bool(DELIVERY_FILE_RE.match(parts[-1]))
+
+
+def check_delivery(meta: dict, raw: str, where: str, report: Report) -> None:
+    """交付稿的 front-matter：字段必填（notes 首版可以空着，但键要在）。事实源是 output/delivery/README.md。"""
+    if not raw:
+        report.error("交付稿没有 front-matter", where,
+                     "交付稿必须有扁平 front-matter（source / source_sha / version / based_on / …），见 output/delivery/README.md")
+        return
+    present = set(re.findall(r"^([\w.-]+):", raw, re.M))
+    for key in DELIVERY_KEYS:
+        if key not in present:
+            report.error(f"交付稿缺字段 `{key}`", where, f"缺 `{key}`。字段见 output/delivery/README.md")
+    for key in ("source_sha", "body_sha"):
+        v = as_text(meta.get(key)) if key in meta else ""
+        if v and not re.fullmatch(r"[0-9a-f]{16}", v):
+            report.error(f"`{key}` 不是 16 位摘要", where, f"`{key}` 是 SHA-256 的十六进制前 16 位，算法见技能 pm-deai-writing")
+    rv = as_text(meta.get("rules_version")) if "rules_version" in meta else ""
+    if rv and not rv.isdigit():
+        report.error("`rules_version` 不是正整数", where, "`rules_version` 写规则库的版本号，如 `4`")
 
 
 def is_record(path: Path, output_root: Path) -> bool:
@@ -491,6 +545,9 @@ def check_file(path: Path, output_root: Path, report: Report) -> None:
 
     if is_note(path, output_root):
         check_note(body, where, report)
+
+    if is_delivery(path, output_root):
+        check_delivery(meta, raw, where, report)
 
     if is_record(path, output_root):
         if not raw:

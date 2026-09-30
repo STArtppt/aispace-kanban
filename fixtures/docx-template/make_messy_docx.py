@@ -13,17 +13,29 @@
 - 目录项（toc 1 / toc 2）直接写在正文里；主题字体（docDefaults 用 minorEastAsia）；
 - 页眉（文字）与页脚（PAGE 域），A4 页面。
 
-用法：python3 fixtures/docx-template/make_messy_docx.py <输出.docx>
+`--front textbox` / `--front table` 另在正文前加四节前置区（替掉开头的标题段与目录项）：
+- 封面：textbox 变体是浮动文本框（带兼容回退副本，同一段文字在 XML 里出现两次）+ 一张内嵌图片；
+  table 变体是表格排版的封面（一列四行）；
+- 签署页：首列是标签（编制 / 审核 / 批准…）的 5×2 表格，页脚沿用正文页脚；
+- 版本跟踪表：4×4，首行是加粗表头；
+- 目录：TOC 域 + 两条样例目录项（带 PAGEREF 域）。textbox 变体包在 sdt 里，table 变体不包、end 所在段带分节符。
+前置区里所有「样例数据」都带 FRONT_SENTINEL，回归脚本用它断言报告和 front.docx 里没有这些原文；
+「签署页」「目录」、表格标签这类模板文字不带（它们本来就该原样保留）。
+
+用法：python3 fixtures/docx-template/make_messy_docx.py <输出.docx> [--front textbox|table]
 只用标准库。每段正文都带哨兵词 SENTINEL（见下），回归脚本用它断言采集报告里没有正文。
 """
 
 from __future__ import annotations
 
+import struct
 import sys
 import zipfile
+import zlib
 from pathlib import Path
 
 SENTINEL = "合成语料哨兵句"
+FRONT_SENTINEL = "前置哨兵"
 
 W = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" ' \
     'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
@@ -176,13 +188,16 @@ def caption(text: str) -> str:
                 fonts='<w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体"/>')
 
 
-def document_xml() -> str:
+def document_xml(front: str | None = None) -> str:
     b = []
-    b.append(para("合成示例文档标题", None, '<w:jc w:val="center"/><w:spacing w:after="240"/>', sz=44, bold=True,
-                  fonts='<w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体"/>'))
-    for i in range(3):
-        b.append(para(f"目录项{i}", "TOC1", "", sz=21))
-        b.append(para(f"目录子项{i}", "TOC2", "", sz=21))
+    if front:
+        b.append(front_xml(front))
+    else:
+        b.append(para("合成示例文档标题", None, '<w:jc w:val="center"/><w:spacing w:after="240"/>', sz=44, bold=True,
+                      fonts='<w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体"/>'))
+        for i in range(3):
+            b.append(para(f"目录项{i}", "TOC1", "", sz=21))
+            b.append(para(f"目录子项{i}", "TOC2", "", sz=21))
     n = 0
     chapters = 3
     for ch in range(1, chapters + 1):
@@ -209,7 +224,144 @@ def document_xml() -> str:
     sect = ('<w:sectPr><w:headerReference w:type="default" r:id="rId4"/><w:footerReference w:type="default" r:id="rId5"/>'
             '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="851" w:footer="992" w:gutter="0"/>'
             '</w:sectPr>')
-    return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document {W}><w:body>{"".join(b)}{sect}</w:body></w:document>'
+    ns = FRONT_NS if front else W
+    return f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:document {ns}><w:body>{"".join(b)}{sect}</w:body></w:document>'
+
+
+# ---------- 前置区 ----------
+FRONT_NS = (W + ' xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+            ' xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"'
+            ' xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+            ' xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"'
+            ' xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"'
+            ' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"'
+            ' xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"'
+            ' xmlns:w10="urn:schemas-microsoft-com:office:word" mc:Ignorable="w14"')
+HEITI = '<w:rFonts w:ascii="黑体" w:eastAsia="黑体" w:hAnsi="黑体"/>'
+PAGE = '<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1800" w:bottom="1440" w:left="1800" w:header="851" w:footer="992" w:gutter="0"/>'
+
+
+def sect_break(extra: str = "") -> str:
+    return f"<w:sectPr>{extra}{PAGE}</w:sectPr>"
+
+
+def break_para(extra: str = "") -> str:
+    return f"<w:p><w:pPr>{sect_break(extra)}</w:pPr></w:p>"
+
+
+def center(text: str, sz: int, bold: bool = False) -> str:
+    return para(text, None, '<w:jc w:val="center"/><w:spacing w:before="120" w:after="120"/>', sz=sz, bold=bold, fonts=HEITI)
+
+
+COVER_LINES = [  # (文字, 字号半磅, 加粗)
+    (f"合成{FRONT_SENTINEL}系统建设项目", 44, True),
+    ("实施方案", 36, True),
+]
+
+
+def textbox(paras: str) -> str:
+    """浮动文本框：新版 wps 形状 + 旧版 VML 回退副本，两份里是同样的段落。"""
+    return (
+        '<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>'
+        '<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="1" behindDoc="0" '
+        'locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="margin"><wp:align>center</wp:align></wp:positionH>'
+        '<wp:positionV relativeFrom="page"><wp:posOffset>2000000</wp:posOffset></wp:positionV>'
+        '<wp:extent cx="5000000" cy="1500000"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/>'
+        '<wp:docPr id="1" name="文本框 1"/><wp:cNvGraphicFramePr/>'
+        '<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp>'
+        '<wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5000000" cy="1500000"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></wps:spPr>'
+        f'<wps:txbx><w:txbxContent>{paras}</w:txbxContent></wps:txbx><wps:bodyPr rot="0" vert="horz" wrap="square" anchor="t"/>'
+        '</wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing></mc:Choice><mc:Fallback><w:pict>'
+        '<v:shape id="文本框 1" o:spid="_x0000_s1026" style="position:absolute;margin-left:0;margin-top:157.5pt;'
+        'width:393.7pt;height:118.1pt;z-index:1;mso-position-horizontal:center" filled="f" stroked="f">'
+        f'<v:textbox><w:txbxContent>{paras}</w:txbxContent></v:textbox><w10:wrap type="topAndBottom"/></v:shape>'
+        '</w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>')
+
+
+LOGO = ('<w:p><w:pPr><w:jc w:val="center"/></w:pPr><w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'
+        '<wp:extent cx="952500" cy="952500"/><wp:docPr id="2" name="图片 2"/><a:graphic>'
+        '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic>'
+        '<pic:nvPicPr><pic:cNvPr id="2" name="logo.png"/><pic:cNvPicPr/></pic:nvPicPr>'
+        '<pic:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'
+        '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="952500"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>'
+        '</wp:inline></w:drawing></w:r></w:p>')
+
+
+def grid_table(rows: list[list[tuple[str, bool]]], widths: int = 2000, borders: bool = True) -> str:
+    cols = len(rows[0])
+    b = ('<w:tblBorders>' + "".join(f'<w:{e} w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                                    for e in ("top", "left", "bottom", "right", "insideH", "insideV")) + "</w:tblBorders>") if borders else ""
+    trs = "".join("<w:tr>" + "".join(
+        f'<w:tc><w:tcPr><w:tcW w:w="{widths}" w:type="dxa"/></w:tcPr>'
+        f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>{run(t, sz=24, bold=bold) if t else ""}</w:p></w:tc>'
+        for t, bold in row) + "</w:tr>" for row in rows)
+    grid = "".join(f'<w:gridCol w:w="{widths}"/>' for _ in range(cols))
+    return f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>{b}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>{trs}</w:tbl>'
+
+
+def toc_entry(text: str, page: str, first: bool) -> str:
+    begin = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+             '<w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\z \\u </w:instrText></w:r>'
+             '<w:r><w:fldChar w:fldCharType="separate"/></w:r>') if first else ""
+    return (f'<w:p><w:pPr><w:pStyle w:val="TOC1"/></w:pPr>{begin}'
+            f'<w:hyperlink w:anchor="_Toc{page}"><w:r><w:t>{text}</w:t></w:r><w:r><w:tab/></w:r>'
+            '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+            f'<w:r><w:instrText xml:space="preserve"> PAGEREF _Toc{page} \\h </w:instrText></w:r>'
+            f'<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{page}</w:t></w:r>'
+            '<w:r><w:fldChar w:fldCharType="end"/></w:r></w:hyperlink></w:p>')
+
+
+def front_xml(kind: str) -> str:
+    b = []
+    # 封面
+    if kind == "textbox":
+        b.append(textbox("".join(center(t, sz, bold) for t, sz, bold in COVER_LINES)))
+        b.append(LOGO)
+        b.append(center(f"建设单位：合成{FRONT_SENTINEL}客户有限公司", 28))
+        b.append(center(f"合成{FRONT_SENTINEL}编制有限公司", 28))
+        b.append(center("2025年6月", 28))
+    else:
+        cells = [[(t, bold)] for t, _, bold in COVER_LINES]
+        rows = "".join(
+            f'<w:tr><w:tc><w:tcPr><w:tcW w:w="8000" w:type="dxa"/></w:tcPr>{center(t, sz, bold)}</w:tc></w:tr>'
+            for t, sz, bold in COVER_LINES + [(f"合成{FRONT_SENTINEL}客户有限公司", 28, False), ("2025年6月", 28, False)])
+        del cells
+        b.append(f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/></w:tblPr>'
+                 f'<w:tblGrid><w:gridCol w:w="8000"/></w:tblGrid>{rows}</w:tbl>')
+    b.append(break_para("<w:titlePg/>"))
+    # 签署页
+    b.append(center("签署页", 32, True))
+    b.append(grid_table([[(lab, False), (f"{FRONT_SENTINEL}{i}" if i != 4 else "", False)]
+                         for i, lab in enumerate(("编制", "审核", "批准", "会签", "发布"))]))
+    b.append(break_para('<w:footerReference w:type="default" r:id="rId5"/>'))
+    # 版本跟踪表
+    b.append(center("版本跟踪", 32, True))
+    b.append(grid_table([[("版本", True), ("日期", True), ("修改人", True), ("说明", True)]]
+                        + [[(f"V1.{i}", False), (f"2025-0{i + 1}-01", False), (f"{FRONT_SENTINEL}人{i}", False),
+                            (f"合成{FRONT_SENTINEL}修订{i}", False)] for i in range(3)]))
+    b.append(break_para())
+    # 目录
+    entries = toc_entry(f"第1部分{FRONT_SENTINEL}章节", "3", True) + toc_entry(f"第2部分{FRONT_SENTINEL}章节", "5", False)
+    if kind == "textbox":
+        b.append('<w:sdt><w:sdtPr><w:docPartObj><w:docPartGallery w:val="Table of Contents"/><w:docPartUnique/>'
+                 '</w:docPartObj></w:sdtPr><w:sdtContent>' + center("目录", 32, True) + entries
+                 + '<w:p><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:sdtContent></w:sdt>')
+        b.append(break_para())
+    else:
+        b.append(center("目录", 32, True))
+        b.append(entries)
+        b.append(f'<w:p><w:pPr>{sect_break()}</w:pPr><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p>')
+    return "".join(b)
+
+
+def png_1x1() -> bytes:
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 0, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\x00\x80")) + chunk(b"IEND", b""))
 
 
 HEADER = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:hdr {W}>'
@@ -220,13 +372,30 @@ FOOTER = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:ftr {W}>
           '<w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:ftr>')
 
 
-def make(out: Path) -> None:
+def make(out: Path, front: str | None = None) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
+    ct, rels = CONTENT_TYPES, DOC_RELS
+    root_rels = ROOT_RELS
+    if front:
+        ct = ct.replace("</Types>", '<Default Extension="png" ContentType="image/png"/></Types>')
+        # 真实文档常自带 docProps/custom.xml：切出前置区时它被裁掉、又由生成标记加回，曾经在 zip 里留下两个同名条目
+        ct = ct.replace("</Types>", '<Override PartName="/docProps/custom.xml" ContentType="application/vnd.openxmlformats-officedocument.custom-properties+xml"/></Types>')
+        root_rels = root_rels.replace("</Relationships>", '<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/'
+                                      'officeDocument/2006/relationships/custom-properties" Target="docProps/custom.xml"/></Relationships>')
+        rels = rels.replace("</Relationships>", '<Relationship Id="rId7" Type="http://schemas.openxmlformats.org/'
+                            'officeDocument/2006/relationships/image" Target="media/image1.png"/></Relationships>')
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-        z.writestr("[Content_Types].xml", CONTENT_TYPES)
-        z.writestr("_rels/.rels", ROOT_RELS)
-        z.writestr("word/_rels/document.xml.rels", DOC_RELS)
-        z.writestr("word/document.xml", document_xml())
+        z.writestr("[Content_Types].xml", ct)
+        z.writestr("_rels/.rels", root_rels)
+        z.writestr("word/_rels/document.xml.rels", rels)
+        z.writestr("word/document.xml", document_xml(front))
+        if front:
+            z.writestr("word/media/image1.png", png_1x1())
+            z.writestr("docProps/custom.xml", '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+                       '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" '
+                       'xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">'
+                       '<property fmtid="{D5CDD505-2E9C-101B-9397-08002B2CF9AE}" pid="2" name="合成属性">'
+                       '<vt:lpwstr>x</vt:lpwstr></property></Properties>')
         z.writestr("word/styles.xml", styles_xml())
         z.writestr("word/numbering.xml", numbering_xml())
         z.writestr("word/theme/theme1.xml", THEME)
@@ -235,7 +404,12 @@ def make(out: Path) -> None:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
-        sys.exit("用法：python3 make_messy_docx.py <输出.docx>")
-    make(Path(sys.argv[1]))
-    print(sys.argv[1])
+    args = sys.argv[1:]
+    kind = None
+    if len(args) == 3 and args[1] == "--front" and args[2] in ("textbox", "table"):
+        kind = args[2]
+        args = args[:1]
+    if len(args) != 1:
+        sys.exit("用法：python3 make_messy_docx.py <输出.docx> [--front textbox|table]")
+    make(Path(args[0]), kind)
+    print(args[0])

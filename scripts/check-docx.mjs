@@ -10,6 +10,7 @@
  * 没有标记的同名文件不会被覆盖。
  *
  * 语料全部合成：fixtures/docx-template/make_messy_docx.py 现生成一份「格式很乱的旧文档」，
+ * 加 --front 再生成带封面、签署页、版本表、目录的两种变体；
  * 固定决定在 fixtures/docx-template/decisions.json。真实客户文档不入库。
  * 本机没有 pandoc 3 时只跳过转换那几段，并如实打印出来，不算失败。
  */
@@ -76,6 +77,21 @@ print(json.dumps({'warnings': w, 'marker': marker_of(Path(sys.argv[1])),
 }
 
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
+
+/** 读 docx 里的一个部件（node 没有标准库 zip，借 Python 的 zipfile）。 */
+function zipText(docx, part = 'word/document.xml') {
+  return execFileSync(PY, [...PY_PRE, '-c',
+    'import sys, zipfile; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]))', docx, part],
+  { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+}
+const sectCount = (xml) => (xml.match(/<w:sectPr\b/g) || []).length;
+/** 某段文字前面最近的一个字号（半磅）：用来断言封面字段替换后字号没变。 */
+function sizeBefore(xml, text) {
+  const at = xml.indexOf(text);
+  if (at < 0) return null;
+  const all = [...xml.slice(0, at).matchAll(/<w:sz w:val="(\d+)"/g)];
+  return all.length ? all[all.length - 1][1] : null;
+}
 
 try {
   // 临时工作空间：只拷工具链，模拟新建工作空间里的 scripts/
@@ -176,7 +192,107 @@ try {
     const base = inspect(path.join(docs, 'a.docx'), null);
     check(base.warnings.length === 0, '通用规范成品各角色格式与规范一致', base.warnings.join('；'));
     check(base.eff.BodyText.size === 12, '通用规范正文 12pt');
+
+    console.log('格式过滤器');
+    const log = r.result.log || [];
+    check(log.some((l) => l.includes('标题上移一级')) && log.some((l) => /剥离手写编号 6 处/.test(l)),
+      '开头唯一的 # 取作文档标题、剥离手写编号', log.join('；'));
+    check(log.some((l) => /批注块：4 个/.test(l)) && !zipText(path.join(docs, 'a.docx')).includes('[!'),
+      '四种批注块转成提示框，成品里搜不到 [!类型]');
+    check(log.some((l) => /解除段中加粗 1 处/.test(l)), '只解除句中加粗，段首标签与列表标签保留', log.join('；'));
+    r = run('md2docx.py', ['output/docs/a.md', '--template', '@base', '--overwrite', '--keep-bold']);
+    check(r.code === 0 && !(r.result.log || []).some((l) => l.includes('解除段中加粗')), '--keep-bold 时不解除加粗');
+    writeFileSync(path.join(docs, 'multi.md'), '# 一\n\n正文。\n\n# 二\n\n# 三\n');
+    r = run('md2docx.py', ['output/docs/multi.md', '--template', '@base']);
+    check(r.code === 0 && (r.result.warnings || []).some((w) => w.includes('有 3 个一级标题')), '多个 # 时不平移并提醒');
   }
+
+  console.log('前置区');
+  const FRONT_SENTINEL = '前置哨兵';
+  const frontDec = JSON.parse(decisions).front;
+  const fsrc = path.join(ws, 'input', 'raw', '带封面.docx');
+  execFileSync(PY, [...PY_PRE, path.join(FIXTURES, 'make_messy_docx.py'), fsrc, '--front', 'textbox']);
+  const fdir = path.join(ws, 'output', 'docx-template', '前置');
+  r = run('docx_template.py', ['collect', 'input/raw/带封面.docx', '--name', '前置']);
+  check(r.code === 0 && r.result?.ok, 'collect 带前置区的来源成功', JSON.stringify(r.result));
+  const fReportText = readFileSync(path.join(fdir, 'collect', 'report.json'), 'utf8');
+  const fr = JSON.parse(fReportText).front;
+  check(!fReportText.includes(FRONT_SENTINEL)
+    && !readFileSync(path.join(fdir, 'collect', 'paragraphs.jsonl'), 'utf8').includes(FRONT_SENTINEL),
+  '报告不含封面、签署页、版本表、目录的原文');
+  check(fr && fr.sections.length === 4 && fr.hasToc, '识别出四节前置区与目录域', JSON.stringify(fr?.sections));
+  const titleField = fr?.fields.find((f) => f.guess === 'title');
+  check(titleField?.inTextbox && titleField.occurrences === 2, '文本框标题与兼容回退副本归为一个字段', JSON.stringify(titleField));
+  check(['date', 'client', 'vendor', 'doctype'].every((g) => fr?.fields.some((f) => f.guess === g)), '封面角色都猜到了');
+  check(fr?.tables[0]?.defaultRule === 'keepLabels' && fr?.tables[1]?.defaultRule === 'keepHeader',
+    '签署页默认保留首列标签、版本表默认保留表头行', JSON.stringify(fr?.tables));
+  check(!JSON.parse(fReportText).clusters.some((c) => c.fmt.size === 22), '前置区段落不参与格式聚类');
+
+  r = run('docx_template.py', ['build', '--name', '前置', '--source', 'input/raw/带封面.docx', '--decisions', '-'],
+    { input: JSON.stringify({ front: { ...frontDec, fields: { f99: 'title' } } }) });
+  check(r.code === 2 && r.result?.kind === 'bad-decisions', '前置区决定里有报告没有的字段时拒绝');
+  r = run('docx_template.py', ['build', '--name', '前置', '--source', 'input/raw/带封面.docx', '--decisions', '-'],
+    { input: JSON.stringify({ front: frontDec }) });
+  check(r.code === 0 && existsSync(path.join(fdir, 'front.docx')), '生成模板时写出 front.docx', JSON.stringify(r.result));
+  const fdoc = zipText(path.join(fdir, 'front.docx'));
+  check(!fdoc.includes(FRONT_SENTINEL) && fdoc.includes('{{title}}') && fdoc.includes('{{client}}'),
+    'front.docx 里只有占位符，没有封面、签署页、版本表、目录项的原文');
+  check(fdoc.includes('2025年6月') && fdoc.includes('签署页'), '「保持原样」的段落与模板文字原样保留');
+  check(sectCount(fdoc) === fr.sections.length, 'front.docx 的分节数与前置区一致');
+  const zipNames = (docx) => execFileSync(PY, [...PY_PRE, '-c',
+    'import sys, zipfile; print("\\n".join(zipfile.ZipFile(sys.argv[1]).namelist()))', docx], { encoding: 'utf8' }).trim().split('\n');
+  const fnames = zipNames(path.join(fdir, 'front.docx'));
+  check(new Set(fnames).size === fnames.length, 'front.docx 里没有重复的 zip 条目（原件自带 custom.xml 时）', fnames.join(' '));
+  const fprof = JSON.parse(readFileSync(path.join(fdir, 'profile.json'), 'utf8'));
+  check(fprof.front?.fields?.f5 === 'keep' && fprof.front?.tables?.t2 === 'keepHeader' && fprof.front?.sections?.s1 === '封面',
+    'profile.json 带 front 段（字段映射、表格清空规则、分节名）');
+  check(readFileSync(path.join(fdir, 'spec.md'), 'utf8').includes('封面字段从哪里取值'), 'spec.md 写明封面字段从哪里取值');
+  check(inspect(path.join(fdir, 'front.docx'), null).marker, 'front.docx 带生成标记');
+
+  if (hasPandoc) {
+    check((r.result.warnings || []).length === 0, '带前置区的样张反查无 warnings', (r.result.warnings || []).join('；'));
+    check(sectCount(zipText(path.join(fdir, 'sample.docx'))) === fr.sections.length + 1, '样张 = 前置区 + 正文');
+
+    const docs = path.join(ws, 'output', 'docs');
+    writeFileSync(path.join(ws, 'project.yaml'), 'identity:\n  项目名称: null\n  甲方: 合成甲方单位\n  承建方: null\n');
+    cpSync(path.join(SCRIPTS, 'docxkit', 'sample.md'), path.join(docs, 'b.md'));
+    r = run('md2docx.py', ['output/docs/b.md', '--template', '前置']);
+    check(r.code === 0 && r.result?.ok, '按带前置区的模板转换成功', JSON.stringify(r.result));
+    const out = zipText(path.join(docs, 'b.docx'));
+    check(sectCount(out) === fr.sections.length + 1, '成品分节数 = 前置区分节数 + 1', String(sectCount(out)));
+    check(!out.includes('{{') && out.includes('样张：示例系统需求说明') && out.includes('合成甲方单位'),
+      '封面字段已替换（标题取文档标题，客户单位取 project.yaml）');
+    check(sizeBefore(out, '样张：示例系统需求说明') === sizeBefore(fdoc, '{{title}}') && sizeBefore(fdoc, '{{title}}') === '44',
+      '封面标题替换后字号不变（22pt）');
+    check(!out.includes(FRONT_SENTINEL) && out.includes('TOC \\o'), '成品里没有模板样例原文，目录保留为域');
+    check((r.result.log || []).some((l) => l.includes('project.yaml')), 'log 注明字段取值来源', (r.result.log || []).join('；'));
+    check((r.result.warnings || []).some((w) => w.includes('【待填：编制单位】')), '取不到值的字段写「待填」并给 warning');
+    check(zipText(path.join(docs, 'b.docx'), 'word/settings.xml').includes('<w:updateFields w:val="true"/>'), '成品打开时提示更新域');
+
+    writeFileSync(path.join(docs, 'c.md'), '---\nclient: 前置覆盖单位\n---\n\n# 合成标题\n\n## 章节\n\n正文。\n');
+    r = run('md2docx.py', ['output/docs/c.md', '--template', '前置']);
+    const outC = zipText(path.join(docs, 'c.docx'));
+    check(r.code === 0 && outC.includes('前置覆盖单位') && !outC.includes('合成甲方单位'), 'md front-matter 优先于 project.yaml');
+    rmSync(path.join(ws, 'project.yaml'));
+    writeFileSync(path.join(docs, 'd.md'), '# 合成标题\n\n## 章节\n\n正文。\n');
+    r = run('md2docx.py', ['output/docs/d.md', '--template', '前置']);
+    check(r.code === 0 && (r.result.warnings || []).some((w) => w.includes('客户单位')), '没有 project.yaml 时客户单位走占位并提醒');
+  }
+
+  const tsrc = path.join(ws, 'input', 'raw', '表格封面.docx');
+  execFileSync(PY, [...PY_PRE, path.join(FIXTURES, 'make_messy_docx.py'), tsrc, '--front', 'table']);
+  r = run('docx_template.py', ['collect', 'input/raw/表格封面.docx', '--name', '表格封面']);
+  const tfr = JSON.parse(readFileSync(path.join(ws, 'output', 'docx-template', '表格封面', 'collect', 'report.json'), 'utf8')).front;
+  check(tfr?.fields.some((f) => f.guess === 'title' && !f.inTextbox) && tfr.tables.length === 2,
+    '表格排版的封面：表格里的段落按字段处理，不进表格清单', JSON.stringify(tfr?.fields));
+  r = run('docx_template.py', ['build', '--name', '表格封面', '--source', 'input/raw/表格封面.docx']);
+  const tdoc = zipText(path.join(ws, 'output', 'docx-template', '表格封面', 'front.docx'));
+  check(r.code === 0 && !tdoc.includes(FRONT_SENTINEL) && sectCount(tdoc) === 4, '不包 sdt 的目录：清掉样例目录项，分节符保住');
+
+  r = run('docx_template.py', ['build', '--name', '前置', '--source', 'input/raw/带封面.docx', '--decisions', '-', '--regenerate'],
+    { input: '{"front": {"disabled": true}}' });
+  const noFrontProfile = JSON.parse(readFileSync(path.join(fdir, 'profile.json'), 'utf8'));
+  check(r.code === 0 && !existsSync(path.join(fdir, 'front.docx')) && !noFrontProfile.front, '「不要前置区」时不写 front.docx，profile 里没有 front');
 } finally {
   rmSync(ws, { recursive: true, force: true });
 }

@@ -101,7 +101,10 @@ export function DocxExportDialog({
 
   const targetPath = item ? item.path.replace(/\.md$/i, '.docx') : '';
   const targetName = targetPath.split('/').pop() || '';
-  const existing = useMemo(() => outputItems.find((f) => f.path === targetPath), [outputItems, targetPath]);
+  const listed = useMemo(() => outputItems.find((f) => f.path === targetPath), [outputItems, targetPath]);
+  // 交付稿不在扫描里，列表里查不到目标：服务端回 409 exists（带生成标记的上次成品）时再给「覆盖」
+  const existsOnServer = error?.kind === 'exists';
+  const existing = listed ?? (existsOnServer ? ({ path: targetPath, docxGenerated: true } as Partial<FileItem>) : undefined);
   const blockedByHand = existing?.docxGenerated === false || error?.kind === 'not-generated';
   const needOverwrite = Boolean(existing) && !blockedByHand;
 
@@ -145,10 +148,26 @@ export function DocxExportDialog({
         path, name, ext: '.docx', reader: 'external', size: 0, mtime: new Date().toISOString(), title: name.replace(/\.docx$/i, ''),
       };
       const warnings = result.warnings ?? [];
+      const log = result.log ?? [];
+      // 封面字段没取到值：成品里是「【待填：…】」，发出前必须补，用 orange 单独点出来
+      const unfilled = warnings.filter((w) => w.includes('【待填')).length;
       toast.success(`已生成 ${name}`, {
-        description: warnings.length ? `注意：${warnings.join('；')}` : undefined,
+        description: warnings.length || log.length ? (
+          <div className="flex flex-col gap-1">
+            {unfilled ? <span className="text-destructive">有 {unfilled} 处待填，发出前在 Word 里补上</span> : null}
+            {warnings.length ? <span>注意：{warnings.join('；')}</span> : null}
+            {log.length ? (
+              <details>
+                <summary className="cursor-pointer">处理记录（{log.length} 条）</summary>
+                <ul className="mt-1 list-disc pl-4">
+                  {log.map((line) => <li key={line}>{line}</li>)}
+                </ul>
+              </details>
+            ) : null}
+          </div>
+        ) : undefined,
         action: { label: '预览', onClick: () => onConverted(target) },
-        duration: warnings.length ? 12000 : 6000,
+        duration: warnings.length || log.length ? 15000 : 6000,
       });
       onClose();
     } catch (err) {
