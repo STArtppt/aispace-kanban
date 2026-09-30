@@ -15,9 +15,11 @@
 
 `--front textbox` / `--front table` 另在正文前加四节前置区（替掉开头的标题段与目录项）：
 - 封面：textbox 变体是浮动文本框（带兼容回退副本，同一段文字在 XML 里出现两次）+ 一张内嵌图片；
-  table 变体是表格排版的封面（一列四行）；
-- 签署页：首列是标签（编制 / 审核 / 批准…）的 5×2 表格，页脚沿用正文页脚；
-- 版本跟踪表：4×4，首行是加粗表头；
+  table 变体是表格排版的封面（一列多行）。两种都是 26pt 文档类型 + 22pt 两段标题（第二段是标题续行）；
+- 签署页：textbox 变体是一行三组签字标签（第 1、3、5 列，标签格里还有「日期：值」）；
+  table 变体是首列标签（编制 / 审核 / 批准…）的 5×2 表格。页脚沿用正文页脚；
+- 版本跟踪表：textbox 变体顶部有横跨整行的合并标题行、表头不加粗、首列是 A/B/C 短编号；table 变体 4×4，加粗表头；
+- 正文页眉（两种变体）：单位名 + 与封面文档类型同文的字样，后者拆成三个 run；
 - 目录：TOC 域 + 两条样例目录项（带 PAGEREF 域）。textbox 变体包在 sdt 里，table 变体不包、end 所在段带分节符。
 前置区里所有「样例数据」都带 FRONT_SENTINEL，回归脚本用它断言报告和 front.docx 里没有这些原文；
 「签署页」「目录」、表格标签这类模板文字不带（它们本来就该原样保留）。
@@ -254,9 +256,12 @@ def center(text: str, sz: int, bold: bool = False) -> str:
 
 
 COVER_LINES = [  # (文字, 字号半磅, 加粗)
+    # 字号最大的一段是文档类型，项目名反而小一号，而且拆成两段（D14 第 2、4 条）
+    (f"合成{FRONT_SENTINEL}分析报告", 52, True),
     (f"合成{FRONT_SENTINEL}系统建设项目", 44, True),
-    ("实施方案", 36, True),
+    (f"{FRONT_SENTINEL}二期工程", 44, True),
 ]
+DOCTYPE_TEXT = COVER_LINES[0][0]
 
 
 def textbox(paras: str) -> str:
@@ -302,6 +307,38 @@ def grid_table(rows: list[list[tuple[str, bool]]], widths: int = 2000, borders: 
     return f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>{b}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>{trs}</w:tbl>'
 
 
+BORDERS = ('<w:tblBorders>' + "".join(f'<w:{e} w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                                      for e in ("top", "left", "bottom", "right", "insideH", "insideV")) + "</w:tblBorders>")
+
+
+def tc(paras: str, span: int = 1) -> str:
+    gs = f'<w:gridSpan w:val="{span}"/>' if span > 1 else ""
+    return f'<w:tc><w:tcPr><w:tcW w:w="{1400 * span}" w:type="dxa"/>{gs}</w:tcPr>{paras}</w:tc>'
+
+
+def cell_p(text: str) -> str:
+    return f"<w:p>{run(text, sz=24) if text else ''}</w:p>"
+
+
+def signoff_row() -> str:
+    cells = []
+    for lab, who in (("编写(签字)：", "甲"), ("审核(签字)：", "乙"), ("批准(签字)：", "丙")):
+        cells.append(tc(cell_p(lab) + cell_p(f"日期：{FRONT_SENTINEL}日期{who}")))
+        cells.append(tc(cell_p(f"{FRONT_SENTINEL}{who}")))
+    grid = "".join('<w:gridCol w:w="1400"/>' for _ in range(6))
+    return f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>{BORDERS}</w:tblPr><w:tblGrid>{grid}</w:tblGrid><w:tr>{"".join(cells)}</w:tr></w:tbl>'
+
+
+def revision_table() -> str:
+    rows = [f'<w:tr>{tc(cell_p("文件版本记录"), 3)}</w:tr>',
+            "<w:tr>" + "".join(tc(cell_p(h)) for h in ("版本", "版本说明", "日期")) + "</w:tr>"]
+    for code in ("A", "B", "C"):
+        rows.append("<w:tr>" + tc(cell_p(code)) + tc(cell_p(f"合成{FRONT_SENTINEL}修订{code}"))
+                    + tc(cell_p(f"{FRONT_SENTINEL}日期{code}")) + "</w:tr>")
+    grid = "".join('<w:gridCol w:w="1400"/>' for _ in range(3))
+    return f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/>{BORDERS}</w:tblPr><w:tblGrid>{grid}</w:tblGrid>{"".join(rows)}</w:tbl>'
+
+
 def toc_entry(text: str, page: str, first: bool) -> str:
     begin = ('<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
              '<w:r><w:instrText xml:space="preserve"> TOC \\o "1-3" \\h \\z \\u </w:instrText></w:r>'
@@ -327,21 +364,29 @@ def front_xml(kind: str) -> str:
         cells = [[(t, bold)] for t, _, bold in COVER_LINES]
         rows = "".join(
             f'<w:tr><w:tc><w:tcPr><w:tcW w:w="8000" w:type="dxa"/></w:tcPr>{center(t, sz, bold)}</w:tc></w:tr>'
-            for t, sz, bold in COVER_LINES + [(f"合成{FRONT_SENTINEL}客户有限公司", 28, False), ("2025年6月", 28, False)])
+            for t, sz, bold in COVER_LINES + [(f"合成{FRONT_SENTINEL}客户有限公司", 28, False), ("2025年06月", 28, False)])
         del cells
         b.append(f'<w:tbl><w:tblPr><w:tblW w:w="0" w:type="auto"/><w:jc w:val="center"/></w:tblPr>'
                  f'<w:tblGrid><w:gridCol w:w="8000"/></w:tblGrid>{rows}</w:tbl>')
     b.append(break_para("<w:titlePg/>"))
     # 签署页
     b.append(center("签署页", 32, True))
-    b.append(grid_table([[(lab, False), (f"{FRONT_SENTINEL}{i}" if i != 4 else "", False)]
-                         for i, lab in enumerate(("编制", "审核", "批准", "会签", "发布"))]))
+    if kind == "textbox":
+        # 一行三组签字标签（第 1、3、5 列），标签格里还有「日期：值」（D14 第 5 条）
+        b.append(signoff_row())
+    else:
+        b.append(grid_table([[(lab, False), (f"{FRONT_SENTINEL}{i}" if i != 4 else "", False)]
+                             for i, lab in enumerate(("编制", "审核", "批准", "会签", "发布"))]))
     b.append(break_para('<w:footerReference w:type="default" r:id="rId5"/>'))
     # 版本跟踪表
     b.append(center("版本跟踪", 32, True))
-    b.append(grid_table([[("版本", True), ("日期", True), ("修改人", True), ("说明", True)]]
-                        + [[(f"V1.{i}", False), (f"2025-0{i + 1}-01", False), (f"{FRONT_SENTINEL}人{i}", False),
-                            (f"合成{FRONT_SENTINEL}修订{i}", False)] for i in range(3)]))
+    if kind == "textbox":
+        # 顶部横跨整行的合并标题行 + 不加粗的表头 + 首列短编号（D14 第 6 条）
+        b.append(revision_table())
+    else:
+        b.append(grid_table([[("版本", True), ("日期", True), ("修改人", True), ("说明", True)]]
+                            + [[(f"V1.{i}", False), (f"2025-0{i + 1}-01", False), (f"{FRONT_SENTINEL}人{i}", False),
+                                (f"合成{FRONT_SENTINEL}修订{i}", False)] for i in range(3)]))
     b.append(break_para())
     # 目录
     entries = toc_entry(f"第1部分{FRONT_SENTINEL}章节", "3", True) + toc_entry(f"第2部分{FRONT_SENTINEL}章节", "5", False)
@@ -366,6 +411,11 @@ def png_1x1() -> bytes:
 
 HEADER = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:hdr {W}>'
           '<w:p><w:pPr><w:pStyle w:val="a5"/></w:pPr><w:r><w:t>合成单位页眉</w:t></w:r></w:p></w:hdr>')
+# 前置区变体的正文页眉：左边单位名，右边是与封面文档类型同文的字样，在 XML 里被拆成三个 run（D14 第 1 条）
+HEADER_FRONT = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:hdr {W}>'
+                '<w:p><w:pPr><w:pStyle w:val="a5"/></w:pPr><w:r><w:t xml:space="preserve">合成单位页眉　</w:t></w:r>'
+                + "".join(f'<w:r><w:rPr><w:b/></w:rPr><w:t>{DOCTYPE_TEXT[i:i + 4]}</w:t></w:r>' for i in range(0, len(DOCTYPE_TEXT), 4))
+                + '</w:p></w:hdr>')
 FOOTER = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w:ftr {W}>'
           '<w:p><w:pPr><w:pStyle w:val="a6"/><w:jc w:val="center"/></w:pPr>'
           '<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r>'
@@ -399,7 +449,7 @@ def make(out: Path, front: str | None = None) -> None:
         z.writestr("word/styles.xml", styles_xml())
         z.writestr("word/numbering.xml", numbering_xml())
         z.writestr("word/theme/theme1.xml", THEME)
-        z.writestr("word/header1.xml", HEADER)
+        z.writestr("word/header1.xml", HEADER_FRONT if front else HEADER)
         z.writestr("word/footer1.xml", FOOTER)
 
 

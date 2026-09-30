@@ -12,7 +12,7 @@
       "choices": {"BodyText.line": 1.5},  # 同一角色格式不一致时选定的值；没写就取段数多的
       "front": {                          # 前置区（报告里 front 不为空时才有意义），见 front.py
         "disabled": false,                # true = 不要前置区，不写 front.docx
-        "fields": {"f1": "title", "f3": "keep"},   # 字段 → title / client / vendor / date / doctype / keep；没写的用 guess
+        "fields": {"f1": "title", "f3": "keep"},   # 字段 → title / client / vendor / date / doctype / clear / keep；没写的用 guess
         "tables": {"t1": "keepLabels"},    # 表 → keepHeader / keepLabels / keepHeaderAndLabels / keepAll；没写的用 defaultRule
         "sections": {"s1": "封面"}          # 分节改名（只影响 spec.md 与 profile.json 里的显示）
       }
@@ -94,7 +94,7 @@ def validate(dec, report: dict) -> dict:
 
 def _validate_front(fd, rf) -> dict:
     """前置区决定 → 规范化后的完整决定（没写到的字段、表格按报告的猜测补齐）。报告里没有前置区时一律视为不要。"""
-    from .front import FIELD_CHOICES, TABLE_RULES
+    from .front import DATE_FORMAT_RE, FIELD_CHOICES, TABLE_RULES
 
     if fd is None:
         fd = {}
@@ -126,6 +126,10 @@ def _validate_front(fd, rf) -> dict:
     out["tables"] = {i: (fd.get("tables") or {}).get(i, t["defaultRule"]) for i, t in parts["tables"][0].items()}
     out["sections"] = {i: (fd.get("sections") or {}).get(i, SECTION_NAME.get(s["guess"], "其它"))
                        for i, s in parts["sections"][0].items()}
+    # 日期字段的形态标记（`YYYY年MM月` 这类，不含日期本身）：转换时按它写当天日期
+    fmt = next((f.get("dateFormat") for i, f in parts["fields"][0].items() if out["fields"][i] == "date"), None)
+    if isinstance(fmt, str) and DATE_FORMAT_RE.fullmatch(fmt):
+        out["dateFormat"] = fmt
     return out
 
 
@@ -136,9 +140,14 @@ def front_profile(fd: dict) -> dict | None:
     """profile.json 的 front 段：字段映射、表格清空规则、分节名。不要前置区时为 None（profile 里不出现 front）。"""
     if fd.get("disabled"):
         return None
-    return {"_about": "前置区（封面 / 签署页 / 版本跟踪表 / 目录）的骨架在 front.docx；fields 是字段 → 角色（keep = 保持原样），"
-                      "tables 是表格清空规则。转换时封面字段依次取自 md front-matter → 文档标题 → project.yaml → 当天日期。",
-            "fields": fd["fields"], "tables": fd["tables"], "sections": fd["sections"]}
+    out = {"_about": "前置区（封面 / 签署页 / 版本跟踪表 / 目录）的骨架在 front.docx；fields 是字段 → 角色"
+                     "（clear = 清空文字、keep = 保持原样），tables 是表格清空规则，dateFormat 是日期的写法。"
+                     "转换时封面字段依次取自 md front-matter → 文档标题 → project.yaml → 当天日期；"
+                     "reference.docx 页眉页脚里的 {{角色}} 占位符用同一个值替换，所以它只经 md2docx.py 使用。",
+           "fields": fd["fields"], "tables": fd["tables"], "sections": fd["sections"]}
+    if fd.get("dateFormat"):
+        out["dateFormat"] = fd["dateFormat"]
+    return out
 
 
 def role_map(report: dict, dec: dict) -> dict:

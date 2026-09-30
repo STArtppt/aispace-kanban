@@ -26,6 +26,8 @@ def verify(docx: Path, spec: dict, skip: tuple[str, ...] = ()) -> tuple[list[str
 
     skip：不核对的角色。模板有前置区时文档标题填在封面上，样张里没有 Title 段。"""
     _, paras = collect(docx)
+    # 前置区（封面、签署页、版本表）是客户原样的版式，不归规范管；它的表格文字会把「表格内文字」的多数派带偏
+    paras = [p for p in paras if not p.get("inFront")]
     warnings, detail = [], {}
     missing = Counter(p["styleId"] for p in paras if p.get("styleMissing") and p["len"])
     for sid, n in missing.items():

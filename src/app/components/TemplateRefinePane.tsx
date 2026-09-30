@@ -319,13 +319,16 @@ function FrontLine({ detail }: { detail: DocxTemplateItem }) {
     return <p className="text-xs text-muted-foreground">前置区：无（成品只有正文）</p>;
   }
   const roles = Object.values(detail.front?.fields ?? {});
-  const mapped = roles.filter((r) => r !== 'keep').length;
+  const keeps = roles.filter((r) => r === 'keep').length;
+  const clears = roles.filter((r) => r === 'clear').length;
+  const mapped = roles.length - keeps - clears;
   const sections = Object.values(detail.front?.sections ?? {});
   return (
     <p className="text-xs text-muted-foreground">
       前置区：有{sections.length ? `（${sections.join('、')}）` : ''}
       {detail.front ? ` · ${mapped} 个字段转换时填值` : ''}
-      {roles.length - mapped > 0 ? `，${roles.length - mapped} 段保持原样` : ''}
+      {clears > 0 ? `，${clears} 段清空` : ''}
+      {keeps > 0 ? `，${keeps} 段保持原样` : ''}
     </p>
   );
 }

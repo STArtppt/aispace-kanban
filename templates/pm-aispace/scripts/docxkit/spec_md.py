@@ -38,11 +38,12 @@ def describe(eff: dict) -> str:
 
 
 FIELD_SOURCE = {
-    "title": "front-matter 的 `title` → 开头唯一的 `#` 标题",
+    "title": "front-matter 的 `title` → 开头唯一的 `#` 标题（模板有文档类型字段时，`# 某项目 · 实施方案` 取 `·` 前面）",
     "client": "front-matter 的 `client` → `project.yaml` 的 `identity.甲方`",
     "vendor": "front-matter 的 `vendor` → `project.yaml` 的 `identity.承建方`",
     "date": "front-matter 的 `date` → 转换当天（YYYY年M月）",
-    "doctype": "front-matter 的 `doctype`（没有兜底，随文档而变）",
+    # 表格单元格里的 | 要转义，否则 GFM 把这一行切断
+    "doctype": "front-matter 的 `doctype` → 开头 `#` 标题最后一个 `·` / `\\|` / `｜` 后面的部分（都没有就待填）",
 }
 FIELD_LABEL = {"title": "标题", "client": "客户单位", "vendor": "编制单位", "date": "日期", "doctype": "文档类型"}
 
@@ -52,6 +53,7 @@ def front_lines(front: dict | None) -> list[str]:
         return []
     roles = [r for r in FIELD_LABEL if r in front["fields"].values()]
     keeps = sum(1 for v in front["fields"].values() if v == "keep")
+    date_src = f"front-matter 的 `date` → 转换当天（写成 {front.get('dateFormat') or 'YYYY年M月'}）"
     lines = [
         "## 封面字段从哪里取值",
         "",
@@ -60,7 +62,7 @@ def front_lines(front: dict | None) -> list[str]:
         "",
         "| 字段 | 取值顺序 |",
         "| --- | --- |",
-        *[f"| {FIELD_LABEL[r]} | {FIELD_SOURCE[r]} |" for r in roles],
+        *[f"| {FIELD_LABEL[r]} | {date_src if r == 'date' else FIELD_SOURCE[r]} |" for r in roles],
         "",
         "```markdown",
         "---",
@@ -69,7 +71,8 @@ def front_lines(front: dict | None) -> list[str]:
         "---",
         "```",
         "",
-        "- 签署页、版本跟踪表只留了空格子，交付前在 Word 里填。",
+        "- 正文页眉页脚里与封面字段同文的部分（比如写着文档类型的页眉）随字段一起替换。",
+        "- 签署页、版本跟踪表只留了标签和空格子，交付前在 Word 里填。",
         "- 目录保留为 Word 的目录域：用 Word 打开时会提示更新域，选「是」；没提示就右键目录 → 更新域。",
     ]
     if keeps:

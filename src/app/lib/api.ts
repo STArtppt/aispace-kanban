@@ -1009,8 +1009,11 @@ export interface DocxTemplateItem {
   front?: DocxProfileFront;
 }
 
-/** 字段角色：标题 / 客户单位 / 编制单位 / 日期 / 文档类型 / 保持原样 */
-export type DocxFrontRole = 'title' | 'client' | 'vendor' | 'date' | 'doctype' | 'keep';
+/**
+ * 字段角色：标题 / 客户单位 / 编制单位 / 日期 / 文档类型 / 清空 / 保持原样。
+ * `clear` 删掉文字、保留段落与格式（标题续行这类本文没有对应信息的段落）；旧脚本不认它，选了会以「决定无效」拒绝
+ */
+export type DocxFrontRole = 'title' | 'client' | 'vendor' | 'date' | 'doctype' | 'clear' | 'keep';
 /** 前置区表格的清空规则 */
 export type DocxTableRule = 'keepHeader' | 'keepLabels' | 'keepHeaderAndLabels' | 'keepAll';
 
@@ -1020,6 +1023,8 @@ export interface DocxProfileFront {
   tables?: Record<string, DocxTableRule | (string & {})>;
   /** 分节 id → 名称（封面、签署页……） */
   sections?: Record<string, string>;
+  /** 日期的写法（形态标记，如 `YYYY年MM月`），转换时按它写当天日期。旧模板没有 */
+  dateFormat?: string;
 }
 
 /** 模板索引。目录不在时 `available: false`、`items` 为空，状态码仍是 200。 */
@@ -1135,6 +1140,10 @@ export interface DocxFrontField {
   /** 是否「XX单位：」这种带标签的段落（替换时只换冒号后面） */
   labeled?: boolean;
   guess: Exclude<DocxFrontRole, 'keep'> | null;
+  /** 页眉页脚里同文出现几处（映射成字段后随它一起替换）。可选：旧脚本采的报告没有，那时不提示 */
+  headerHits?: number;
+  /** 像日期的段落给出写法（形态标记，如 `YYYY年M月`），不含日期本身。可选 */
+  dateFormat?: string;
 }
 
 export interface DocxFrontTable {
@@ -1142,7 +1151,11 @@ export interface DocxFrontTable {
   section: number;
   rows: number;
   cols: number;
+  /** 顶部横跨整行的合并标题行数（任何清空规则下都保留）。可选：旧脚本采的报告没有 */
+  captionRows?: number;
+  /** 首行（有合并标题行时是其后第一行）像表头 */
   headerLike: boolean;
+  /** 像标签表：首列像标签列，或别的列里有「编写(签字)：」这类标签段落（旧脚本只看首列） */
   labelColumn: boolean;
   defaultRule: DocxTableRule;
 }

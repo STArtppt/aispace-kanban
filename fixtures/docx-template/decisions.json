@@ -7,7 +7,7 @@
   },
   "choices": {"BodyText.line": 1.5},
   "front": {
-    "fields": {"f5": "keep"},
+    "fields": {"f6": "keep"},
     "tables": {"t2": "keepHeader"},
     "sections": {"s1": "封面"}
   }

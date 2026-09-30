@@ -51,7 +51,7 @@ from docxkit import (EXIT_ARGS, EXIT_CONFLICT, EXIT_FAIL, VERSION, ToolError,  #
 from docxkit.build import build_reference  # noqa: E402
 from docxkit.collect import collect, write_report  # noqa: E402
 from docxkit.decisions import MAX_BYTES, DecisionError, derive_profile, front_profile, validate  # noqa: E402
-from docxkit.front import assemble, build_front, fill_values  # noqa: E402
+from docxkit.front import ROLE_LABEL, assemble, build_front, fill_values, header_placeholders  # noqa: E402
 from docxkit.ooxml import Package, add_marker, heading_numbered, write_atomic  # noqa: E402
 from docxkit.pandoc import PandocMissing, find_pandoc, md_to_docx  # noqa: E402
 from docxkit.postprocess import postprocess  # noqa: E402
@@ -143,16 +143,20 @@ def cmd_build(args) -> tuple[dict, str]:
     spec = merged({k: v for k, v in profile.items() if not k.startswith("_") and k != "front"})
 
     pkg, log, _ = build_reference(src, spec)
-    add_marker(pkg, VERSION)
-    ref_bytes = pkg.to_bytes()
     front_pkg = None
     if fp:
         try:
-            front_pkg, flog = build_front(Package.read(src), report["front"], dec["front"])
+            front_pkg, flog, originals = build_front(Package.read(src), report["front"], dec["front"])
         except ValueError as e:
             raise ToolError(str(e), EXIT_ARGS, "在看板第 ② 步重新「开始分析」，或终端里重跑 collect", "stale-report")
         add_marker(front_pkg, VERSION)
         log += flog
+        # 正文页眉页脚里与封面字段同文的部分（写着文档类型的页眉）也写成占位符，转换时一起填值（D14 第 1 条）
+        hits = header_placeholders(pkg, originals)
+        if hits:
+            log.append("正文页眉页脚：" + "、".join(f"{ROLE_LABEL[r]} {n} 处" for r, n in hits.items()) + "写成占位符")
+    add_marker(pkg, VERSION)
+    ref_bytes = pkg.to_bytes()
     today = dt.date.today().isoformat()
     spec_text = spec_markdown(name, spec, profile["_roles"], VERSION, today, fp)
 
@@ -178,7 +182,7 @@ def cmd_build(args) -> tuple[dict, str]:
             if front_pkg is not None:
                 # 样张的封面填示例值，不读 project.yaml：它只是效果预览
                 values = fill_values({"client": "示例客户单位", "vendor": "示例编制单位", "doctype": "示例文档"},
-                                     fmt["title"], {}, dt.date.today())
+                                     fmt["title"], {}, dt.date.today(), date_format=fp.get("dateFormat"))
                 assemble(out, front_pkg, values)
             (t / "sample.docx").write_bytes(out.to_bytes())
             vw, _ = verify(t / "sample.docx", spec, skip=("Title",) if front_pkg is not None else ())

@@ -708,6 +708,10 @@ function FrontSection({
                         {role === 'keep' ? (
                           <span className="text-destructive">这段原文会出现在每一份成品里</span>
                         ) : null}
+                        {/* 旧脚本的报告没有 headerHits：不提示。选「保持原样」「清空」时页眉页脚不替换 */}
+                        {f.headerHits && role !== 'keep' && role !== 'clear' ? (
+                          <span className="text-muted-foreground">页眉页脚另有 {f.headerHits} 处随它替换</span>
+                        ) : null}
                       </div>
                     );
                   })}
@@ -716,7 +720,11 @@ function FrontSection({
                       <span className="w-44 shrink-0">
                         表格 · {t.rows} 行 × {t.cols} 列
                         <span className="block text-muted-foreground">
-                          {[t.labelColumn ? '首列像标签' : '', t.headerLike ? '首行像表头' : ''].filter(Boolean).join(' · ') || '看不出结构'}
+                          {[
+                            t.captionRows ? `顶部 ${t.captionRows} 行合并标题（保留）` : '',
+                            t.headerLike ? '有表头' : '',
+                            t.labelColumn ? '有标签' : '',
+                          ].filter(Boolean).join(' · ') || '看不出结构'}
                         </span>
                       </span>
                       <select

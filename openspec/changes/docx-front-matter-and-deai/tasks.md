@@ -90,3 +90,19 @@
 - [x] 11.6 旧服务配新前端：不重启服务只换前端，版本条不显示、去 AI 味卡片不显示计数、模版洗炼不显示前置区，页面不白屏
 - [x] 11.7 网络面板确认：去 AI 味模块、版本条、除批注落盘外，所有「复制提示词」都没有写请求；批注落盘只写 `notes/I<编号>.md`
 - [ ] 11.8 用本地私有目录里的真实客户模板和那份实施方案复验一次（包括与外部技能成品对照结构），结论只记在本地，不进仓库和产物
+  （首轮已跑：结构与外部成品一致，前置区有六处不对，见 design D14；第 12 节修完后按同样步骤再跑一次，通过再勾）
+
+## 12. 复验修复（design D14）
+
+- [x] 12.1 `front.py` · 表格：数出顶部合并标题行（`captionRows`，任何规则都保留），表头判断改看其后第一行；默认规则优先级改为 表头 → 标签 → 原样
+- [x] 12.2 `front.py` · 表格：`keepLabels` 改为「保留标签」—— 首列照旧，其余单元格保留标签段落，「标签：值」只清冒号后；「像标签表」按标签段落所在列判断
+- [x] 12.3 `front.py` · 字段：角色枚举加 `clear`（`FIELD_CHOICES`、`decisions.py` 校验），切出时删文字保段落，文本框回退副本一起删
+- [x] 12.4 `front.py` · 猜测：先认大字号里的 `doctype`，再取 `title`，标题续行猜 `clear`；日期字段给 `dateFormat`
+- [x] 12.5 `front.py` / `build.py` · 页眉页脚：按段拼接 run，包含已映射字段原文（≥ 4 字）的写成占位符，`reference.docx` 与 `front.docx` 都做；报告字段加 `headerHits`
+- [x] 12.6 `front.py` · 装配：正文页眉页脚占位符填值，`log` 写替换处数；`fill_values` 拆文档标题的类型后缀（D14 第 3 条）；日期按 `dateFormat` 写
+- [x] 12.7 `docxkit/README.md` 补：页眉页脚同文替换与「`reference.docx` 只经 `md2docx.py` 使用」、`clear`、合并标题行、标签段落；`output/docx-template/README.md` 同步
+- [x] 12.8 合成语料：`make_messy_docx.py` 的前置区变体补 正文页眉写文档类型（拆成多个 run）、封面标题两段、字号更大的文档类型行、带合并标题行的版本表（首列短编号）、一行三组签字标签
+- [x] 12.9 `check-docx.mjs`：新增上述每一项的断言；「报告 / `front.docx` / 成品不含原文」改为按段拼接 run 后再搜；`# X · 类型` 拆分与 front-matter 优先
+- [x] 12.10 契约 `api.ts`：`DocxFrontRole` 加 `'clear'`；报告字段类型补可选 `headerHits`、`dateFormat`，表格补可选 `captionRows`
+- [x] 12.11 前端 `templateRefine/`：字段下拉加「清空」（`plan.ts` 文案）；`headerHits` 提示；表格规则文案改为「保留标签，清空填写内容」「保留表头与标签」，注明合并标题行；「保持原样」提醒在改成「清空」后消失；旧报告缺字段时不显示
+- [x] 12.12 验收：`pnpm typecheck`、`pnpm build`、`pnpm test:docx` 绿；重启 `pnpm dev` 在合成工作空间走一遍第 ④ 步（新下拉项、页眉提示、表格规则）并生成、转换；然后回到 11.8

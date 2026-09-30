@@ -235,14 +235,15 @@ export const FRONT_ROLE_LABEL: Record<DocxFrontRole, string> = {
   vendor: '编制单位',
   date: '日期',
   doctype: '文档类型',
+  clear: '清空',
   keep: '保持原样',
 };
 export const FRONT_ROLES = Object.keys(FRONT_ROLE_LABEL) as DocxFrontRole[];
 
 export const TABLE_RULE_LABEL: Record<DocxTableRule, string> = {
   keepHeader: '保留表头行，清空其余单元格',
-  keepLabels: '保留首列标签，清空其余单元格',
-  keepHeaderAndLabels: '保留首行和首列',
+  keepLabels: '保留标签，清空填写内容',
+  keepHeaderAndLabels: '保留表头与标签',
   keepAll: '原样保留',
 };
 export const TABLE_RULES = Object.keys(TABLE_RULE_LABEL) as DocxTableRule[];
@@ -253,12 +254,13 @@ export const SECTION_NAME: Record<string, string> = {
 };
 
 /** 字段取值顺序（与 spec_md.py 的 FIELD_SOURCE 同一口径） */
-const FIELD_SOURCE: Record<Exclude<DocxFrontRole, 'keep'>, string> = {
-  title: 'front-matter 的 `title` → 开头唯一的 `#` 标题',
+const FIELD_SOURCE: Record<Exclude<DocxFrontRole, 'keep' | 'clear'>, string> = {
+  title: 'front-matter 的 `title` → 开头唯一的 `#` 标题（模板有文档类型字段时，`# 某项目 · 实施方案` 取 `·` 前面）',
   client: 'front-matter 的 `client` → `project.yaml` 的 `identity.甲方`',
   vendor: 'front-matter 的 `vendor` → `project.yaml` 的 `identity.承建方`',
-  date: 'front-matter 的 `date` → 转换当天（YYYY年M月）',
-  doctype: 'front-matter 的 `doctype`（没有兜底，随文档而变）',
+  date: 'front-matter 的 `date` → 转换当天（写法同模板原文）',
+  // 表格单元格里的 | 要转义，否则 GFM 把这一行切断
+  doctype: 'front-matter 的 `doctype` → 开头 `#` 标题最后一个 `·` / `\\|` / `｜` 后面的部分（都没有就待填）',
 };
 
 export interface FrontPlan {
@@ -294,6 +296,7 @@ function previewFront(plan?: FrontPlan | null): string[] {
   const roles = (Object.keys(FIELD_SOURCE) as Array<keyof typeof FIELD_SOURCE>)
     .filter((r) => Object.values(plan.fields).includes(r));
   const keeps = Object.values(plan.fields).filter((r) => r === 'keep').length;
+  const clears = Object.values(plan.fields).filter((r) => r === 'clear').length;
   return [
     '## 封面字段取值',
     '',
@@ -303,7 +306,10 @@ function previewFront(plan?: FrontPlan | null): string[] {
     '| --- | --- |',
     ...roles.map((r) => `| ${FRONT_ROLE_LABEL[r]} | ${FIELD_SOURCE[r]} |`),
     '',
-    ...(keeps ? [`- 有 ${keeps} 段设成了「保持原样」：模板里的原文会出现在每一份成品里。`, ''] : []),
+    '- 正文页眉页脚里与封面字段同文的部分（比如写着文档类型的页眉）随字段一起替换。',
+    ...(clears ? [`- 有 ${clears} 段设成了「清空」：保留段落与格式，文字删掉。`] : []),
+    ...(keeps ? [`- 有 ${keeps} 段设成了「保持原样」：模板里的原文会出现在每一份成品里。`] : []),
+    '',
   ];
 }
 

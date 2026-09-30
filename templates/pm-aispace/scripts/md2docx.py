@@ -12,7 +12,9 @@
 只保留段首标签式加粗。
 模板带 front.docx（前置区）时，成品 = 前置区 + 正文：封面字段依次取自 md front-matter（title / client / vendor /
 date / doctype）→ 开头的 `#` 标题（title）→ project.yaml 的 identity.甲方 / 承建方 → 当天日期；取不到的写
-「【待填：…】」并给 warning。目录保留为域，成品打开时提示更新域。
+「【待填：…】」并给 warning。`# 某项目 · 文档类型` 这类标题在模板有文档类型字段时拆成标题与文档类型两项；
+日期按模板原文的写法（profile.json 的 front.dateFormat）。正文页眉页脚里的 {{角色}} 占位符用同一个值替换。
+目录保留为域，成品打开时提示更新域。
 
 需要 pandoc 3（查找顺序：PANDOC_BIN 环境变量 → 工作空间 .env 的 PANDOC_BIN → PATH）。
 模板的写作规定在 `output/docx-template/<模板名>/spec.md`；通用规范的在 `scripts/docxkit/base-spec.json`。
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import sys
 import tempfile
 from pathlib import Path
@@ -43,7 +46,7 @@ sys.path.insert(0, str(HERE))
 from docxkit import (EXIT_ARGS, EXIT_CONFLICT, EXIT_DEPENDENCY, EXIT_FAIL, VERSION,  # noqa: E402
                      ToolError, finish, force_utf8)
 from docxkit.build import build_reference  # noqa: E402
-from docxkit.front import assemble, fill_values, read_front_matter, read_identity  # noqa: E402
+from docxkit.front import assemble, fill_values, read_front_matter, read_identity, roles_in  # noqa: E402
 from docxkit.ooxml import Package, add_marker, heading_numbered, marker_of, write_atomic  # noqa: E402
 from docxkit.pandoc import PandocMissing, default_reference, find_pandoc, md_to_docx  # noqa: E402
 from docxkit.postprocess import postprocess  # noqa: E402
@@ -110,8 +113,11 @@ def convert(args) -> tuple[dict, str]:
         out = Package.read(out_tmp)
         log = fmt["log"] + postprocess(out, VERSION)
         if front is not None:
+            ref_pkg = Package.read(ref)
             values = fill_values(read_front_matter(md.read_text(encoding="utf-8")), fmt["title"],
-                                 read_identity(WS), dt.date.today())
+                                 read_identity(WS), dt.date.today(),
+                                 split_doctype="doctype" in roles_in(front, ref_pkg),
+                                 date_format=_front_profile(ref).get("dateFormat"))
             flog, fw = assemble(out, front, values)
             log += flog
             warnings += fw
@@ -120,6 +126,15 @@ def convert(args) -> tuple[dict, str]:
     human = "\n".join([f"已生成 {rel(target)}（模板：{args.template}）", *log, *(f"注意：{w}" for w in warnings)])
     return {"written": [rel(target)], "target": rel(target), "template": args.template, "overwritten": overwritten,
             "warnings": warnings, "log": log, "pandocVersion": pandoc_ver}, human
+
+
+def _front_profile(ref: Path) -> dict:
+    """模板 profile.json 的 front 段（日期写法等）；旧模板没有就是空。"""
+    try:
+        front = json.loads((ref.parent / "profile.json").read_text(encoding="utf-8")).get("front")
+    except (OSError, ValueError):
+        return {}
+    return front if isinstance(front, dict) else {}
 
 
 def _bytes_file(p: Path, data: bytes) -> Path:

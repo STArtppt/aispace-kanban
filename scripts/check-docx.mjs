@@ -84,6 +84,30 @@ function zipText(docx, part = 'word/document.xml') {
     'import sys, zipfile; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[1]).read(sys.argv[2]))', docx, part],
   { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 }
+/**
+ * docx 里正文与页眉页脚的全部段落文字：每段把所有 run 的文字拼起来（页眉文字常被拆成多个 run，
+ * 按 XML 原样搜会漏掉，11.8 自查就是这样漏的）。「不含原文」一律在这上面搜。
+ */
+function paraTexts(docx) {
+  const code = `
+import html, json, re, sys, zipfile
+z = zipfile.ZipFile(sys.argv[1])
+out = {}
+for n in z.namelist():
+    if re.match(r"word/(.*-)?(document|header|footer)[^/]*\\.xml$", n):
+        paras, cur = [], []
+        for m in re.finditer(r"<w:t(?:\\s[^>]*)?>([^<]*)</w:t>|</w:p>", z.read(n).decode("utf-8")):
+            if m.group(0) == "</w:p>":
+                paras.append("".join(cur)); cur = []
+            else:
+                cur.append(html.unescape(m.group(1)))
+        out[n] = paras
+print(json.dumps(out, ensure_ascii=False))
+`;
+  return JSON.parse(execFileSync(PY, [...PY_PRE, '-c', code, docx], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 }));
+}
+const flat = (docx) => Object.values(paraTexts(docx)).flat();
+const headerParas = (docx) => Object.entries(paraTexts(docx)).filter(([n]) => /header|footer/.test(n)).flatMap(([, p]) => p);
 const sectCount = (xml) => (xml.match(/<w:sectPr\b/g) || []).length;
 /** 某段文字前面最近的一个字号（半磅）：用来断言封面字段替换后字号没变。 */
 function sizeBefore(xml, text) {
@@ -225,7 +249,16 @@ try {
   check(titleField?.inTextbox && titleField.occurrences === 2, '文本框标题与兼容回退副本归为一个字段', JSON.stringify(titleField));
   check(['date', 'client', 'vendor', 'doctype'].every((g) => fr?.fields.some((f) => f.guess === g)), '封面角色都猜到了');
   check(fr?.tables[0]?.defaultRule === 'keepLabels' && fr?.tables[1]?.defaultRule === 'keepHeader',
-    '签署页默认保留首列标签、版本表默认保留表头行', JSON.stringify(fr?.tables));
+    '签署页默认保留标签、版本表默认保留表头行', JSON.stringify(fr?.tables));
+  const [fDoctype, fTitle, fCont] = fr?.fields || [];
+  check(fDoctype?.guess === 'doctype' && fDoctype.size === 26 && fTitle?.guess === 'title' && fTitle.size === 22
+    && fCont?.guess === 'clear', '字号最大的是文档类型、次一号的是标题，标题续行猜作「清空」', JSON.stringify(fr?.fields.slice(0, 3)));
+  check(fDoctype?.headerHits === 1 && fTitle?.headerHits === 0, '字段带 headerHits（正文页眉里同文 1 处，拆成多个 run 也认）');
+  check(fr?.fields.find((f) => f.guess === 'date')?.dateFormat === 'YYYY年M月', '日期字段给出形态标记 dateFormat');
+  check(fr?.tables[0]?.rows === 1 && fr.tables[0].cols === 6 && fr.tables[0].captionRows === 0,
+    '一行三组签字标签：标签不在首列也判为标签表', JSON.stringify(fr?.tables[0]));
+  check(fr?.tables[1]?.captionRows === 1 && fr.tables[1].headerLike, '版本表：数出顶部合并标题行，表头看其后第一行（首列短编号不再误判为标签表）',
+    JSON.stringify(fr?.tables[1]));
   check(!JSON.parse(fReportText).clusters.some((c) => c.fmt.size === 22), '前置区段落不参与格式聚类');
 
   r = run('docx_template.py', ['build', '--name', '前置', '--source', 'input/raw/带封面.docx', '--decisions', '-'],
@@ -235,8 +268,22 @@ try {
     { input: JSON.stringify({ front: frontDec }) });
   check(r.code === 0 && existsSync(path.join(fdir, 'front.docx')), '生成模板时写出 front.docx', JSON.stringify(r.result));
   const fdoc = zipText(path.join(fdir, 'front.docx'));
-  check(!fdoc.includes(FRONT_SENTINEL) && fdoc.includes('{{title}}') && fdoc.includes('{{client}}'),
-    'front.docx 里只有占位符，没有封面、签署页、版本表、目录项的原文');
+  const fflat = flat(path.join(fdir, 'front.docx'));
+  check(!fflat.some((t) => t.includes(FRONT_SENTINEL)) && fdoc.includes('{{title}}') && fdoc.includes('{{client}}')
+    && fdoc.includes('{{doctype}}'),
+  'front.docx 里只有占位符，没有封面、签署页、版本表、目录项的原文（按段拼接 run 后再搜）');
+  check((fdoc.match(/<w:sz w:val="44"\/>/g) || []).length === 4 && fflat.filter((t) => t === '{{title}}').length === 2,
+    '「清空」的标题续行：段落与字号还在、文字删掉，文本框回退副本里同样');
+  check(['编写(签字)：', '审核(签字)：', '批准(签字)：'].every((l) => fflat.includes(l)) && fflat.filter((t) => t === '日期：').length === 3,
+    '签署页：三组标签和「日期：」都在，签名与日期的值清空');
+  check(fflat.includes('文件版本记录') && fflat.includes('版本说明') && !fflat.some((t) => ['A', 'B', 'C'].includes(t)),
+    '版本表：合并标题行与表头保留，样例记录（含首列 A、B、C）清空');
+  const refHeader = headerParas(path.join(fdir, 'reference.docx'));
+  check(refHeader.includes('合成单位页眉　{{doctype}}') && !refHeader.some((t) => t.includes(FRONT_SENTINEL)),
+    'reference.docx 正文页眉：与文档类型同文的部分写成 {{doctype}}，前面的单位名原样', refHeader.join(' | '));
+  check(/<w:b\/><\/w:rPr><w:t[^>]*>\{\{doctype\}\}/.test(zipText(path.join(fdir, 'reference.docx'), 'word/header1.xml')),
+    '页眉占位符保住原文首个 run 的格式（加粗）');
+  check((r.result.log || []).some((l) => l.includes('正文页眉页脚：文档类型 1 处')), 'build 的 log 写明页眉页脚替换处数', (r.result.log || []).join('；'));
   check(fdoc.includes('2025年6月') && fdoc.includes('签署页'), '「保持原样」的段落与模板文字原样保留');
   check(sectCount(fdoc) === fr.sections.length, 'front.docx 的分节数与前置区一致');
   const zipNames = (docx) => execFileSync(PY, [...PY_PRE, '-c',
@@ -244,7 +291,8 @@ try {
   const fnames = zipNames(path.join(fdir, 'front.docx'));
   check(new Set(fnames).size === fnames.length, 'front.docx 里没有重复的 zip 条目（原件自带 custom.xml 时）', fnames.join(' '));
   const fprof = JSON.parse(readFileSync(path.join(fdir, 'profile.json'), 'utf8'));
-  check(fprof.front?.fields?.f5 === 'keep' && fprof.front?.tables?.t2 === 'keepHeader' && fprof.front?.sections?.s1 === '封面',
+  check(fprof.front?.fields?.f6 === 'keep' && fprof.front?.tables?.t2 === 'keepHeader' && fprof.front?.sections?.s1 === '封面'
+    && fprof.front?.fields?.f3 === 'clear' && !fprof.front.dateFormat,
     'profile.json 带 front 段（字段映射、表格清空规则、分节名）');
   check(readFileSync(path.join(fdir, 'spec.md'), 'utf8').includes('封面字段从哪里取值'), 'spec.md 写明封面字段从哪里取值');
   check(inspect(path.join(fdir, 'front.docx'), null).marker, 'front.docx 带生成标记');
@@ -264,7 +312,9 @@ try {
       '封面字段已替换（标题取文档标题，客户单位取 project.yaml）');
     check(sizeBefore(out, '样张：示例系统需求说明') === sizeBefore(fdoc, '{{title}}') && sizeBefore(fdoc, '{{title}}') === '44',
       '封面标题替换后字号不变（22pt）');
-    check(!out.includes(FRONT_SENTINEL) && out.includes('TOC \\o'), '成品里没有模板样例原文，目录保留为域');
+    check(!flat(path.join(docs, 'b.docx')).some((t) => t.includes(FRONT_SENTINEL)) && out.includes('TOC \\o'),
+      '成品（含页眉页脚，按段拼接 run）里没有模板样例原文，目录保留为域');
+    check(headerParas(path.join(docs, 'b.docx')).includes('合成单位页眉　【待填：文档类型】'), '正文页眉的文档类型取不到值时同样写「待填」');
     check((r.result.log || []).some((l) => l.includes('project.yaml')), 'log 注明字段取值来源', (r.result.log || []).join('；'));
     check((r.result.warnings || []).some((w) => w.includes('【待填：编制单位】')), '取不到值的字段写「待填」并给 warning');
     check(zipText(path.join(docs, 'b.docx'), 'word/settings.xml').includes('<w:updateFields w:val="true"/>'), '成品打开时提示更新域');
@@ -273,6 +323,17 @@ try {
     r = run('md2docx.py', ['output/docs/c.md', '--template', '前置']);
     const outC = zipText(path.join(docs, 'c.docx'));
     check(r.code === 0 && outC.includes('前置覆盖单位') && !outC.includes('合成甲方单位'), 'md front-matter 优先于 project.yaml');
+    writeFileSync(path.join(docs, 'e.md'), '# 合成项目 · 需求调研实施方案\n\n## 章节\n\n正文。\n');
+    r = run('md2docx.py', ['output/docs/e.md', '--template', '前置']);
+    const eflat = flat(path.join(docs, 'e.docx'));
+    check(r.code === 0 && eflat.includes('合成项目') && headerParas(path.join(docs, 'e.docx')).includes('合成单位页眉　需求调研实施方案')
+      && eflat.includes('需求调研实施方案') && (r.result.log || []).some((l) => l.includes('文档类型 ← 文档标题后缀（正文页眉页脚 1 处同步替换）'))
+      && !(r.result.warnings || []).some((w) => w.includes('文档类型')),
+    '`# X · 类型`：拆成标题与文档类型，正文页眉同步替换，没有「待填」', (r.result.log || []).join('；'));
+    writeFileSync(path.join(docs, 'f.md'), '---\ntitle: 合成覆盖标题\n---\n\n# 合成项目 · 需求调研实施方案\n\n## 章节\n\n正文。\n');
+    r = run('md2docx.py', ['output/docs/f.md', '--template', '前置']);
+    check(r.code === 0 && flat(path.join(docs, 'f.docx')).includes('合成覆盖标题')
+      && (r.result.warnings || []).some((w) => w.includes('文档类型')), 'front-matter 写了 title 时标题不拆');
     rmSync(path.join(ws, 'project.yaml'));
     writeFileSync(path.join(docs, 'd.md'), '# 合成标题\n\n## 章节\n\n正文。\n');
     r = run('md2docx.py', ['output/docs/d.md', '--template', '前置']);
@@ -287,7 +348,18 @@ try {
     '表格排版的封面：表格里的段落按字段处理，不进表格清单', JSON.stringify(tfr?.fields));
   r = run('docx_template.py', ['build', '--name', '表格封面', '--source', 'input/raw/表格封面.docx']);
   const tdoc = zipText(path.join(ws, 'output', 'docx-template', '表格封面', 'front.docx'));
-  check(r.code === 0 && !tdoc.includes(FRONT_SENTINEL) && sectCount(tdoc) === 4, '不包 sdt 的目录：清掉样例目录项，分节符保住');
+  check(r.code === 0 && !flat(path.join(ws, 'output', 'docx-template', '表格封面', 'front.docx')).some((t) => t.includes(FRONT_SENTINEL))
+    && sectCount(tdoc) === 4, '不包 sdt 的目录：清掉样例目录项，分节符保住');
+  const tprof = JSON.parse(readFileSync(path.join(ws, 'output', 'docx-template', '表格封面', 'profile.json'), 'utf8'));
+  check(tprof.front?.dateFormat === 'YYYY年MM月', 'profile.json 记下日期的写法（形态标记）', JSON.stringify(tprof.front));
+  if (hasPandoc) {
+    const docs = path.join(ws, 'output', 'docs');
+    writeFileSync(path.join(docs, 'g.md'), '# 合成标题\n\n## 章节\n\n正文。\n');
+    r = run('md2docx.py', ['output/docs/g.md', '--template', '表格封面']);
+    const now = new Date();
+    const want = `${now.getFullYear()}年${String(now.getMonth() + 1).padStart(2, '0')}月`;
+    check(r.code === 0 && flat(path.join(docs, 'g.docx')).includes(want), `日期按模板写法写成「${want}」`);
+  }
 
   r = run('docx_template.py', ['build', '--name', '前置', '--source', 'input/raw/带封面.docx', '--decisions', '-', '--regenerate'],
     { input: '{"front": {"disabled": true}}' });

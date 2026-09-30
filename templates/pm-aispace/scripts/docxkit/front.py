@@ -5,7 +5,8 @@
 1. **识别**（`analyze`，collect 调用）：正文起点之前的分节。报告只出结构与角色标签，不出文字 ——
    角色猜测（标题 / 客户单位 / 编制单位 / 日期 / 文档类型）在脚本内部按字号、位置、日期格式得出。
 2. **切出**（`build_front`，build 调用）：连同图片、页眉页脚、样式、编号切成 `front.docx`；
-   映射成字段的段落写占位符 `{{title}}`（原文不留），表格按清空规则清掉样例数据，目录只留 TOC 域和一行占位。
+   映射成字段的段落写占位符 `{{title}}`、映射成「清空」的删掉文字（原文都不留），表格按清空规则清掉样例数据，
+   目录只留 TOC 域和一行占位；页眉页脚里与字段同文的部分也写成占位符（`header_placeholders`，reference.docx 同样处理）。
 3. **装配**（`assemble`，md2docx 调用）：把前置区插到 pandoc 输出前，重排 r:id、部件名、样式 ID；
    填字段（`fill_values` 决定取值顺序，design D4）；settings.xml 设打开时更新域。
 
@@ -28,7 +29,8 @@ from .collect import Styles, describe, dominant_run_rpr, load_theme_fonts, merge
 from .ooxml import NS, Package, q, wval
 
 ROLES = ("title", "client", "vendor", "date", "doctype")
-FIELD_CHOICES = ROLES + ("keep",)
+# clear = 删掉文字、保留段落与格式（标题续行这类本文没有对应信息的段落，D14 第 2 条）；keep = 保持原样
+FIELD_CHOICES = ROLES + ("clear", "keep")
 TABLE_RULES = ("keepHeader", "keepLabels", "keepHeaderAndLabels", "keepAll")
 ROLE_LABEL = {"title": "标题", "client": "客户单位", "vendor": "编制单位", "date": "日期", "doctype": "文档类型"}
 TOC_PLACEHOLDER = "目录：用 Word 打开后右键此处，选择「更新域」"
@@ -41,6 +43,7 @@ TOC_INSTR = re.compile(r"<w:instrText\b[^>]*>\s*TOC\b")
 # 段落开始标签（不含自闭合的 <w:p/>，也不会误中 <w:pPr>）
 P_OPEN = re.compile(r"<w:p(?:\s[^>]*[^/])?>")
 LABEL_RE = re.compile(r"^\s*([^：:\s]{1,10}\s*[：:])\s*\S")
+LABEL_ONLY = re.compile(r"^[^：:]{1,9}[：:]$")  # 只有标签、没有值的段落（签署页的「编写(签字)：」），规范化之后比
 DATE_RE = re.compile(r"^\s*(\d{4}\s*年\s*\d{1,2}\s*月(\s*\d{1,2}\s*日)?|[〇○零一二三四五六七八九]{4}\s*年.{1,3}月(.{1,3}日)?"
                      r"|\d{4}[-./]\d{1,2}([-./]\d{1,2})?)\s*$")
 ORG_RE = re.compile(r"(公司|集团|局|院|中心|委员会|厅|部|所|大学|学院|银行|单位|政府)$")
@@ -269,7 +272,12 @@ class _Front:
                 "occurrences": len(g["spans"]), "size": fmt["size"], "bold": fmt["bold"], "jc": fmt["jc"],
                 "labeled": bool(LABEL_RE.match(g["text"])),
                 "_spans": g["spans"], "_text": g["text"],
+                "_box": next((k for k, t in reversed(list(enumerate(self.txbx_spans)))
+                              if t[0] < g["spans"][0][0] and g["spans"][0][1] <= t[1]), None),
             })
+            fmt_mark = date_format(_value_of(g["text"]))
+            if fmt_mark:
+                out[-1]["dateFormat"] = fmt_mark
         _guess_roles(out)
         return out
 
@@ -284,6 +292,7 @@ class _Front:
         return {"size": f["size"], "bold": f["bold"], "jc": f["jc"]}
 
     def _tables(self) -> list[dict]:
+        """每张表的结构。只看形态（字数、加粗、底纹、冒号），不看文字内容（design D5 / D14 第 5、6 条）。"""
         out = []
         top = [sp for sp in self.tbl_spans if not inside(sp, self.tbl_spans) and sp not in self.layout
                and not any(a <= sp[0] < b for a, b in self.excluded)]
@@ -293,18 +302,43 @@ class _Front:
             cols = max((c for _, c, _ in cells), default=-1) + 1
             text = {(r, c): norm_text("".join(m.group(1) for m in T_RE.finditer(self.s, a, b)))
                     for r, c, (a, b) in cells}
-            first_row = [text.get((0, c), "") for c in range(cols)]
-            row0 = "".join(self.s[a:b] for r, _, (a, b) in cells if r == 0)
-            header_like = (rows >= 2 and cols >= 1 and all(first_row) and all(len(t) <= 12 for t in first_row)
-                           and (rows >= 3 or "<w:b/>" in row0 or "<w:shd" in row0))
-            col0 = [text.get((r, 0), "") for r in range(rows)]
+            # 顶部横跨整行的合并标题行（「文件版本记录」）：一行只有一格、并且合并了整行
+            caps = 0
+            while caps < rows - 1 and cols >= 2:
+                row = [(c, span) for r, c, span in cells if r == caps]
+                if len(row) != 1 or "<w:gridSpan" not in self.s[row[0][1][0]:row[0][1][1]]:
+                    break
+                caps += 1
+            body_rows = rows - caps
+            hdr = [text.get((caps, c), "") for c in range(cols)]
+            hdr_xml = "".join(self.s[a:b] for r, _, (a, b) in cells if r == caps)
+            labels = {c for r, c, span in cells if r >= caps and self.label_paras(span)}
+            # 表头：短、全填、不以冒号结尾；要么加粗 / 底纹，要么至少 3 行 3 列（两列的键值表首行也「全填且短」）
+            header_like = (body_rows >= 2 and all(hdr) and all(len(t) <= 12 for t in hdr)
+                           and not any(t.endswith(("：", ":")) for t in hdr)
+                           and ("<w:b/>" in hdr_xml or '<w:b w:val="1"/>' in hdr_xml or "<w:shd" in hdr_xml
+                                or (body_rows >= 3 and cols >= 3)))
+            col0 = [text.get((r, 0), "") for r in range(caps, rows)]
             filled = [t for t in col0 if t]
-            label_col = (cols >= 2 and rows >= 2 and len(filled) >= 0.8 * rows
+            label_col = (cols >= 2 and body_rows >= 2 and len(filled) >= 0.8 * body_rows
                          and sum(len(t) for t in filled) / max(len(filled), 1) <= 8
-                         and sum(1 for t in col0[1:] if re.search(r"\d", t)) <= (rows - 1) * 0.2)
-            rule = "keepLabels" if label_col else ("keepHeader" if header_like else "keepAll")
+                         and sum(1 for t in col0[1:] if re.search(r"\d", t)) <= (body_rows - 1) * 0.2)
+            label_like = cols >= 2 and (label_col or bool(labels))
+            rule = "keepHeader" if header_like else ("keepLabels" if label_like else "keepAll")
             out.append({"id": f"t{n}", "section": self.section_of(sp[0]), "rows": rows, "cols": cols,
-                        "headerLike": header_like, "labelColumn": label_col, "defaultRule": rule, "_span": sp})
+                        "captionRows": caps, "headerLike": header_like, "labelColumn": label_like,
+                        "defaultRule": rule, "_span": sp, "_caps": caps})
+        return out
+
+    def label_paras(self, span) -> list[tuple[int, int]]:
+        """单元格里的标签段落（「编写(签字)：」「日期：」这种，≤ 10 字、以冒号结尾）的区间。"""
+        a, b = span
+        out = []
+        for p in spans(self.s[a:b], "p"):
+            p = (p[0] + a, p[1] + a)
+            t = norm_text("".join(m.group(1) for m in T_RE.finditer(self.s, *p)))
+            if LABEL_ONLY.match(t) or LABEL_RE.match(t):
+                out.append(p)
         return out
 
     def cells(self, tbl_span) -> list[tuple[int, int, tuple[int, int]]]:
@@ -334,9 +368,9 @@ class _Front:
                 guess = "cover"
             elif has_toc:
                 guess = "toc"
-            elif any(t["labelColumn"] for t in ts):
+            elif any(t["defaultRule"] == "keepLabels" for t in ts):
                 guess = "signoff"
-            elif any(t["headerLike"] for t in ts):
+            elif any(t["defaultRule"] == "keepHeader" for t in ts):
                 guess = "revisions"
             else:
                 guess = "other"
@@ -347,24 +381,74 @@ class _Front:
         return out
 
 
+def _value_of(text: str) -> str:
+    m = LABEL_RE.match(text)
+    return text[m.end(1):] if m else text
+
+
+def date_format(value: str) -> str | None:
+    """日期原文的形态标记（`YYYY年MM月`、`YYYY.MM`……），不含日期本身。认不出（含中文数字年份）返回 None。"""
+    m = re.fullmatch(r"(\d{4})年(\d{1,2})月(?:(\d{1,2})日)?", value) or \
+        re.fullmatch(r"(\d{4})([-./])(\d{1,2})(?:\2(\d{1,2}))?", value)
+    if not m:
+        return None
+    g = m.groups()
+    if len(g) == 3:
+        y, mo, d, sep = g[0], g[1], g[2], None
+    else:
+        y, sep, mo, d = g
+    pad = mo.startswith("0") or bool(d and d.startswith("0"))
+    mm, dd = ("MM", "DD") if pad else ("M", "D")
+    if sep is None:
+        return f"YYYY年{mm}月" + (f"{dd}日" if d else "")
+    return f"YYYY{sep}{mm}" + (f"{sep}{dd}" if d else "")
+
+
+DATE_FORMAT_RE = re.compile(r"YYYY(年(MM|M)月((DD|D)日)?|([-./])(MM|M)(\5(DD|D))?)")
+
+
+def format_date(fmt: str | None, day: dt.date) -> str:
+    """按形态标记写日期；没有标记（或标记不合法）时写「YYYY年M月」。"""
+    if not fmt or not DATE_FORMAT_RE.fullmatch(fmt):
+        fmt = "YYYY年M月"
+    token = {"YYYY": f"{day.year}", "MM": f"{day.month:02d}", "M": f"{day.month}",
+             "DD": f"{day.day:02d}", "D": f"{day.day}"}
+    return re.sub(r"YYYY|MM|M|DD|D", lambda m: token[m.group(0)], fmt)
+
+
 def _guess_roles(fields: list[dict]) -> None:
-    """角色猜测：只在第一节（封面）里猜，每个角色至多一个。判据只看字号、位置、格式形态。"""
+    """角色猜测：只在第一节（封面）里猜，每个角色至多一个。判据只看字号、位置、格式形态（D14 第 4 条）。"""
     for f in fields:
         f["guess"] = None
     cover = [f for f in fields if f["section"] == 0]
 
     def value_of(f):
-        m = LABEL_RE.match(f["_text"])
-        return f["_text"][m.end(1):] if m else f["_text"]
+        return _value_of(f["_text"])
 
     for f in cover:
         if DATE_RE.match(value_of(f)):
             f["guess"] = "date"
             break
     rest = [f for f in cover if f["guess"] is None]
-    big = [f for f in rest if (f["size"] or 0) >= 16 and f["chars"] >= 4]
-    if big:
-        max(big, key=lambda f: (f["size"], -f["order"]))["guess"] = "title"
+    big = [f for f in rest if (f["size"] or 0) >= 16]
+    # 封面上字号最大的常是文档类型（「××报告」），项目名反而小一号：先在大字号里认文档类型
+    kinds = [f for f in big if f["chars"] <= 15 and DOCTYPE_RE.search(value_of(f))]
+    if kinds:
+        max(kinds, key=lambda f: (f["size"], -f["order"]))["guess"] = "doctype"
+    titles = [f for f in big if f["guess"] is None and f["chars"] >= 4]
+    if titles:
+        title = max(titles, key=lambda f: (f["size"], -f["order"]))
+        title["guess"] = "title"
+        # 标题续行：紧跟在后面、同一文本框（或都不在文本框里）、字号与加粗都相同
+        prev = title
+        for f in sorted(cover, key=lambda f: f["order"]):
+            if f["order"] != prev["order"] + 1:
+                continue
+            if f["guess"] is None and f["_box"] == prev["_box"] and f["size"] == prev["size"] and f["bold"] == prev["bold"]:
+                f["guess"] = "clear"
+                prev = f
+            else:
+                break
     orgs = [f for f in cover if f["guess"] is None and ORG_RE.search(value_of(f))]
     taken = set()
     for f in orgs:
@@ -382,10 +466,91 @@ def _guess_roles(fields: list[dict]) -> None:
             loose[0]["guess"] = "client"
         if "vendor" not in taken:
             loose[-1]["guess"] = "vendor"
-    for f in cover:
-        if f["guess"] is None and f["chars"] <= 15 and DOCTYPE_RE.search(value_of(f)):
-            f["guess"] = "doctype"
-            break
+    if not any(f["guess"] == "doctype" for f in cover):
+        for f in cover:
+            if f["guess"] is None and f["chars"] <= 15 and DOCTYPE_RE.search(value_of(f)):
+                f["guess"] = "doctype"
+                break
+
+
+# ---------- 页眉页脚里与封面字段同文的部分（D14 第 1 条） ----------
+HF_PART = re.compile(r"word/(?:front\d*-)?(header|footer)[^/]*\.xml$")  # 装配时前置区的部件改名成 front-header1.xml
+MIN_HEADER_CHARS = 4  # 太短的字段原文（「2025」「中心」）在页眉里撞上的多半是别的东西
+
+
+def hf_parts(pkg: Package) -> list[str]:
+    return sorted(n for n in pkg.files if HF_PART.match(n))
+
+
+def _leaf_paras(s: str) -> list[tuple[int, int]]:
+    ps = spans(s, "p")
+    return [p for p in ps if not any(q != p and p[0] <= q[0] and q[1] <= p[1] for q in ps)]
+
+
+def _para_chars(s: str, p) -> tuple[list[re.Match], list[str], str, list[tuple[int, int]]]:
+    """一段的全部 w:t（页眉文字常被拆成多个 run）：(匹配, 各 run 原文, 去空白后的拼接, 每个字的 (run 序号, 偏移))。"""
+    ts = list(T_RE.finditer(s, *p))
+    raw = [html.unescape(m.group(1)) for m in ts]
+    chars, pos = [], []
+    for ti, t in enumerate(raw):
+        for oi, ch in enumerate(t):
+            if not ch.isspace():
+                chars.append(ch)
+                pos.append((ti, oi))
+    return ts, raw, "".join(chars), pos
+
+
+def header_hits(pkg: Package, text: str) -> int:
+    """某段字段原文（已去空白）在页眉页脚里同文出现几次。少于 MIN_HEADER_CHARS 个字的不算。"""
+    if len(text) < MIN_HEADER_CHARS:
+        return 0
+    n = 0
+    for part in hf_parts(pkg):
+        s = pkg.text(part)
+        n += sum(_para_chars(s, p)[2].count(text) for p in _leaf_paras(s))
+    return n
+
+
+def header_placeholders(pkg: Package, originals: list[tuple[str, str]]) -> dict[str, int]:
+    """页眉页脚里包含字段原文的段落改成「前缀 + {{角色}} + 后缀」。originals：(角色, 去空白的原文)。
+    占位符写在原文起点所在的 run 里（保住它的格式），前后的 run 不动。返回 角色 → 替换处数。"""
+    todo = sorted(((r, t) for r, t in originals if len(t) >= MIN_HEADER_CHARS), key=lambda x: -len(x[1]))
+    hits: dict[str, int] = {}
+    if not todo:
+        return hits
+    for part in hf_parts(pkg):
+        s, changed = pkg.text(part), False
+        while True:
+            edit = None
+            for p in _leaf_paras(s):
+                ts, raw, flat, pos = _para_chars(s, p)
+                for role, text in todo:
+                    i = flat.find(text)
+                    if i < 0:
+                        continue
+                    (t0, o0), (t1, o1) = pos[i], pos[i + len(text) - 1]
+                    new = list(raw)
+                    new[t0] = raw[t0][:o0] + "{{%s}}" % role + (raw[t0][o1 + 1:] if t1 == t0 else "")
+                    for k in range(t0 + 1, t1):
+                        new[k] = ""
+                    if t1 != t0:
+                        new[t1] = raw[t1][o1 + 1:]
+                    edit = (ts, new, role)
+                    break
+                if edit:
+                    break
+            if not edit:
+                break
+            ts, new, role = edit
+            edits: list = []
+            _set_ts(s, ts, new, edits)
+            for a, b, x in sorted(edits, key=lambda e: -e[0]):
+                s = s[:a] + x + s[b:]
+            hits[role] = hits.get(role, 0) + 1
+            changed = True
+        if changed:
+            pkg.set_text(part, s)
+    return hits
 
 
 def _public(items: list[dict]) -> list[dict]:
@@ -398,6 +563,8 @@ def analyze(pkg: Package) -> dict | None:
     if not d.boundary:
         return None
     fr = _Front(d)
+    for f in fr.fields:
+        f["headerHits"] = header_hits(pkg, _value_of(f["_text"]))
     report = {
         "blocks": d.boundary,
         "hasToc": bool(fr.excluded),
@@ -426,27 +593,32 @@ def _set_ts(s: str, ts: list[re.Match], texts: list[str], edits: list) -> None:
         edits.append((m.start(), m.end(), f'<w:t xml:space="preserve">{escape(t)}</w:t>'))
 
 
+def _cut_after(raw: list[str], cut: int, ph: str) -> list[str]:
+    """各 run 的文字：第 cut 个字符之前原样，之后换成 ph（写在切点所在的 run 里，后面的 run 清空）。"""
+    cum, out, placed = 0, [], False
+    for t in raw:
+        if placed:
+            out.append("")
+        elif cum + len(t) >= cut:
+            out.append(t[:cut - cum] + ph)
+            placed = True
+        else:
+            out.append(t)
+        cum += len(t)
+    return out
+
+
 def _field_edits(fr: _Front, field: dict, role: str, edits: list) -> None:
-    ph = "{{%s}}" % role
+    """映射成角色的写占位符；`clear` 删掉文字、保留段落与格式。所有出现处（含文本框回退副本）一起改。"""
+    ph = "" if role == "clear" else "{{%s}}" % role
     for span in field["_spans"]:
         ts = fr.own_ts(span)
         raw = [html.unescape(m.group(1)) for m in ts]
-        full = "".join(raw)
-        lab = LABEL_RE.match(full)
+        lab = LABEL_RE.match("".join(raw)) if role != "clear" else None
         if not lab:
             _set_ts(fr.s, ts, [ph] + [""] * (len(ts) - 1), edits)
-            continue
-        cut, cum, out, placed = lab.end(1), 0, [], False
-        for t in raw:
-            if placed:
-                out.append("")
-            elif cum + len(t) >= cut:
-                out.append(t[:cut - cum] + ph)
-                placed = True
-            else:
-                out.append(t)
-            cum += len(t)
-        _set_ts(fr.s, ts, out, edits)
+        else:
+            _set_ts(fr.s, ts, _cut_after(raw, lab.end(1), ph), edits)
 
 
 def _clear_cell(cell: str) -> str:
@@ -455,18 +627,43 @@ def _clear_cell(cell: str) -> str:
     return T_RE.sub("<w:t></w:t>", cell)
 
 
+def _clear_keep_labels(fr: _Front, span, first_col: bool = False) -> str:
+    """「保留标签」：标签段落原样，「标签：值」只清冒号后面，其余段落清空（D14 第 5 条）。
+    首列（first_col）照旧保留，只有其中的「标签：值」清冒号后面。"""
+    a, b = span
+    cell = fr.s[a:b]
+    labels = {(x - a, y - a) for x, y in fr.label_paras(span)}
+    ps = spans(cell, "p")
+    leaves = [p for p in ps if not any(q != p and p[0] <= q[0] and q[1] <= p[1] for q in ps)]
+    edits = []
+    for p in leaves:
+        if p not in labels:
+            if not first_col:
+                edits.append((p[0], p[1], _clear_cell(cell[p[0]:p[1]])))
+            continue
+        ts = list(T_RE.finditer(cell, *p))
+        raw = [html.unescape(m.group(1)) for m in ts]
+        lab = LABEL_RE.match("".join(raw))
+        if lab:
+            _set_ts(cell, ts, _cut_after(raw, lab.end(1), ""), edits)
+    for x, y, new in sorted(edits, key=lambda e: -e[0]):
+        cell = cell[:x] + new + cell[y:]
+    return cell
+
+
 def _table_edits(fr: _Front, table: dict, rule: str, edits: list) -> int:
+    """按规则清空样例单元格。顶部合并标题行（`captionRows`）在任何规则下都保留。"""
     if rule == "keepAll":
         return 0
-    n = 0
+    caps, n = table["_caps"], 0
     for r, c, (a, b) in fr.cells(table["_span"]):
-        keep = ((rule == "keepHeader" and r == 0) or (rule == "keepLabels" and c == 0)
-                or (rule == "keepHeaderAndLabels" and (r == 0 or c == 0)))
-        if not keep:
-            new = _clear_cell(fr.s[a:b])
-            if new != fr.s[a:b]:
-                edits.append((a, b, new))
-                n += 1
+        if r < caps or (r == caps and rule in ("keepHeader", "keepHeaderAndLabels")):
+            continue
+        old = fr.s[a:b]
+        new = _clear_keep_labels(fr, (a, b), c == 0) if rule in ("keepLabels", "keepHeaderAndLabels") else _clear_cell(old)
+        if new != old:
+            edits.append((a, b, new))
+            n += 1
     return n
 
 
@@ -506,8 +703,11 @@ def collapse_toc(s: str) -> tuple[str, bool]:
     return s[:a] + new + s[b:], True
 
 
-def build_front(pkg: Package, report_front: dict, dec: dict) -> tuple[Package, list[str]]:
-    """按决定切出前置区骨架。返回 (front 包, 日志)。不写盘。"""
+def build_front(pkg: Package, report_front: dict, dec: dict) -> tuple[Package, list[str], list[tuple[str, str]]]:
+    """按决定切出前置区骨架。返回 (front 包, 日志, 字段原文)。不写盘。
+
+    字段原文 = [(角色, 去空白的原文)]，只含映射成 title / client / vendor / date / doctype 的字段：
+    调用方拿它去把 reference.docx 页眉页脚里的同文写成占位符（`header_placeholders`），用完即弃，不落盘。"""
     d = _Doc(pkg)
     if not d.boundary:
         raise ValueError("来源文档里认不出前置区（采集之后改过？请回到第 ② 步重新分析）")
@@ -516,12 +716,17 @@ def build_front(pkg: Package, report_front: dict, dec: dict) -> tuple[Package, l
         raise ValueError("来源文档的前置区与采集报告对不上（采集之后改过？请回到第 ② 步重新分析）")
     edits: list = []
     roles = dec.get("fields") or {}
-    mapped = []
+    mapped, cleared_fields, originals = [], 0, []
     for f in fr.fields:
         role = roles.get(f["id"], f["guess"] or "keep")
-        if role != "keep":
-            _field_edits(fr, f, role, edits)
+        if role == "keep":
+            continue
+        _field_edits(fr, f, role, edits)
+        if role == "clear":
+            cleared_fields += 1
+        else:
             mapped.append(role)
+            originals.append((role, _value_of(f["_text"])))
     rules = dec.get("tables") or {}
     cleared = 0
     for t in fr.tables:
@@ -539,10 +744,13 @@ def build_front(pkg: Package, report_front: dict, dec: dict) -> tuple[Package, l
     out = Package(dict(pkg.files), list(pkg.order))
     out.set_text("word/document.xml", doc)
     _prune(out)
+    hits = header_placeholders(out, originals)
     log = [f"前置区：{len(fr.sec_ends)} 节，字段 {len(mapped)} 个写成占位符"
            + (f"（{'、'.join(ROLE_LABEL[r] for r in mapped)}）" if mapped else "")
-           + f"，清空样例单元格 {cleared} 个" + ("，目录保留为域" if toc else "")]
-    return out, log
+           + (f"，清空 {cleared_fields} 段" if cleared_fields else "")
+           + f"，清空样例单元格 {cleared} 个" + ("，目录保留为域" if toc else "")
+           + (f"，前置区页眉页脚 {sum(hits.values())} 处写成占位符" if hits else "")]
+    return out, log, originals
 
 
 def _resolve(owner: str, target: str) -> str:
@@ -643,26 +851,42 @@ def read_identity(ws) -> dict:
     return out
 
 
-def fill_values(fm: dict, doc_title: str | None, identity: dict, today: dt.date) -> dict:
-    """字段值与来源：md front-matter → 文档标题（title）→ project.yaml（client / vendor）→ 当天（date）。"""
+TITLE_SEP = re.compile(r"\s*[·|｜]\s*")
+
+
+def fill_values(fm: dict, doc_title: str | None, identity: dict, today: dt.date, *,
+                split_doctype: bool = False, date_format: str | None = None) -> dict:
+    """字段值与来源：md front-matter → 文档标题（title）→ project.yaml（client / vendor）→ 当天（date）。
+
+    split_doctype：模板映射了文档类型字段时为真。这时标题平移得到的文档标题若含分隔符（`·` `|` `｜`），
+    在最后一个分隔符处拆开，前半段作标题、后半段作文档类型（front-matter 写了的不覆盖）；
+    front-matter 写了 title 时不拆（D14 第 3 条）。"""
     out = {}
     for role in ROLES:
         if fm.get(role):
             out[role] = (fm[role], "front-matter")
     if "title" not in out and doc_title:
-        out["title"] = (doc_title, "文档标题")
+        seps = list(TITLE_SEP.finditer(doc_title)) if split_doctype else []
+        head, tail = (doc_title[:seps[-1].start()].strip(), doc_title[seps[-1].end():].strip()) if seps else ("", "")
+        if head and tail:
+            out["title"] = (head, "文档标题")
+            if "doctype" not in out:
+                out["doctype"] = (tail, "文档标题后缀")
+        else:
+            out["title"] = (doc_title, "文档标题")
     for role, key in (("client", "甲方"), ("vendor", "承建方")):
         if role not in out and identity.get(key):
             out[role] = (identity[key], f"project.yaml 的 identity.{key}")
     if "date" not in out:
-        out["date"] = (f"{today.year}年{today.month}月", "转换当天")
+        out["date"] = (format_date(date_format, today), "转换当天")
     return out
 
 
 # ---------- 装配 ----------
-def roles_in(front_pkg: Package) -> list[str]:
-    doc = front_pkg.text("word/document.xml")
-    return [r for r in ROLES if "{{%s}}" % r in doc]
+def roles_in(*pkgs: Package) -> list[str]:
+    """这些包（front.docx、reference.docx）的正文与页眉页脚里出现了哪些占位符。"""
+    text = "".join(p.text(n) for p in pkgs for n in ["word/document.xml", *hf_parts(p)] if n in p.files)
+    return [r for r in ROLES if "{{%s}}" % r in text]
 
 
 def _style_blocks(styles: str) -> dict[str, str]:
@@ -699,19 +923,31 @@ def assemble(out: Package, front: Package, values: dict) -> tuple[list[str], lis
             last = last[:m.end()] + f"<w:pPr>{sect}</w:pPr>" + last[m.end():]
     content = content[:ls] + last + content[le:]
 
-    # 字段
+    # 字段：封面与页眉页脚（正文节的来自 reference.docx，前置区的随下面的部件复制进来）用同一个值
+    def text_of(role):
+        if role in values:
+            return escape(values[role][0])
+        return f"【待填：{ROLE_LABEL[role]}】"
+
+    body_hf = {p: out.text(p) for p in hf_parts(out)}
+    front_hf = "".join(front.text(p) for p in hf_parts(front))
     missing = []
     for role in ROLES:
         ph = "{{%s}}" % role
-        if ph not in content:
+        in_hf = sum(t.count(ph) for t in body_hf.values())
+        if ph not in content and not in_hf and ph not in front_hf:
             continue
+        content = content.replace(ph, text_of(role))
+        for p, t in body_hf.items():
+            body_hf[p] = t.replace(ph, text_of(role))
         if role in values:
-            v, src = values[role]
-            content = content.replace(ph, escape(v))
-            log.append(f"封面字段：{ROLE_LABEL[role]} ← {src}")
+            log.append(f"封面字段：{ROLE_LABEL[role]} ← {values[role][1]}"
+                       + (f"（正文页眉页脚 {in_hf} 处同步替换）" if in_hf else ""))
         else:
-            content = content.replace(ph, f"【待填：{ROLE_LABEL[role]}】")
             missing.append(ROLE_LABEL[role])
+    for p, t in body_hf.items():
+        if t != out.text(p):
+            out.set_text(p, t)
     for m in missing:
         warnings.append(f"封面「{m}」没有取到值，成品里显示「【待填：{m}】」，发出前请补上")
 
@@ -786,6 +1022,12 @@ def assemble(out: Package, front: Package, values: dict) -> tuple[list[str], lis
         orels = orels.replace("</Relationships>", rel + "</Relationships>")
     content = RID_RE.sub(lambda m: f'r:{m.group(1)}="{rid_map.get(m.group(2), m.group(2))}"', content)
     out.set_text(orels_part, orels)
+    for p in copied:
+        if HF_PART.match(p) and "{{" in out.text(p):
+            t = out.text(p)
+            for role in ROLES:
+                t = t.replace("{{%s}}" % role, text_of(role))
+            out.set_text(p, t)
 
     # 样式：按显示名对齐；成品里没有的连同 basedOn 链补进去，ID 撞了就改名
     fstyles = _style_blocks(front.text("word/styles.xml"))
