@@ -229,6 +229,33 @@ try {
     writeFileSync(path.join(docs, 'multi.md'), '# 一\n\n正文。\n\n# 二\n\n# 三\n');
     r = run('md2docx.py', ['output/docs/multi.md', '--template', '@base']);
     check(r.code === 0 && (r.result.warnings || []).some((w) => w.includes('有 3 个一级标题')), '多个 # 时不平移并提醒');
+
+    console.log('表格文字与列表');
+    // 11.8 第二轮：客户把列表簇采成 Compact（14pt、首行缩进 2 字、两端对齐），pandoc 给单元格也套 Compact，表格被一起放大
+    const compactDec = JSON.parse(decisions);
+    compactDec.clusters.c1 = { role: 'Compact' };
+    run('docx_template.py', ['collect', 'input/raw/旧文档.docx', '--name', '紧凑']);
+    r = run('docx_template.py', ['build', '--name', '紧凑', '--source', 'input/raw/旧文档.docx', '--decisions', '-'],
+      { input: JSON.stringify(compactDec) });
+    check(r.code === 0 && (r.result.warnings || []).length === 0, 'Compact 带正文格式时样张反查仍无 warnings',
+      JSON.stringify(r.result?.warnings));
+    r = run('md2docx.py', ['output/docs/a.md', '--template', '紧凑', '--overwrite']);
+    const cxml = zipText(path.join(docs, 'a.docx'));
+    const cstyles = zipText(path.join(docs, 'a.docx'), 'word/styles.xml');
+    const styleOf = (name) => (cstyles.match(new RegExp(`<w:style\\b[^>]*>\\s*<w:name w:val="${name}"\\s*/>.*?</w:style>`, 's')) || [''])[0];
+    const tt = styleOf('Table Text');
+    const ttId = (tt.match(/w:styleId="([^"]+)"/) || [])[1];
+    const cellStyles = [...cxml.matchAll(/<w:tbl>.*?<\/w:tbl>/gs)].flatMap((m) => [...m[0].matchAll(/<w:pStyle w:val="([^"]+)"/g)].map((x) => x[1]));
+    check(ttId && cellStyles.length > 0 && cellStyles.every((s) => s === ttId), '表格单元格段落全部改用 Table Text',
+      [...new Set(cellStyles)].join(','));
+    check(/<w:sz w:val="21"/.test(tt) && /<w:jc w:val="center"/.test(tt) && /w:firstLineChars="0"/.test(tt),
+      'Table Text 五号、居中、无首行缩进', tt);
+    check((r.result.log || []).some((l) => l.startsWith('表格文字：')), 'log 写明表格文字替换数');
+    const cnum = zipText(path.join(docs, 'a.docx'), 'word/numbering.xml');
+    const listAbs = [...cnum.matchAll(/<w:abstractNum\b.*?<\/w:abstractNum>/gs)].map((m) => m[0]).filter((b) => !b.includes('<w:pStyle'));
+    check(listAbs.length > 0 && listAbs.every((b) => !/w:hanging="[1-9]/.test(b) && b.includes('w:firstLineChars="200"')
+      && b.includes('<w:suff w:val="space"/>')), '列表编号没有悬挂缩进：首行缩进、编号后接空格');
+    check(/w:leftChars="0"/.test(styleOf('提示框')), '提示框没有左缩进');
   }
 
   console.log('前置区');

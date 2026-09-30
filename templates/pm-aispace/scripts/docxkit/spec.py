@@ -92,7 +92,7 @@ def effective(spec: dict, role: str) -> dict:
     if role == "Table":
         t = spec["table"]
         out.update(size=float(t["font_size"]), line=t["line"], jc="left", firstLineChars=0, before=0.0, after=0.0)
-        role = "Compact"
+        role = "TableText"
     chain, r, seen = [], role, set()
     while r and r in styles and r not in seen:
         seen.add(r)

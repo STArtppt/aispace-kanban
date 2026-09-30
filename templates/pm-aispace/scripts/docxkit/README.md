@@ -52,8 +52,15 @@ Word 的生效格式层叠（从低到高）：
 4. 字符样式链（run 的 `rStyle`）
 5. 段落 / run 上的手动格式
 
-由此得出规范的写法：**字体、字号、行距写在 docDefaults，`Normal` 保持为空，`Compact` 不设字号**。
-pandoc 的表格单元格和紧凑列表共用 `Compact`，这样表格样式里的 10.5pt、单倍行距才压得过正文的 14pt、1.5 倍。
+由此得出规范的写法：**字体、字号、行距写在 docDefaults，`Normal` 保持为空**。
+pandoc 给表格单元格和紧凑列表套的都是 `Compact`，而客户 profile 常把 `Compact` 采成正文格式（14pt、首行缩进 2 字），
+段落样式又压得过表格样式 —— 11.8 真实复验里 37 张表因此全被放大，页数翻倍。所以表格文字另有 `Table Text`
+（字号、行距取 `table` 段，居中、无缩进），`postprocess` 把表格里的 `Compact` / 正文段落换过去；
+md 分隔行写了对齐的，pandoc 在段落上直接写 `jc`，照样生效。
+
+**整篇不用悬挂缩进**：pandoc 自己生成的列表编号是「左缩进 + 悬挂」，`postprocess` 改成左 0、首行缩进 2 字符 ×（级别 + 1）、
+编号后接空格，折行回到左边距。标题的多级编号（参照模板里带 `pStyle` 的那套）不动。
+提示框只有灰底和左边线，不缩进。
 派生 profile 时，映射到「正文」的字体、字号、倍数行距进 `doc_defaults`，不写在 Body Text 上。
 
 角色映射到样式名用 pandoc 认识的名字（`Body Text`、`First Paragraph`、`Compact`、`heading 1`–`heading 4`、

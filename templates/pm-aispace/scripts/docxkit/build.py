@@ -5,8 +5,10 @@
 
 几条踩过的坑（都在下面的实现里，改的时候别丢）：
 1. `w:beforeLines` 优先于 `w:before`：写了 `beforeLines="0"` 会把段前段后清零，所以规范从不写 *Lines。
-2. 字体、字号、行距写在 docDefaults，Normal 保持为空；Compact 不设字号 ——
-   层叠顺序是 docDefaults → 表格样式 → 段落样式，这样表格样式里的字号、行距才能生效。
+2. 字体、字号、行距写在 docDefaults，Normal 保持为空 ——
+   层叠顺序是 docDefaults → 表格样式 → 段落样式，段落样式里写了的都会压过表格样式。
+   pandoc 给表格单元格套 Compact，而客户 profile 常把 Compact 采成正文格式（14pt、首行缩进），
+   所以表格文字另有 Table Text 样式（字号、行距取 table 段），由 postprocess 把表格里的 Compact 换过去。
 3. 原文已有同名样式时沿用它的 styleId（如 heading 1 的 id 是 `1`），否则页眉页脚、目录对它的引用会断。
 4. 这里全程在原始 XML 字符串上做正则，不经过 ET 序列化（见 ooxml.py 的说明）。
 """
@@ -236,6 +238,9 @@ def build_reference(src: Path | Package, spec: dict, use_spec_page: bool = False
     new_blocks = []
     for role, s in spec["styles"].items():
         clean = {k: v for k, v in s.items() if not k.startswith("_")}
+        if role == "TableText":  # 表格文字的字号、行距只有 table 段一处来源
+            clean.setdefault("size", spec["table"]["font_size"])
+            clean.setdefault("line", spec["table"]["line"])
         new_blocks.append(style_xml(role_ids[role], clean, role_ids, "1", is_default=(role == "Normal")))
     new_blocks.append(table_style_xml(table_id, spec["table"], table_normal_id))
     if table_normal_id not in valid:

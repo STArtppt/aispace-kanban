@@ -143,7 +143,7 @@ def generate(name: str, spec: dict, roles: dict, version: str, date: str, front:
         "Table: 表 1 功能清单",
         "```",
         "",
-        f"- 表格文字：{t['font_size']:g}pt、{t['line']:g} 倍行距；首行是表头"
+        f"- 表格文字：{t['font_size']:g}pt、{t['line']:g} 倍行距、居中、无缩进；首行是表头"
         f"{'（加粗）' if t.get('header_bold') else ''}，跨页时自动重复；边框：{t['border']}。来源：{table_src}。",
         f"- 表题套 Table Caption：{describe(effective(spec, 'TableCaption'))}。来源：{src('TableCaption')}。",
         "- 表题里的「表 1」会换成自动编号域：在 Word 里全选后按 F9 更新编号。",

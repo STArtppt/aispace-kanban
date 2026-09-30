@@ -8,7 +8,8 @@
     "Normal":            {"name": "Normal"},
     "BodyText":          {"name": "Body Text", "basedOn": "Normal", "firstLineChars": 200, "jc": "both"},
     "FirstParagraph":    {"name": "First Paragraph", "basedOn": "BodyText", "next": "BodyText"},
-    "Compact":           {"name": "Compact", "basedOn": "Normal", "firstLineChars": 0, "_why": "紧凑列表项与表格单元格共用；不设字号，表格里吃表格样式字号"},
+    "Compact":           {"name": "Compact", "basedOn": "Normal", "firstLineChars": 0, "_why": "紧凑列表项；pandoc 也给表格单元格套它，postprocess 会把表格里的换成 Table Text"},
+    "TableText":         {"name": "Table Text", "basedOn": "Normal", "firstLineChars": 0, "leftChars": 0, "jc": "center", "_why": "表格单元格段落；字号、行距由 build 从 table 段填，不单独映射角色。客户把 Compact 采成正文格式时，表格不再跟着放大"},
     "Heading1":          {"name": "heading 1", "basedOn": "Normal", "next": "BodyText", "font": {"eastAsia": "黑体"}, "size": 16, "bold": true, "before": 12, "after": 6, "outline": 1, "numLevel": 0, "keepNext": true},
     "Heading2":          {"name": "heading 2", "basedOn": "Normal", "next": "BodyText", "font": {"eastAsia": "黑体"}, "size": 15, "bold": true, "before": 6, "after": 6, "outline": 2, "numLevel": 1, "keepNext": true},
     "Heading3":          {"name": "heading 3", "basedOn": "Normal", "next": "BodyText", "font": {"eastAsia": "黑体"}, "size": 14, "bold": true, "before": 6, "after": 6, "outline": 3, "numLevel": 2, "keepNext": true},
@@ -23,7 +24,7 @@
     "SourceCode":        {"name": "Source Code", "basedOn": "Normal", "font": {"ascii": "Consolas", "eastAsia": "宋体"}, "size": 9, "line": 1.0, "firstLineChars": 0, "shading": "F5F5F5", "before": 3, "after": 3, "wordWrap": false},
     "VerbatimChar":      {"name": "Verbatim Char", "type": "character", "font": {"ascii": "Consolas"}},
     "BlockText":         {"name": "Block Text", "basedOn": "BodyText", "leftChars": 200, "firstLineChars": 0, "color": "595959"},
-    "Note":              {"name": "提示框", "custom": true, "basedOn": "BodyText", "firstLineChars": 0, "leftChars": 100, "shading": "F2F2F2", "borderLeft": {"sz": 24, "color": "7F7F7F"}, "_why": "md 写法：::: {custom-style=\"提示框\"}"},
+    "Note":              {"name": "提示框", "custom": true, "basedOn": "BodyText", "firstLineChars": 0, "leftChars": 0, "shading": "F2F2F2", "borderLeft": {"sz": 24, "color": "7F7F7F"}, "_why": "md 写法：::: {custom-style=\"提示框\"}"},
     "FootnoteReference": {"name": "footnote reference", "type": "character", "superscript": true, "_why": "pandoc 的脚注引用字符样式；没有它脚注号不上标"},
     "FootnoteText":      {"name": "footnote text", "basedOn": "Normal", "size": 9, "line": 1.0}
   }
