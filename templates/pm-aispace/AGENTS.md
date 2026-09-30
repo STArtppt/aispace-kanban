@@ -27,7 +27,7 @@ input/  →  （分析）  →  output/  →  visualization/
 | `output/docs/` | 对外交付文档（PRD、需求规格、评审材料）；**演示/汇报用的 HTML 也放这里** | 自由写，见下文 |
 | `output/decisions/` | 决策记录：一个决策一个文件 | 只追加，不要改历史决策 |
 | `output/<组>/一次归档/` | 三组各自的归档区：不再作数、从主列表移开的产出物；看板照样能搜、能预览 | 一次归档由看板调 `scripts/archive_output.py` 移入，**只移动不删除**；二次归档（分堆 + 短索引）走 `pm-output-archive`，**不写任何「无需再读」清单** |
-| `output/questions/` | 未决问题，**一问一文件** `Q<四位编号>.md`；**和 `analysis/` 平级，不进任何视图的文件列表**，只在看板 ⌘K 弹窗里看和处理 | 走 `pm-open-questions`；字段契约见该目录的 `README.md` |
+| `output/questions/` | 未决问题，**一问一文件** `Q<四位编号>.md`；**和 `analysis/` 平级，不进任何视图的文件列表**，只在看板 ⌘K 工作台的「问题单」里看和处理 | 走 `pm-open-questions`；字段契约见该目录的 `README.md` |
 | `output/records/` | 产出物记录，**一份产出物一个** `I<四位编号>.md`；和 `analysis/` 平级，**不进任何视图的文件列表**，只在看板 ⌘K 工作台的「记录单」页里看和处理 | 走 `pm-output-record`；字段契约见该目录的 `README.md` |
 | `output/feedback/` | 看板缺陷反馈单，**一份一个** `F<四位编号>.md`。不进文件列表，只在看板 ⌘K 工作台的「反馈单」页里看和发送 | 字段契约见该目录的 `README.md`。见「看板显示不对时」 |
 | `output/delivery/` | 去 AI 味后的交付稿：镜像原稿路径，`v<三位序号>.md` 逐版保存。不进文件列表，只从原稿阅读器的版本条进入 | 只由 `pm-deai-writing` 写，**每一版写出后不再改动**；改交付稿走批注，见下文「交付前去 AI 味」和该目录的 `README.md` |

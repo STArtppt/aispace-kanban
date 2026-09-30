@@ -52,6 +52,11 @@ output/           阶段三：产出
   analysis/         现状基线、需求拆解、澄清问题清单
   docs/             PRD、需求规格、评审材料
   decisions/        决策记录，一事一档
+  questions/        未决问题，一问一文件（看板工作台「问题单」，不进产出列表）
+  records/          产出物记录与批注（工作台「记录单」）
+  feedback/         给看板的缺陷单（工作台「反馈单」）
+  docx-template/    从客户旧 Word 提炼的模板（工作台「模版洗炼」）
+  delivery/         去 AI 味后的交付稿，逐版保存（从原稿的版本条进入）
 visualization/    阶段四：视觉平面 —— 给人看、能点开的页面（不是要转换的文档）
   references/       收下来的别人的页面：竞品、友商后台、公开文档站
     <名字>/index.html  一份参考一个目录，入口必须叫 index.html
@@ -59,7 +64,12 @@ visualization/    阶段四：视觉平面 —— 给人看、能点开的页面
     <名字>/index.html  一个东西一个子目录，入口必须叫 index.html，否则看板扫不到
 scripts/
   ingest.py         文档转换调度
-  layout.py         converted/ 的落点规则（三个转换脚本共用一份）
+  layout.py         converted/ 的落点规则（转换脚本共用一份）
+  web_ingest.py     网页 → Markdown；`--inbox` 收参考目录根上的散装 HTML
+  db_ingest.py      数据库源：schema 快照与只读查询
+  archive_output.py 一次归档：把一份产出移进同组 `一次归档/`
+  docx_template.py  从客户旧 Word 提炼模板（公共代码在 docxkit/）
+  md2docx.py        按模板把 .md 转成 .docx（另需 pandoc 3）
   pointtable.py     点表批量归一 → 测点主表 + sqlite
   realdata.py       现场实测数据归一 → 时序库
   migrate_converted.py  旧版平铺产物 → 镜像结构（一次性）
@@ -80,8 +90,11 @@ CLAUDE.md         Claude Code 入口，引入 AGENTS.md
 | `.msg` → md | `markitdown` | `pip install 'markitdown[all]'` |
 | xlsx / xlsm → csv | 无（脚本自带 OOXML 解析） | — |
 | html / htm → 可预览原型目录 | 无（拷贝 HTML + 校验写 `_manifest.md`） | — |
+| `.md` → 客户版式的 `.docx` | pandoc 3 + `scripts/md2docx.py` | macOS：`brew install pandoc`；非标准路径在 `.env` 写 `PANDOC_BIN` |
+| 从客户旧 Word 提炼模板 | `scripts/docx_template.py`（标准库） | 生成模板不用 pandoc；没有 pandoc 时只是没有样张 |
 
-Python 侧只用标准库，不需要装任何包（连 MinerU 的 HTTP 调用也是标准库写的）。
+Python 侧默认只用标准库（连 MinerU 的 HTTP 调用也是标准库写的）。
+数据库查询是可选路径，驱动缺了会点名让你装，没配数据源的人不受影响。
 缺哪个依赖只影响对应格式，其余照常转换：没配 MinerU key 时 PDF 走本地 anydoc。
 
 ## 多 Agent 通用
@@ -110,6 +123,9 @@ xlsx 按 sheet 拆成 CSV 并生成导航清单；**html/htm 当作 PM 互传的
 两者都强制区分「资料里写了的」和「我推断的」，并把答不上来的问题沉淀成澄清清单。
 
 **阶段三 · 文档产出**　`pm-prd-writing` 带 PRD 模板和写作规则，产物落 `output/docs/`。
+要交出去的文档先用 `pm-deai-writing` 去 AI 味，交付稿落 `output/delivery/`（原稿不动），
+再按客户模板转成 Word（`scripts/md2docx.py`，看板产出列表的「转成 Word」跑的是同一支）。
+模板从客户旧 Word 提炼，落在 `output/docx-template/`。
 
 **阶段四 · 原型**　`pm-prototype-brief` 把文档收敛成页面清单、信息架构、主流程点击路径
 和字段规则，产出 `output/analysis/原型输入说明.md`，再喂给

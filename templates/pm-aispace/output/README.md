@@ -31,7 +31,7 @@
 
 **为什么和 `analysis/` 平级。** 它一度放在 `analysis/questions/`，结果两百多份问题文件
 把「分析中间产物」那份清单整个淹掉 —— 那份清单本来是给人扫现状基线、需求拆解用的。
-问题清单有自己的入口（看板 ⌘K 弹窗，按交付物分组、能就地处理），
+问题清单有自己的入口（看板 ⌘K 工作台的「问题单」，按交付物分组、能就地处理），
 不需要、也不该在文件列表里再占一遍位置。提到同级之后它不进任何视图的列表。
 
 字段契约在 [`questions/README.md`](questions/README.md)，
@@ -51,7 +51,7 @@
 **为什么和 `analysis/` 平级、又不进看板的三组列表。** 与 `questions/` 同一条理由：
 三类产出物合计的记录数会把「分析中间产物」那份清单整个淹掉，
 而那份清单是给人扫现状基线、需求拆解用的。记录有自己的入口
-（看板 ⌘K 工作台的「产出物」页，按类别与状态分组、能就地改状态）,
+（看板 ⌘K 工作台的「记录单」，按类别与状态分组、能就地改状态）,
 不需要、也不该在文件列表里再占一遍位置。
 
 字段契约在 [`records/README.md`](records/README.md) —— 编号规则、按 `kind` 分化的三套状态机、
@@ -66,12 +66,19 @@
 字段契约在 [`feedback/README.md`](feedback/README.md)。怎么写、旧的 `.kanban-feedback/` 怎么迁，
 见工作空间根目录 AGENTS.md 的「看板显示不对时」。
 
-### `docx-template/` — docx 模板产物
+### `docx-template/` — Word 模板
 
-一个模板一个子目录（`profile.json`、`reference.docx`、可选的 `cover.docx`、`spec.md`、`collect/`）。
-看板「模版洗炼」页只读列出它。四步新建是演示，不往这里写。
+一个模板一个子目录（`collect/`、`profile.json`、`reference.docx`、`spec.md`、`sample.docx`，有封面时还有 `front.docx`）。
+看板「模版洗炼」点「开始分析」「生成模板」时，由 `scripts/docx_template.py` 写到这里，看板自己不写。
 
 约定在 [`docx-template/README.md`](docx-template/README.md)。客户的参照稿留在本机，不要外传。
+
+### `delivery/` — 去 AI 味后的交付稿
+
+原稿去掉 AI 味之后的版本放这里，按原稿路径镜像，一版一个 `v<序号>.md`。
+不进三组列表，从原稿阅读器顶部的版本条进入。原稿不动；要改某一版，在那一版上批注。
+
+约定在 [`delivery/README.md`](delivery/README.md)，写作走 `pm-deai-writing`。
 
 ### `<组>/一次归档/` — 不再作数、但还要留着的
 
