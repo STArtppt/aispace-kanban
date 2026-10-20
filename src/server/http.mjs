@@ -14,9 +14,12 @@ import {
   projectStatus,
   readCreatePrompt,
   readHelpDoc,
+  LAUNCH,
   readProjects,
   removeProject,
+  REPO_ROOT,
   resolveTemplate,
+  runtimeInstances,
   resolveTemplateRoot,
   suggestRelinkCandidates,
   updateProject,
@@ -1530,8 +1533,14 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const projectId = url.searchParams.get('project');
     const projectRoot = projectId ? readProjects().projects.find((p) => p.id === projectId)?.root : undefined;
     const docxTools = await docxToolsHealth(projectRoot).catch(() => undefined);
+    // launch 可选：旧进程没有。只给枚举，不给仓库或工作空间的绝对路径。
     return json(res, 200, {
-      ok: true, platform: process.platform, version: APP_VERSION, writable: allowMutations, docxTools,
+      ok: true,
+      platform: process.platform,
+      version: APP_VERSION,
+      writable: allowMutations,
+      docxTools,
+      launch: LAUNCH,
     });
   }
 
@@ -2171,6 +2180,9 @@ export function createServer({ devOrigin = '', allowMutations = true } = {}) {
     anydocBin: resolveAnydocBin(),
     node: process.execPath,
     version: APP_VERSION,
+    launch: LAUNCH,
+    repoRoot: REPO_ROOT,
+    instances: runtimeInstances(),
   });
   return http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);

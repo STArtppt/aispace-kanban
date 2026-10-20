@@ -1257,6 +1257,11 @@ export interface Health {
   /** 服务允许写操作（环回监听）。false 时写按钮置灰并说明；缺字段 = 旧服务，不置灰 */
   writable?: boolean;
   docxTools?: DocxToolsHealth;
+  /**
+   * 启动方式。`source` = 仓库里有前端源码；`package` = npm 包。
+   * 缺字段 = 旧服务，调用方保持改动前的行为（不显示「不必发邮件」）。
+   */
+  launch?: 'source' | 'package';
 }
 
 export interface NoteHistory {

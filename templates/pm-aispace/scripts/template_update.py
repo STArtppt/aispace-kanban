@@ -29,7 +29,9 @@ cur（合并结果）!= base（模板这一版），仍被当作本地改过，�
 
 它做的事
 --------
-    plan     取模板新版（缺省从 GitHub 下载，或 --from 本地目录），出计划。只读，不写工作空间。
+    plan     取模板新版，出计划。只读，不写工作空间。
+             既没有 --from 也没有 --ref 时：看板从源码启动、且本工作空间在它的实例清单里、
+             源码中有对应模板目录，就读本机模板；否则从 GitHub 下载（--ref 缺省 main）。
     apply    按计划执行「新增」「覆盖」两组，逐个原子替换，然后重写 lock。
              冲突文件一个字节不写，lock 里它的哈希也不前移。
              出计划之后工作空间或 lock 又变了，整体拒绝，要求重出计划。
@@ -42,9 +44,9 @@ cur（合并结果）!= base（模板这一版），仍被当作本地改过，�
 
 用法
 ----
-    python3 scripts/template_update.py plan                      # 从 GitHub main 取
+    python3 scripts/template_update.py plan                      # 本机条件成立时读本机模板，否则 GitHub main
     python3 scripts/template_update.py plan --ref <分支|标签|提交号>
-    python3 scripts/template_update.py plan --from <本地模板目录>  # 离线 / 维护者调试
+    python3 scripts/template_update.py plan --from <本地模板目录>  # 显式本地目录，优先于本机判定
     python3 scripts/template_update.py apply --plan <计划文件>
     python3 scripts/template_update.py apply --plan <计划文件> --resolved AGENTS.md scripts/x.py
     python3 scripts/template_update.py compare --plan <计划文件> [--base-ref <提交号> | --base-from <目录>]
@@ -64,6 +66,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -261,9 +264,125 @@ def write_lock(ws: Path, lock: dict) -> None:
     tmp.replace(path)
 
 
+def _git_text(cwd: Path, args: list[str]) -> str | None:
+    """调系统 git。找不到 git、或不在仓库里，返回 None。只用标准库。"""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
 def local_source(template_dir: Path) -> str:
-    # 只记目录名：lock 要入库，绝对路径换台机器就是错的，还会把本机目录结构带进仓库
-    return f"local:{template_dir.name}"
+    """
+    lock 要入库，只记目录名和提交号，不记绝对路径。
+    取得到提交号时是 local:<目录名>@<提交号>；该目录有未提交改动再加 +dirty。
+    找不到 git、或不在仓库里，退回 local:<目录名>。
+    """
+    name = template_dir.name
+    raw = _git_text(template_dir, ["rev-parse", "HEAD"])
+    if raw is None:
+        return f"local:{name}"
+    sha = raw.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{7,40}", sha):
+        return f"local:{name}"
+    dirty = _git_text(template_dir, ["status", "--porcelain", "--", "."])
+    if dirty is None:
+        return f"local:{name}@{sha}"
+    if dirty.strip():
+        return f"local:{name}@{sha}+dirty"
+    return f"local:{name}@{sha}"
+
+
+DIRTY_WARNING = "来源有未提交改动，冲突对照的基线不精确"
+RUNTIME_FILE = Path.home() / ".pmwork" / "dashboard" / "runtime.json"
+LOCAL_LOCK_RE = re.compile(r"^local:[^@+]+@([0-9a-f]{7,40})(?:\+dirty)?$")
+
+
+def _source_warnings(source: str) -> list[str]:
+    if source.endswith("+dirty"):
+        return [DIRTY_WARNING]
+    return []
+
+
+def _same_dir(a: str, b: str) -> bool:
+    """两边都 realpath；Windows 再 normcase。对不上就当不是同一个工作空间。"""
+    try:
+        left = os.path.realpath(a)
+        right = os.path.realpath(b)
+    except OSError:
+        return False
+    if os.name == "nt":
+        left = os.path.normcase(left)
+        right = os.path.normcase(right)
+    return left == right
+
+
+def _read_runtime() -> dict | None:
+    """读不到、解析失败、或没有 launch：按 npm 包处理，调用方走 GitHub。"""
+    try:
+        data = json.loads(RUNTIME_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or "launch" not in data:
+        return None
+    return data
+
+
+def _template_id_of(ws: Path) -> str:
+    lock = load_lock(ws)
+    if lock:
+        raw = lock.get("template")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+    return "pm-aispace"
+
+
+def _safe_template_id(raw: str) -> str | None:
+    if not raw or raw in (".", "..") or "/" in raw or "\\" in raw or raw.startswith("."):
+        return None
+    return raw
+
+
+def resolve_local(ws: Path) -> tuple[Path | None, Path | None, str, str]:
+    """
+    本机三条都成立时返回 (模板目录, repoRoot, 模板 id, "")。
+    launch 为 source 但后两条不成立时，最后一项是要打到 stderr 的说明，目录为 None。
+    读不到 runtime、或 launch 不是 source：四项里说明为空，调用方静默走 GitHub。
+    """
+    runtime = _read_runtime()
+    if runtime is None or runtime.get("launch") != "source":
+        return None, None, "", ""
+    instances = runtime.get("instances")
+    registered = False
+    if isinstance(instances, list):
+        for item in instances:
+            root = item.get("root") if isinstance(item, dict) else None
+            if isinstance(root, str) and _same_dir(root, str(ws)):
+                registered = True
+                break
+    if not registered:
+        return None, None, "", "本工作空间未在本机看板登记，改从 GitHub 取模板。"
+    repo = runtime.get("repoRoot")
+    if not isinstance(repo, str) or not repo.strip():
+        return None, None, "", "本机源码位置是空的，改从 GitHub 取模板。"
+    template_id = _safe_template_id(_template_id_of(ws))
+    if template_id is None:
+        return None, None, "", "lock 里的模板 id 不能用来拼本机目录，改从 GitHub 取模板。"
+    template_dir = Path(repo) / "templates" / template_id
+    if not (template_dir / "template.yaml").is_file():
+        return None, None, "", f"本机源码里没有模板 {template_id}（template.yaml 不存在），改从 GitHub 取模板。"
+    return template_dir, Path(repo), template_id, ""
 
 
 # ---------------------------------------------------------------- 取模板
@@ -364,7 +483,7 @@ def _extract_template(tar_path: Path, dest: Path, only: set[str] | None) -> int:
     return count
 
 
-def obtain_template(ref: str, from_dir: str) -> tuple[Path, str, list[str], Path]:
+def obtain_template(ref: str | None, from_dir: str, ws: Path) -> tuple[Path, str, list[str], Path]:
     """返回（模板目录，来源串，warnings，本次的临时目录）。计划文件也写进这个临时目录。"""
     work = Path(tempfile.mkdtemp(prefix="aispace-template-"))
     if from_dir:
@@ -372,7 +491,16 @@ def obtain_template(ref: str, from_dir: str) -> tuple[Path, str, list[str], Path
         if not (src / "template.yaml").is_file():
             shutil.rmtree(work, ignore_errors=True)
             raise UpdateError(f"--from 指的不是模板目录（里面没有 template.yaml）：{src}", 2)
-        return src, local_source(src), [], work
+        source = local_source(src)
+        return src, source, _source_warnings(source), work
+    # 没传 --ref（缺省 None，不是字符串 "main"）才看本机。显式 --ref 仍下载 GitHub。
+    if not ref:
+        local_dir, _repo, _template_id, reason = resolve_local(ws)
+        if reason:
+            print(reason, file=sys.stderr)
+        if local_dir is not None:
+            source = local_source(local_dir)
+            return local_dir, source, _source_warnings(source), work
     dest = work / "template"
     dest.mkdir()
     try:
@@ -486,7 +614,7 @@ def make_plan(ws: Path, template_dir: Path, source: str, warnings: list[str]) ->
 
 def cmd_plan(args: argparse.Namespace) -> dict:
     ws = WS
-    template_dir, source, warnings, work = obtain_template(args.ref, args.from_dir)
+    template_dir, source, warnings, work = obtain_template(args.ref, args.from_dir, ws)
     try:
         plan = make_plan(ws, template_dir, source, warnings)
     except UpdateError:
@@ -598,6 +726,35 @@ def resolve(ws: Path, plan: dict, paths: list[str]) -> dict:
     return {"ok": True, "resolved": paths, "remaining": left, "lock": LOCK_REL}
 
 
+def _materialize_local_baseline(repo_root: Path, sha: str, template_id: str, rels: set[str], dest: Path) -> bool:
+    """用 git show 把那一版冲突文件写到临时目录。一个都取不到就返回 False。"""
+    got = 0
+    for rel in sorted(rels):
+        rel_path = PurePosixPath(rel)
+        if rel_path.is_absolute() or ".." in rel_path.parts:
+            continue
+        spec = f"{sha}:templates/{template_id}/{rel}"
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo_root), "show", spec],
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if proc.returncode != 0:
+            continue
+        target = dest.joinpath(*rel_path.parts)
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(proc.stdout)
+        except OSError:
+            continue
+        got += 1
+    return got > 0
+
+
 # ---------------------------------------------------------------- compare
 
 
@@ -614,24 +771,44 @@ def cmd_compare(args: argparse.Namespace) -> dict:
     base_dir: Path | None = None
     work: Path | None = None
     lock_source = plan.get("lock_source") or ""
+
+    def _baseline_unavailable() -> str:
+        return (
+            f"lock 的来源是 {lock_source or '（空）'}，取不回那一版模板。"
+            "有那一版的目录就用 --base-from，知道提交号就用 --base-ref；否则只能两方对照。"
+        )
+
     if wanted:
         if args.base_from:
             base_dir = Path(args.base_from).expanduser().resolve()
         else:
             ref = args.base_ref
-            if not ref and lock_source.startswith(f"github:{REPO}@"):
-                ref = lock_source.split("@", 1)[1]
-            if ref:
-                work = Path(tempfile.mkdtemp(prefix="aispace-template-base-"))
-                base_dir = work / "template"
-                base_dir.mkdir()
-                _, fetch_warnings = fetch_github(ref, base_dir, only=wanted)
-                warnings.extend(fetch_warnings)
+            local_match = LOCAL_LOCK_RE.fullmatch(lock_source)
+            # 没指定基线来源、lock 带提交号、且本机三条成立：从本机仓库取出那一版
+            if not ref and local_match:
+                _local_dir, repo_root, template_id, _reason = resolve_local(ws)
+                if repo_root is not None and template_id:
+                    work = Path(tempfile.mkdtemp(prefix="aispace-template-base-"))
+                    base_dir = work / "template"
+                    base_dir.mkdir()
+                    if not _materialize_local_baseline(repo_root, local_match.group(1), template_id, wanted, base_dir):
+                        warnings.append(_baseline_unavailable())
+                        shutil.rmtree(work, ignore_errors=True)
+                        work = None
+                        base_dir = None
+                else:
+                    warnings.append(_baseline_unavailable())
             else:
-                warnings.append(
-                    f"lock 的来源是 {lock_source or '（空）'}，取不回那一版模板。"
-                    "有那一版的目录就用 --base-from，知道提交号就用 --base-ref；否则只能两方对照。"
-                )
+                if not ref and lock_source.startswith(f"github:{REPO}@"):
+                    ref = lock_source.split("@", 1)[1]
+                if ref:
+                    work = Path(tempfile.mkdtemp(prefix="aispace-template-base-"))
+                    base_dir = work / "template"
+                    base_dir.mkdir()
+                    _, fetch_warnings = fetch_github(ref, base_dir, only=wanted)
+                    warnings.extend(fetch_warnings)
+                else:
+                    warnings.append(_baseline_unavailable())
 
     items = []
     for entry in conflicts:
@@ -680,7 +857,7 @@ def main() -> int:
 
     p_plan = sub.add_parser("plan", help="取模板新版、出计划（只读）")
     src = p_plan.add_mutually_exclusive_group()
-    src.add_argument("--ref", default="main", help="GitHub 上的分支 / 标签 / 提交号，缺省 main")
+    src.add_argument("--ref", default=None, help="GitHub 上的分支 / 标签 / 提交号。不传则在本机条件成立时读本机模板，否则用 main")
     src.add_argument("--from", dest="from_dir", default="", help="本地模板目录（显式选项，离线或维护者用）")
     p_plan.add_argument("--json", action="store_true", help="标准输出打完整计划 JSON")
 

@@ -619,7 +619,7 @@ python3 scripts/migrate_markdown.py --write  # 确认后落盘
 
 ### 去哪查
 
-看板源码公开在 **<https://github.com/STArtppt/aispace-kanban>**。**读 GitHub 上的文件，
+看板源码公开在 **<https://github.com/STArtppt/aispace-kanban>**。**缺省读 GitHub 上的文件，
 不要去翻本机的看板仓库或 npm 包目录**（那在工作空间外，每次都要用户授权）。
 取原文用 `https://raw.githubusercontent.com/STArtppt/aispace-kanban/main/<路径>`，下表路径拼在后面：
 
@@ -632,6 +632,11 @@ python3 scripts/migrate_markdown.py --write  # 确认后落盘
 | mermaid 图 | `src/app/components/MermaidBlock.tsx`、`src/app/lib/mermaid.ts` |
 
 GitHub 上的 `main` 可能与用户本机跑的版本有出入，对不上时如实说明，别下定论。
+
+只有模板更新脚本的本机条件成立时，才可以读正在跑的那份源码来核对当前行为：
+看板配置目录 `runtime.json`（与 `scripts/anydoc.py` 读的是同一个文件）里 `launch` 为 `source`，
+且 `instances` 含本工作空间。这时只读，不改那个目录里的任何文件。
+条件不成立时，仍然只读 GitHub。确认要改看板才能修好时，只在工作空间写反馈单。
 
 ### 怎么处理
 
@@ -682,9 +687,10 @@ GitHub 上的 `main` 可能与用户本机跑的版本有出入，对不上时�
   自己的单页 HTML 一个子目录一个 `index.html`，见上文。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。
 - 不要用推断填平资料空白，标注出来交给用户去确认。
-- 不要读写本机的看板仓库或看板的 npm 包目录，`templates/` 也不例外。要看看板源码读 GitHub；
-  看板有缺陷写缺陷单（见「看板显示不对时」），有可推广的改进写贡献单（见「贡献改进」），
-  要更新模板走 `pm-template-update`。
+- 不要改本机的看板仓库或看板的 npm 包目录，`templates/` 也不例外。缺省也不要读它们，要看看板源码读 GitHub。
+  只有本机条件成立时（见「看板显示不对时」），`scripts/template_update.py` 可以读本机模板目录，
+  你也可以只读正在跑的那份源码来核对显示。
+  看板有缺陷写缺陷单，有可推广的改进写贡献单（见「贡献改进」），要更新模板走 `pm-template-update`。
 - 不要把只对本项目成立的约定写进本文件，写进 `AGENTS.local.md`。
 - 不要改反馈单的 `sent_at` 和「## 发送记录」。回执只写 `status` 和 `receipt`。
 - 不要把客户的 docx 原件放进反馈单或公开说明。模板产物留在 `output/docx-template/`。
@@ -693,7 +699,9 @@ GitHub 上的 `main` 可能与用户本机跑的版本有出入，对不上时�
 
 本工作空间由 aispace-kanban 仓库的 `templates/pm-aispace` 铺出来。模板之后修了脚本、加了技能，不会自己到这里来。
 用户说「更新一下模板」时，走 [`skills/pm-template-update`](skills/pm-template-update/SKILL.md)：
-先用 `scripts/template_update.py` 从公开仓库取新版、出计划，讲给用户、**确认后**再落盘；
+先用不带参数的 `scripts/template_update.py plan` 出计划，讲给用户、**确认后**再落盘。
+缺省仍从公开仓库取；只有本机条件成立时，脚本才改读本机模板目录，这时向用户说明来源是本机源码。
+不要自己去搜索本机看板仓库来拼 `--from`。
 这边改过的文件不覆盖，两边都改过的逐个合并；`input/`、`output/` 里的资料和产出、`visualization/` 一概不碰
 （各目录自带的 `README.md` 属于模板，会跟着更新）。
 
@@ -716,10 +724,11 @@ GitHub 上的 `main` 可能与用户本机跑的版本有出入，对不上时�
 模板脚本的缺陷修复 —— 写一份**贡献单**交回模板源：`output/feedback/` 下 `kind: contribution` 的反馈单，
 形状见 [`output/feedback/README.md`](output/feedback/README.md)。用户在看板反馈单页预览后发给维护者，
 维护者合并进模板，回执写明模板里的位置和提交号。
+看板从源码启动时，反馈单页会说明不必发邮件，源码那边可以直接读这份单子；用 npm 安装的看板仍走邮件。
 
 - 判据：**换一个项目这条还成立吗？** 只对本项目成立的写进 `AGENTS.local.md`，不写贡献单。
 - 合成示例和改动内容**必须合成或脱敏**，不带真实资料、客户名称、截图、本机路径。
-- 本工作空间里的改动照常保留；贡献单只是把它交出去。写完告诉用户贡献单路径，提醒在看板反馈单页预览后发出。
+- 本工作空间里的改动照常保留；贡献单只是把它交出去。写完告诉用户贡献单路径。用 npm 安装的看板，提醒在反馈单页预览后发出；源码启动时不必发邮件。
 - 回执回来后只改贡献单的 `status` 和 `receipt`；规则类的另在本地规则里补 `上游：模板 R<编号>`
   （见 `pm-deai-writing`「规则库怎么改」）。
 

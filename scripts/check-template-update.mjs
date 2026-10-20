@@ -214,6 +214,148 @@ try {
   const before = fs.readFileSync(settingsPath, 'utf8');
   const g2 = py([INIT, '--guard-only', '--path', ws2, '--json']);
   check(g2.status === 0 && JSON.parse(g2.stdout).guard === 0 && fs.readFileSync(settingsPath, 'utf8') === before, '重复运行结果一致');
+
+  // ── 6. 本机来源。runtime.json 写在临时 HOME，不碰真实配置目录 ──────────
+  const repo = path.join(TMP, 'repo');
+  const tpl = path.join(repo, 'templates', 'pm-aispace');
+  fs.cpSync(V1, tpl, { recursive: true });
+  const git = (cwd, args) => {
+    const out = spawnSync('git', ['-C', cwd, ...args], { encoding: 'utf8' });
+    if (out.error) {
+      console.error(`git 跑不起来：${out.error.message}`);
+      process.exit(1);
+    }
+    if (out.status !== 0) {
+      console.error(`git ${args.join(' ')} 失败：\n${out.stderr || out.stdout}`);
+      process.exit(1);
+    }
+    return (out.stdout || '').trim();
+  };
+  git(repo, ['init']);
+  git(repo, ['config', 'user.email', 'template-update@example.com']);
+  git(repo, ['config', 'user.name', 'template-update']);
+  git(repo, ['config', 'core.autocrlf', 'false']);
+  git(repo, ['config', 'commit.gpgsign', 'false']);
+  const noHooks = path.join(TMP, 'no-hooks');
+  fs.mkdirSync(noHooks);
+  git(repo, ['config', 'core.hooksPath', noHooks]);
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-m', 'base']);
+  const clean = git(repo, ['status', '--porcelain']);
+  check(clean === '', `临时仓库提交后工作树是干净的${clean ? `（${clean}）` : ''}`);
+  const sha1 = git(repo, ['rev-parse', 'HEAD']);
+
+  const home = path.join(TMP, 'home-local');
+  const runtimePath = path.join(home, '.pmwork', 'dashboard', 'runtime.json');
+  fs.mkdirSync(path.dirname(runtimePath), { recursive: true });
+  const wsLocal = path.join(TMP, 'ws-local');
+  const writeRuntime = (data) => fs.writeFileSync(runtimePath, `${JSON.stringify(data, null, 2)}\n`);
+  writeRuntime({
+    launch: 'source',
+    repoRoot: repo,
+    instances: [{ id: 'ws-local', name: '合成', root: wsLocal }],
+    anydocBin: '',
+    node: '',
+    version: 'test',
+  });
+  const envLocal = {
+    ...process.env,
+    HOME: home,
+    USERPROFILE: home,
+    HTTPS_PROXY: 'http://127.0.0.1:9',
+    https_proxy: 'http://127.0.0.1:9',
+    HTTP_PROXY: 'http://127.0.0.1:9',
+    http_proxy: 'http://127.0.0.1:9',
+    NO_PROXY: '',
+    no_proxy: '',
+  };
+  const initLocal = py([INIT, '--from', tpl, '--name', '本机合成', '--path', wsLocal, '--json'], ROOT, envLocal);
+  if (initLocal.status !== 0) {
+    console.error(initLocal.stderr || initLocal.stdout);
+    process.exit(1);
+  }
+  const lockLocalText = fs.readFileSync(path.join(wsLocal, '.aispace/template.lock.json'), 'utf8');
+  const lockLocal = JSON.parse(lockLocalText);
+  check(lockLocal.source === `local:${path.basename(tpl)}@${sha1}`, `铺设来源带提交号（${lockLocal.source}）`);
+  check(!lockLocalText.includes(repo) && !lockLocalText.includes(home), 'lock 里没有仓库或配置目录的绝对路径');
+
+  const tuLocal = (args, env = envLocal) => {
+    const out = py([path.join(wsLocal, 'scripts/template_update.py'), ...args, '--json'], wsLocal, env);
+    let data = null;
+    try {
+      data = JSON.parse(out.stdout);
+    } catch {
+      /* 下面按 null 处理 */
+    }
+    return { code: out.status, data, stderr: out.stderr || '' };
+  };
+
+  append(path.join(wsLocal, 'README.md'), '\n工作空间侧一行。\n');
+  append(path.join(tpl, 'README.md'), '\n模板侧一行。\n');
+  git(repo, ['add', '-A']);
+  git(repo, ['commit', '-m', 'readme']);
+  const sha2 = git(repo, ['rev-parse', 'HEAD']);
+  const beforePlan = fs.readFileSync(path.join(wsLocal, 'README.md'), 'utf8');
+  const pLocal = tuLocal(['plan']);
+  check(
+    pLocal.code === 0 && pLocal.data?.source === `local:pm-aispace@${sha2}`,
+    `本机条件成立时 plan 不联网，来源带新提交号（${pLocal.data?.source ?? pLocal.stderr}，退出 ${pLocal.code}）`,
+  );
+  check(fs.readFileSync(path.join(wsLocal, 'README.md'), 'utf8') === beforePlan, '本机 plan 不写工作空间');
+  check(
+    (pLocal.data?.groups?.conflict ?? []).some((row) => row.path === 'README.md'),
+    '本机 plan 把两边都改过的 README 列为冲突',
+  );
+
+  if (pLocal.data?.plan_file) {
+    const cLocal = tuLocal(['compare', '--plan', pLocal.data.plan_file]);
+    const cItem = cLocal.data?.items?.find((item) => item.path === 'README.md');
+    check(
+      cLocal.code === 0
+        && cItem?.base === 'exact'
+        && cItem.diff_local.includes('工作空间侧一行')
+        && cItem.diff_template.includes('模板侧一行'),
+      `compare 从本机提交取回基线（base=${cItem?.base}，${(cLocal.data?.warnings ?? []).join('；')}）`,
+    );
+  } else {
+    bad('compare 没跑：本机 plan 没有计划文件');
+  }
+
+  append(path.join(tpl, 'README.md'), '\n还没提交的一行。\n');
+  const pDirty = tuLocal(['plan']);
+  check(
+    pDirty.code === 0
+      && pDirty.data?.source === `local:pm-aispace@${sha2}+dirty`
+      && (pDirty.data?.warnings ?? []).some((w) => w.includes('未提交改动')),
+    `未提交改动时来源带 +dirty 且计划有 warning（${pDirty.data?.source}）`,
+  );
+
+  const pFrom = tuLocal(['plan', '--from', V2]);
+  check(pFrom.code === 0 && pFrom.data?.source === 'local:tpl-v2', `显式 --from 优先于本机判定（${pFrom.data?.source}）`);
+
+  const pRef = tuLocal(['plan', '--ref', 'main']);
+  check(
+    pRef.code === 1 && (pRef.data?.error || '').includes('代理') && (pRef.data?.error || '').includes('--from'),
+    '显式 --ref 仍走 GitHub，不读本机目录',
+  );
+
+  writeRuntime({
+    launch: 'source',
+    repoRoot: repo,
+    instances: [{ id: 'other', name: '别的', root: path.join(TMP, 'not-this') }],
+  });
+  const pMiss = tuLocal(['plan']);
+  check(
+    pMiss.code === 1 && pMiss.stderr.includes('本工作空间未在本机看板登记'),
+    `未登记时说明原因并改走 GitHub（${pMiss.stderr.trim()}）`,
+  );
+
+  writeRuntime({ launch: 'package', repoRoot: '', instances: [] });
+  const pPkg = tuLocal(['plan']);
+  check(
+    pPkg.code === 1 && (pPkg.data?.error || '').includes('代理') && !pPkg.stderr.includes('本工作空间未在本机看板登记'),
+    'launch 为 package 时不读本机目录',
+  );
 } finally {
   fs.rmSync(TMP, { recursive: true, force: true });
 }

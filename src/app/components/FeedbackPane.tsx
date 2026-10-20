@@ -225,6 +225,22 @@ function FeedbackBody({
   version: string;
 }) {
   const items = index?.items ?? [];
+  const [launch, setLaunch] = useState<'source' | 'package' | undefined>(undefined);
+  useEffect(() => {
+    let alive = true;
+    api
+      .health()
+      .then((data) => {
+        if (!alive) return;
+        setLaunch(data.launch === 'source' || data.launch === 'package' ? data.launch : undefined);
+      })
+      .catch(() => {
+        // 旧服务没有这个字段，或这次没连上：不显示源码说明，邮件路径照旧
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
   const groups = useMemo(() => {
     const buckets = new Map<GroupKey, FeedbackItem[]>();
     for (const item of items) {
@@ -329,6 +345,7 @@ function FeedbackBody({
             changeToken={changeToken}
             reload={reload}
             version={version}
+            sourceMode={launch === 'source'}
           />
         ) : (
           <p className="px-5 py-10 text-center text-sm text-muted-foreground">还没有可打开的反馈单。</p>
@@ -345,6 +362,7 @@ function FeedbackCard({
   changeToken,
   reload,
   version,
+  sourceMode,
 }: {
   projectId: string;
   feedbackId: string;
@@ -352,6 +370,8 @@ function FeedbackCard({
   changeToken: number;
   reload: (silent?: boolean) => void;
   version: string;
+  /** 只有 /api/health 明确给出 source 才为真。缺字段或 package 都不显示说明 */
+  sourceMode: boolean;
 }) {
   const { detail, loading, error, put } = useFeedbackDetail(projectId, feedbackId, changeToken);
   const [preview, setPreview] = useState(false);
@@ -438,6 +458,11 @@ function FeedbackCard({
       {writeBlocked ? (
         <p className="mb-3 text-xs text-muted-foreground">
           服务不是环回地址监听的，不能从这里标记已发送。用本机的 127.0.0.1 再起一次服务。
+        </p>
+      ) : null}
+      {sourceMode ? (
+        <p className="mb-3 text-xs text-muted-foreground">
+          这份单子留在工作空间里。看板从源码启动，源码那边可以直接读到，不必发邮件，也不必点「我已发出」。回执回来后，由工作空间里的智能体改状态。
         </p>
       ) : null}
       <dl className="mb-4 space-y-1 text-xs">

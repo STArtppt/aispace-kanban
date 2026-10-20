@@ -14,7 +14,44 @@ export const RUNTIME_FILE = path.join(CONFIG_DIR, 'runtime.json');
 export const DEFAULT_TEMPLATE_ID = 'pm-aispace';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+/** 与 resolveTemplateRoot 找仓库内 templates/ 的相对关系相同：src/server 向上两级。 */
+const INSTALL_ROOT = path.resolve(HERE, '../..');
+/**
+ * 有 src/app 才是源码。npm 包只拷 src/server、src/shared 和 dist，不会被判成 source。
+ * 不用 .git（源码目录可以没有 git 元数据），也不用 node_modules（源码自己也有）。
+ */
+export const LAUNCH = fs.existsSync(path.join(INSTALL_ROOT, 'src', 'app')) ? 'source' : 'package';
+/** 源码时是安装根的绝对路径；npm 包是空串。只进 runtime.json，不进 /api/health。 */
+export const REPO_ROOT = LAUNCH === 'source' ? INSTALL_ROOT : '';
 const EMPTY = { schemaVersion: 1, activeProjectId: '', templateRoot: '', projects: [] };
+
+/** 写进 runtime.json 的实例清单。npm 包始终是空数组，避免把登记目录交给「本机来源」判定。 */
+export function runtimeInstances() {
+  if (LAUNCH !== 'source') return [];
+  return readProjects().projects.map((project) => ({
+    id: project.id,
+    name: project.name,
+    root: project.root,
+  }));
+}
+
+/**
+ * 注册表写成功之后刷新实例清单。只动 instances 与 updatedAt，
+ * anydocBin / node / version / launch / repoRoot 保持启动时写下的值。
+ * 读不到（进程还没写过 runtime.json）或写失败都跳过，不挡住注册表操作。
+ */
+function refreshRuntimeInstances() {
+  if (LAUNCH !== 'source') return;
+  try {
+    const data = JSON.parse(fs.readFileSync(RUNTIME_FILE, 'utf8'));
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+    data.instances = runtimeInstances();
+    data.updatedAt = new Date().toISOString();
+    fs.writeFileSync(RUNTIME_FILE, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  } catch {
+    // 配置目录写不进去时，脚本侧按「没有这份清单」走 GitHub，看板本身照常工作
+  }
+}
 
 /**
  * 把「这台机器上的看板运行时信息」落到本机配置目录，供**工作空间脚本**反查。
@@ -173,6 +210,7 @@ export function readProjects() {
 export function writeProjects(data) {
   fs.mkdirSync(CONFIG_DIR, { recursive: true });
   fs.writeFileSync(PROJECTS_FILE, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  refreshRuntimeInstances();
   return data;
 }
 

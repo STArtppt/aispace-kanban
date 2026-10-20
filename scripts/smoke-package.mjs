@@ -168,7 +168,12 @@ try {
     return res.ok ? res.json() : null;
   }).catch(() => die('服务起不来', log));
   if (!health.ok) die('/api/health 返回不对', JSON.stringify(health));
-  ok(`服务起来了，platform=${health.platform}${health.version ? ` version=${health.version}` : ''}`);
+  if (health.launch !== 'package') die('npm 包的 /api/health launch 应为 package', JSON.stringify(health));
+  const pkgReadme = fs.readFileSync(path.join(installed, 'README.md'), 'utf8');
+  if (!pkgReadme.includes('见仓库 README 的「从源码跑」')) {
+    die('包内 README 没有指向源码启动的那一句', pkgReadme.slice(0, 500));
+  }
+  ok(`服务起来了，platform=${health.platform} launch=${health.launch}${health.version ? ` version=${health.version}` : ''}`);
 
   // ── 3 前端真的伺服出去了 ──────────────────────────────────────────────────
   const html = await (await fetch(`${base}/`)).text();

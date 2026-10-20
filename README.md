@@ -32,7 +32,11 @@
 
 ## 用法
 
-一条命令起服务,浏览器会自动打开(macOS / Windows / Linux 都一样,只要有 **Node.js ≥ 20**):
+两种方式起服务,浏览器都会打开(macOS / Windows / Linux,需要 **Node.js ≥ 20**)。
+
+**从源码启动(推荐长期使用)。** 模板改进可以在本机更新到工作空间,反馈单不必发邮件,发现问题可以直接改、直接提改进。要装 git 和 pnpm,拉新版后要重新构建。步骤见下面[从源码跑](#从源码跑)。
+
+**npx(先试一下)。** 一条命令,不用另外装 pnpm;模板从 GitHub 更新,反馈走邮件。
 
 ```bash
 npx -y @startist/aispace-kanban@latest
@@ -321,16 +325,37 @@ mkdir -p visualization && mv prototypes visualization/prototypes
 
 ## 从源码跑
 
-```bash
-pnpm install
-pnpm build                                  # 构建前端（首次必须）
+长期使用走这条。前置:
 
-node bin/cli.mjs add ~/work/某个工作空间     # 登记一个工作空间
-node bin/cli.mjs serve                      # 起服务 → http://localhost:7788
+- Node.js ≥ 20
+- git
+- pnpm:仓库锁定了版本,用 `corepack enable` 拿,不必单独装
+
+```bash
+git clone https://github.com/STArtppt/aispace-kanban.git
+cd aispace-kanban
+pnpm install
+pnpm build
+pnpm serve          # http://localhost:7788
 ```
 
 开发时用 `pnpm dev`:同时起接口服务(7788)和 Vite(5180),改前端代码即时热更,
 浏览器开 <http://localhost:5180>(dev 模式不自动开浏览器,因为 Vite 还要几秒才起得来)。
+
+拉新版:
+
+```bash
+git pull
+pnpm install
+pnpm build
+```
+
+然后重启服务。只 `git pull` 不 `pnpm build`,非 dev 模式打开的还是旧界面。
+
+源码启动之后,工作空间要更新模板:第一次在这个仓库里按
+[`local-source-sync`](./.claude/skills/local-source-sync/SKILL.md),
+用实例自己的 `scripts/template_update.py`,带 `--from` 指向本仓库里该模板的目录,出计划、确认后再 `apply`。
+这一次之后,在工作空间里说「更新模板」即可,脚本会自己读本机模板。
 
 打包发布:`pnpm build:npm && pnpm pack:npm && pnpm smoke:npm`(最后一步在干净目录
 装上真跑一遍)。推 `v*` tag 由 CI 自动发 npm。
@@ -349,8 +374,7 @@ npx shadcn@latest add https://ui.startist.top/r/<组件名>.json --yes --overwri
 
 ## 改代码前
 
-编码规范总则在 **[AGENTS.md](./AGENTS.md)**(人和 AI Agent 共用的事实源):
-只读红线、三个平面的边界、前后端契约、验证闸门。
-配套的工程技能在 [`.claude/skills/`](./.claude/skills/),加功能先读 `dashboard-feature-flow`。
-
+人类贡献者从 **[CONTRIBUTING.md](./CONTRIBUTING.md)** 看该走反馈单、Issue 还是 PR,
+以及提交前要过哪些验证。
+编码规范总则在 **[AGENTS.md](./AGENTS.md)**(人和 AI Agent 共用的事实源)。
 还没做但已经想清楚的改动记在 [`docs/路线图.md`](./docs/路线图.md)。

@@ -28,12 +28,14 @@ description: 把看板模板（aispace-kanban 的 templates/pm-aispace）的新�
 ### 1. 出计划
 
 ```bash
-python3 scripts/template_update.py plan                        # 从 GitHub 公开仓库取 main
-python3 scripts/template_update.py plan --ref <标签或提交号>    # 用户指定版本时
+python3 scripts/template_update.py plan                        # 不带参数。本机条件成立时脚本自己读本机模板，否则从 GitHub 取 main
+python3 scripts/template_update.py plan --ref <标签或提交号>    # 用户指定版本时走 GitHub，不读本机
 ```
 
-- 网络不通时脚本会退出并给两条出路：设代理，或 `--from <本地模板目录>`（用户手里有看板仓库或 npm 包时）。
-  **不要自己去翻本机的看板仓库**，本地目录只在用户给出时用。
+- 本机条件由脚本判定，你不要自己去找看板仓库：`runtime.json` 的 `launch` 为 `source`，`instances` 含本工作空间，源码里有这个模板。三条都成立时，计划来源以 `local:` 开头。向用户说明这次来源是本机源码，不是 GitHub。
+- 计划里有「来源有未提交改动，冲突对照的基线不精确」（来源带 `+dirty`）时，照实告诉用户：模板目录里还有没提交的改动。
+- **不要自己搜索本机看板仓库来拼 `--from`。** 本机路径只来自脚本的判定，或用户明确给出的目录。
+- 网络不通、而且不是本机来源时，脚本会退出并给两条出路：设代理，或 `--from <本地模板目录>`（用户手里有看板仓库或 npm 包时）。
 - 输出里有 `注意：` 的（比如没查到提交号），原样告诉用户。
 - 记下计划文件路径（`plan_file`），后面几步都要用。
 
@@ -67,7 +69,7 @@ python3 scripts/template_update.py compare --plan <计划文件>
 ```
 
 它按 lock 记的来源再取一次上一版模板（基线），给两份 diff：「基线 → 工作空间」是这边改了什么，「基线 → 模板新版」是模板改了什么。
-lock 来源是本地目录、取不回基线时，它只给「工作空间 → 模板新版」两方对照，并提示可以用 `--base-from` / `--base-ref`。
+lock 来源是 `local:<目录名>@<提交号>` 且本机条件成立时，从本机仓库取基线。取不到，或来源只是不带提交号的 `local:<目录名>` 时，它只给「工作空间 → 模板新版」两方对照，并提示可以用 `--base-from` / `--base-ref`。
 
 每个文件：
 
@@ -120,6 +122,7 @@ lock 来源是本地目录、取不回基线时，它只给「工作空间 → �
 ## 不要做的事
 
 - 不跳过第 2 步的确认直接 `apply`。
+- 不自己搜索本机看板仓库来拼 `--from`。
 - 不改 `input/`、`output/` 下的资料和产出，不改 `visualization/`。各目录自带的 `README.md` 属于模板，照计划更新。
 - 不删除任何文件，包括「模板已删除」组里的。
 - 不手改 `.aispace/template.lock.json`；登记只用 `--resolved`。

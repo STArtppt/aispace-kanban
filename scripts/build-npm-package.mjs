@@ -203,6 +203,8 @@ npx -y ${PKG_NAME}@latest add ~/work/某个工作空间
 npx -y ${PKG_NAME}@latest list
 \`\`\`
 
+想要本机更新模板、反馈不必发邮件、直接改代码提改进，见仓库 README 的「从源码跑」。
+
 登记信息存在 \`~/.pmwork/dashboard/projects.json\`（Windows 在 \`%USERPROFILE%\\.pmwork\\\`）。
 「移出看板」只删登记信息，本地目录和文件一个都不动。
 

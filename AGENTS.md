@@ -5,6 +5,7 @@
 > 改协作约定 / 项目说明,**只改本文件**。
 >
 > 面向用户的使用说明在 [README.md](./README.md),本文件不重复它。
+> 人类贡献者的入口在 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ---
 
@@ -500,13 +501,18 @@ aispace-kanban/
 或把文件带到本仓来。旧的 `.kanban-feedback/` 不再新写;看板只统计那里还剩几份 `.md`,
 **不读内容、不移动、不改名、不删除**。
 
+`~/.pmwork/dashboard/runtime.json` 的 `launch` 为 `source` 时,源码仓库里的会话直接读
+`instances` 所列工作空间的 `output/feedback/`,用户不必先把文件拷来,也不必发邮件。
+`launch` 不是 `source`(或这份配置还是旧的)时,仍等用户把反馈单带过来。
+回执仍交给用户转发,本会话不写反馈单。
+
 用户把反馈单交给你时:
 
 1. **当作需求输入**,按本仓流程处理:判断是否立 change、按 `dashboard-feature-flow` 改、过第 4 节的验证闸、提交。
    反馈单里的「建议改法」只是参考,工作空间 agent 不知道本仓的不变量。
 2. **进本仓之前先脱敏**(6.1)。反馈单要求复现是合成的,但别默认它做到了。
 3. **给出回执**:一段能直接转发的文字 —— 结论、提交号(不修就写理由)、工作空间那边可以撤掉的临时绕法。
-   **不要直接写工作空间里的反馈单**,由用户转给那边的 agent 回写状态。两边的 agent 都不跨目录写。
+   **不要直接写工作空间里的反馈单**,由用户转给那边的 agent 回写状态。
 
 反馈单分两种,看 front-matter 的 `kind`:缺陷单(`bug`,不写也按缺陷单)走上面三步;
 **贡献单**(`contribution`)是工作空间沉淀出的通用改进(去 AI 味规则、技能文案、模板脚本修复),
@@ -521,7 +527,11 @@ aispace-kanban/
 5. **给出回执**:结论 + 模板里的位置 + 提交号,如「收为模板 R012(模板规则库 v2),提交 abc1234」;
    不收写理由。工作空间那边据此把贡献单改成 `fixed` / `wontfix`,规则类另在本地规则里补 `上游:模板 R012`。
 
-收下的改进到工作空间,靠那边的 agent 走 `pm-template-update` 更新模板;这边不推送、不写任何工作空间文件。
+收下的改进到工作空间,靠那边的 agent 走 `pm-template-update` 更新模板;这边不推送。
+本会话不直接写工作空间文件。唯一例外:`launch` 为 `source` 时,在用户确认计划之后,
+运行该实例自己的 `scripts/template_update.py apply --plan <计划文件>`
+(写盘的是工作空间脚本,不跑源码仓库里的那份)。不运行 `apply --resolved`;
+冲突与 seedOnly 新版交回工作空间智能体。不变量 1 不因此新增条目。
 
 防误点的硬拦在工作空间的 `.claude/settings.local.json`:`templates/init_workspace.py` 新建时写入
 `deny` 规则,禁止改本仓的任何文件,`templates/` 也在内(模板改进走贡献单,不由工作空间直接写)。已有工作空间用
@@ -548,6 +558,7 @@ aispace-kanban/
 | [`design-system-loop`](.claude/skills/design-system-loop/SKILL.md) | 从 startist-ui 拉 / 升级组件、发现缺口回流真源 |
 | [`systematic-debugging`](.claude/skills/systematic-debugging/SKILL.md) | 查 bug、构建报错、行为不符预期 |
 | [`verification-before-completion`](.claude/skills/verification-before-completion/SKILL.md) | 准备说「做完了」之前 |
+| [`local-source-sync`](.claude/skills/local-source-sync/SKILL.md) | 源码启动时,把模板同步到已登记实例、直接读实例里的反馈单。`launch` 不是 `source` 时不适用 |
 
 来源与分层见 [`.claude/skills/README.md`](.claude/skills/README.md)(上游基线 + 本地特化,
 **同一件事以本地为准**)。技能缺失或过时就**顺手补全**,让知识随项目生长。
