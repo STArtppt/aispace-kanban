@@ -88,7 +88,7 @@ export function WorkbenchHub({
             问题、记录、反馈、模板和去 AI 味。点一张卡片进去，标题栏可以回到这里。
           </p>
         </div>
-        <FeatureCardGrid className="sm:grid-cols-2 lg:grid-cols-3">
+        <FeatureCardGrid className="sm:grid-cols-2 lg:grid-cols-4">
           {cards.map((card) => {
             const showCount = typeof card.count === 'string'
               ? card.count.length > 0

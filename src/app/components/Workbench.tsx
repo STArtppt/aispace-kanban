@@ -174,10 +174,12 @@ export function Workbench({
         <DialogPopup className="h-[min(78vh,780px)] w-[min(1100px,94vw)] max-w-none gap-0 p-0 max-sm:max-w-none">
           <header className="flex h-14 shrink-0 items-center gap-3 border-b border-border px-5">
             {onHub ? (
-              <DialogTitle className="font-display text-base">工作台</DialogTitle>
+              <DialogTitle className="min-w-0 flex-1 truncate font-display text-base">
+                {projectName || '工作台'}
+              </DialogTitle>
             ) : (
               <>
-                <DialogTitle className="sr-only">工作台</DialogTitle>
+                <DialogTitle className="sr-only">{projectName || '工作台'}</DialogTitle>
                 <Button
                   variant="ghost"
                   size="sm"
@@ -206,9 +208,12 @@ export function Workbench({
                 </TabsList>
               </Tabs>
             )}
-            <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-              {projectName}
-            </span>
+            {/* 浏览页的标题就是项目名，不再重复一遍 */}
+            {onHub ? null : (
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+                {projectName}
+              </span>
+            )}
             <DialogClose
               render={
                 <Button variant="ghost" size="icon" aria-label="关闭" className="shrink-0">
