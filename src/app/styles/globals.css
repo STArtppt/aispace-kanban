@@ -207,3 +207,14 @@
   overflow-x: auto;
   overflow-y: hidden;
 }
+
+/*
+ * sonner 在鼠标悬停（data-expanded）时把 toast 高度锁成挂载时量的
+ * --initial-height，之后只在 title / description 这些 props 变了才重测。
+ * 「处理记录」是 details，展开不改 props，内容会画出卡片；鼠标离开悬停
+ * 解除，锁才消失，卡片才被撑开。展开期间改回随内容增高。
+ * 只作用于带这个 class 的 toast，别的通知仍走 sonner 自己的堆叠高度。
+ */
+[data-sonner-toast].docx-result-toast[data-mounted='true'][data-expanded='true']:has(details[open]) {
+  height: auto;
+}

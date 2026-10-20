@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ClipboardCopy, FileOutput, SquareArrowOutUpRight } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -39,6 +39,95 @@ function saveChoice(projectId: string, template: string) {
 }
 
 const isGenerated = (t: DocxTemplateItem) => t.generated ?? Boolean(t.files?.reference?.exists);
+
+/**
+ * sonner 悬停时用挂载时量的 `--initial-height` 锁住 toast 高度，
+ * 只在 title / description / action 变了才重测。details 展开不改这些 props，
+ * 内容会画出卡片；这里按当前内容把变量写回去。
+ * 样式里对 `.docx-result-toast` 还有一条 `height: auto`，避免这次写回被下一次
+ * 悬停重绘冲掉之前先闪一帧旧高度。
+ * 不走 `toast()` 更新：只有一条通知时，更新会让 sonner 把悬停清掉并重新计时。
+ * 排在后面的 toast 的 `--offset` 仍按展开前的高度算，这里改成现在的内容高度。
+ */
+function syncSonnerToastHeight(node: HTMLElement) {
+  const toastEl = node.closest('[data-sonner-toast]');
+  if (!(toastEl instanceof HTMLElement)) return;
+  const locked = toastEl.style.height;
+  toastEl.style.height = 'auto';
+  const height = Math.ceil(toastEl.getBoundingClientRect().height);
+  toastEl.style.height = locked;
+  if (height <= 0) return;
+  toastEl.style.setProperty('--initial-height', `${height}px`);
+
+  const list = toastEl.parentElement;
+  if (!list) return;
+  const gap = Number.parseFloat(getComputedStyle(list).getPropertyValue('--gap')) || 0;
+  const items = [...list.querySelectorAll<HTMLElement>(':scope > [data-sonner-toast]')];
+  const index = items.indexOf(toastEl);
+  if (index < 0) return;
+  let before = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    const itemHeight = item === toastEl ? height : Math.ceil(item.getBoundingClientRect().height);
+    if (i > index) item.style.setProperty('--offset', `${i * gap + before}px`);
+    before += itemHeight;
+  }
+}
+
+function ConvertResultNotice({
+  unfilled,
+  warnings,
+  log,
+}: {
+  unfilled: number;
+  warnings: string[];
+  log: string[];
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  // 没有依赖：sonner 每次悬停进出都会重绘，并把 --initial-height 写回它记住的旧值。
+  // 这个 effect 在绘制前跑，才能把刚写回去的旧高度改成现在的内容高度。
+  useLayoutEffect(() => {
+    if (ref.current) syncSonnerToastHeight(ref.current);
+  });
+  return (
+    <div ref={ref} className="flex flex-col gap-1">
+      {unfilled ? <span className="text-destructive">有 {unfilled} 处待填，发出前在 Word 里补上</span> : null}
+      {warnings.length ? <span>注意：{warnings.join('；')}</span> : null}
+      {log.length ? (
+        <details onToggle={(event) => syncSonnerToastHeight(event.currentTarget)}>
+          <summary className="cursor-pointer">处理记录（{log.length} 条）</summary>
+          <ul className="mt-1 list-disc pl-4">
+            {log.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function showConvertResultToast({
+  name,
+  warnings,
+  log,
+  onPreview,
+}: {
+  name: string;
+  warnings: string[];
+  log: string[];
+  onPreview: () => void;
+}) {
+  // 封面字段没取到值：成品里是「【待填：…】」，发出前必须补，用 orange 单独点出来
+  const unfilled = warnings.filter((w) => w.includes('【待填')).length;
+  const duration = warnings.length || log.length ? 15000 : 6000;
+  toast.success(`已生成 ${name}`, {
+    className: 'docx-result-toast',
+    description: warnings.length || log.length ? (
+      <ConvertResultNotice unfilled={unfilled} warnings={warnings} log={log} />
+    ) : undefined,
+    action: { label: '预览', onClick: onPreview },
+    duration,
+  });
+}
 
 /**
  * 产出 `.md` 的「转成 Word」：选模板，然后「转换」（服务端 spawn md2docx.py，第九条例外）或「复制提示词」。
@@ -149,25 +238,11 @@ export function DocxExportDialog({
       };
       const warnings = result.warnings ?? [];
       const log = result.log ?? [];
-      // 封面字段没取到值：成品里是「【待填：…】」，发出前必须补，用 orange 单独点出来
-      const unfilled = warnings.filter((w) => w.includes('【待填')).length;
-      toast.success(`已生成 ${name}`, {
-        description: warnings.length || log.length ? (
-          <div className="flex flex-col gap-1">
-            {unfilled ? <span className="text-destructive">有 {unfilled} 处待填，发出前在 Word 里补上</span> : null}
-            {warnings.length ? <span>注意：{warnings.join('；')}</span> : null}
-            {log.length ? (
-              <details>
-                <summary className="cursor-pointer">处理记录（{log.length} 条）</summary>
-                <ul className="mt-1 list-disc pl-4">
-                  {log.map((line) => <li key={line}>{line}</li>)}
-                </ul>
-              </details>
-            ) : null}
-          </div>
-        ) : undefined,
-        action: { label: '预览', onClick: () => onConverted(target) },
-        duration: warnings.length || log.length ? 15000 : 6000,
+      showConvertResultToast({
+        name,
+        warnings,
+        log,
+        onPreview: () => onConverted(target),
       });
       onClose();
     } catch (err) {
