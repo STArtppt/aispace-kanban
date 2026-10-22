@@ -618,7 +618,10 @@ export function Markdown({
   }, [children]);
 
   return (
-    <div ref={rootRef} className="markdown-body max-w-[76ch]">
+    <div
+      ref={rootRef}
+      className={cn('markdown-body max-w-[76ch]', sourceFile && 'markdown-preserve-breaks')}
+    >
       <LinkContext.Provider value={linkHandlers}>{rendered}</LinkContext.Provider>
     </div>
   );

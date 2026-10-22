@@ -209,6 +209,15 @@
 }
 
 /*
+ * 工作空间文档预览：段内单换行按 Obsidian 默认显示成硬换行。
+ * CommonMark 把它们收成空格，中文里标题和正文会粘成一行，中间还多一个空格。
+ * 帮助页 / 问题单没有 sourceFile，保持原来的软换行，避免按列宽折行的文案被拆开。
+ */
+.markdown-body.markdown-preserve-breaks :is(p, li, blockquote) {
+  white-space: pre-line;
+}
+
+/*
  * sonner 在鼠标悬停（data-expanded）时把 toast 高度锁成挂载时量的
  * --initial-height，之后只在 title / description 这些 props 变了才重测。
  * 「处理记录」是 details，展开不改 props，内容会画出卡片；鼠标离开悬停
