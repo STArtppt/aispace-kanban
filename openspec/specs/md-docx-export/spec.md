@@ -3,19 +3,22 @@
 ## Purpose
 
 产出视图里把一份 `.md` 就地转成同目录同基名的 `.docx`：入口挂在 `.md` 条目的「更多」菜单上，
-阅读器里打开交付稿时，版本条上的「转成 Word」作用于当前那一版，成品落在交付稿旁边。
-弹窗里选「通用规范」或客户模板、认 `docKey` 而不收路径、同名文件只有带生成标记才允许覆盖，
+阅读器打开这些 `.md` 时，版本条上的 Word 按钮作用于当前选中的那一份（原稿或某一版交付稿）；
+同名成品存在时变成「预览 Word」（就地显示），旁边常驻「重新转换」。
+弹窗里选「通用规范」或客户模板、认 `docKey` 而不收路径；再次转换先把上一份带生成标记的成品改名归档。
 转换走 spawn `scripts/md2docx.py` 并同步等待。转换前做格式过滤（标题平移、手写编号、批注块、加粗），
 转换后做确定性后处理（有前置区时装配前置区、写生成标记、表头跨页重复、题注换 SEQ 域；
 没有前置区时文档标题用 `Title` 样式）。文字上只允许去掉标题手写编号、批注标记和解除加粗。
-本能力由 `md-to-docx` 与 `docx-front-matter-and-deai` 变更落地。
+本能力由 `md-to-docx`、`docx-front-matter-and-deai` 与 `delivery-bar-word-archive` 变更落地。
 
 ## Requirements
 
 ### Requirement: 「转成 Word」入口
 
 产出视图里每个 `.md` 条目（`analysis` / `docs` / `decisions` 三组，含组内子目录与已归档项）的「更多」菜单 SHALL 有「转成 Word」；
-阅读器里打开某份交付稿（`output/delivery/**` 下的 `.md`）时，版本条上 SHALL 也有「转成 Word」，作用于当前选中的那一版。
+阅读器打开这些 `.md` 时，版本条上 SHALL 也有 Word 按钮，作用于当前选中的那一份（原稿或某一版交付稿）。
+同目录同名的 `.docx` 不存在时按钮是「转成 Word」；存在时变成「预览 Word」，点击在阅读器里就地显示这份 Word、再点回到正文，
+旁边常驻「重新转换」（同名文件没有生成标记时置灰并说明原因）。
 入口可用的前提是该条目带有服务端下发的 `docKey`；没有 `docKey`（旧服务进程）时菜单项置灰，提示「看板服务是旧版本，重启后可用」。
 非 `.md` 条目不出现这一项。
 
@@ -28,6 +31,11 @@
 
 - **WHEN** 用户在阅读器版本条上选中 `v002`，点「转成 Word」
 - **THEN** 弹窗的来源是 `output/delivery/docs/方案/总体设计/v002.md`，目标文件是同目录的 `v002.docx`；原稿目录一个字节都不变
+
+#### Scenario: 已转过的版本
+
+- **WHEN** `v002.docx` 已存在，用户选中 `v002`
+- **THEN** 版本条上是「预览 Word」与「重新转换」；点「预览 Word」，阅读区显示 `v002.docx` 的分页版式，不打开新标签页
 
 ### Requirement: 选择模板
 
@@ -43,7 +51,7 @@ key 为 `aispace-kanban:docx-template:<工作空间 id>`），找不到就选「
 
 ### Requirement: 直接转换
 
-用户选好模板后点「转换」，前端 SHALL 调用 `POST /api/projects/:id/docx/convert`，载荷只有 `docKey`、`template`、`overwrite`。
+用户选好模板后点「转换」，前端 SHALL 调用 `POST /api/projects/:id/docx/convert`，载荷只有 `docKey`、`template`、`overwrite` 与可选的 `archive`。
 服务端 SHALL 用 `docKey` 反查出来源 `.md`，启动工作空间的 `scripts/md2docx.py`，同步等待（超时 120 秒），返回写出的文件相对路径与 `warnings`。
 成功后弹窗关闭，toast 显示「已生成 <文件名>」并带「预览」按钮；产出列表经 SSE 出现新的 `.docx`。
 
@@ -59,19 +67,28 @@ key 为 `aispace-kanban:docx-template:<工作空间 id>`），找不到就选「
 
 ### Requirement: 同名文件不被误覆盖
 
-目标 `.docx` 已存在时，弹窗 SHALL 在转换前提示。只有当已有文件带工具链生成标记 `aispace-docx-generator` 时，
-才提供「覆盖」勾选；用户勾选后载荷 `overwrite: true`。已有文件没有生成标记时 MUST 拒绝转换，
-提示「同名的 Word 不是本工具生成的，为避免覆盖人工修改，请先改名或移走」。服务端与脚本 MUST 各自再校验一次，不能只靠前端。
+目标 `.docx` 已存在且带工具链生成标记 `aispace-docx-generator` 时，再次转换 SHALL 先把它改名为
+`<基名>-<上次转换时间 YYYYMMDDHHmm>.docx`（同目录；重名追加 `-2`、`-3`），再写新成品 `<基名>.docx`；弹窗不再有「覆盖」开关，
+而是写明上一份会改成的名字，载荷带 `archive: true`。上次转换时间取成品 `docProps/custom.xml` 的 `aispace-docx-converted`，
+没有这项时取文件修改时间。每次转换 SHALL 把本次时间写进新成品的 `aispace-docx-converted`；`.md` 一个字节都不改。
+已有文件没有生成标记时 MUST 拒绝转换，提示「同名的 Word 不是本工具生成的，为避免覆盖人工修改，请先改名或移走」。
+服务端与脚本 MUST 各自再校验一次，不能只靠前端。工作空间的 `md2docx.py` 不支持归档时，服务端 MUST 返回 400（`kind: old-script`）说明先更新模板，
+不得自己改名。命令行与旧前端仍可用 `--overwrite` / `overwrite: true` 直接替换。
 
-#### Scenario: 覆盖上次生成的成品
+#### Scenario: 重新转换保留上一份
 
-- **WHEN** `a.docx` 是上次转换生成的，用户勾选「覆盖」后转换
-- **THEN** `a.docx` 被新成品替换
+- **WHEN** `v001.docx` 是 2026-10-22 09:18 转出来的，人在 Word 里改过并保存，用户点「重新转换」并选了另一个模板
+- **THEN** 原文件改名为 `v001-202610220918.docx` 留在原处，新成品是 `v001.docx`；toast 写明上一份另存成了什么名字
 
 #### Scenario: 同名文件是人手改过的
 
-- **WHEN** `a.docx` 没有生成标记，有人用 curl 直接发 `overwrite: true`
+- **WHEN** `a.docx` 没有生成标记，有人用 curl 直接发 `archive: true` 或 `overwrite: true`
 - **THEN** 接口返回 409，`a.docx` 不变
+
+#### Scenario: 实例脚本是旧版
+
+- **WHEN** 工作空间的 `md2docx.py` 还没有 `--archive`，用户点「重新转换」
+- **THEN** 接口返回 400，弹窗说明先更新工作空间模板；`a.docx` 不变
 
 ### Requirement: 复制提示词
 
