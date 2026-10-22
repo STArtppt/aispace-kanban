@@ -116,9 +116,12 @@
       模板名只接受一层基名;提炼决定经 stdin 传 JSON,服务端限 256KB、拒路径类键名,脚本再校验;
    ⑤ `docx_template.py` 只写 `output/docx-template/<模板名>/`(`collect/` `profile.json` `reference.docx`
       `front.docx` `spec.md` `sample.docx`);`md2docx.py` 只写来源 `.md` 同目录同基名的 `.docx`
-      (来源是交付稿时落在交付稿旁,原稿目录不动;中间文件放系统临时目录);
+      (来源是交付稿时落在交付稿旁,原稿目录不动;中间文件放系统临时目录;`.md` 一个字节不改),
+      外加「重新转换」时把同名的上一份成品**改名**为 `<基名>-<上次转换时间>.docx`(同目录,不删不覆盖);
+      转换时间记在成品自己的 `docProps/custom.xml`(`aispace-docx-converted`),不写进 `.md`;
    ⑥ **不覆盖别人的文件**:同名 `.docx` 只有带生成标记(`docProps/custom.xml` 的 `aispace-docx-generator`)
-      且用户确认才替换,否则 409;模板名已存在要用户确认「重新生成」。服务端与脚本各校验一次;
+      才归档改名(界面)或替换(`overwrite`,只留给旧前端与命令行),否则 409;脚本不支持归档时 400,看板不代为改名;
+      模板名已存在要用户确认「重新生成」。服务端与脚本各校验一次;
       缺脚本 / Python 3 / pandoc 3 时 400 说清出路,不退化成看板代劳。
 
    **去 AI 味这条线不新增任何写入**(`deai.mjs` 只读):交付稿与规则库 `.claude/skills/pm-deai-writing/rules/`

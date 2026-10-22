@@ -192,7 +192,11 @@ export async function runDocxBuild(project, name, body) {
     runScript(root, script, args, { input, timeoutMs: TIMEOUT_MS.build, label: '生成模板' }));
 }
 
-/** POST docx/convert  载荷 { docKey, template, overwrite? } */
+/**
+ * POST docx/convert  载荷 { docKey, template, archive?, overwrite? }
+ * archive：同名成品带生成标记时，由脚本先改名为 `<基名>-<上次转换时间>.docx` 再写新的（看板「重新转换」）；
+ * overwrite 只留给旧前端。改名是脚本做的，看板自己不写盘（第九条）。
+ */
 export async function runDocxConvert(project, body) {
   const root = project.root;
   const src = resolveDoc(root, 'output-md', body?.docKey);
@@ -210,8 +214,14 @@ export async function runDocxConvert(project, body) {
     if (readDocxMarker(target) === null) {
       throw httpError(409, '同名的 Word 不是本工具生成的，为避免覆盖人工修改，请先改名或移走。', 'not-generated');
     }
-    if (body?.overwrite !== true) {
-      throw httpError(409, `${path.basename(targetRel)} 已存在。确认要替换就勾选「覆盖」（在 Word 里对它做过的修改会丢掉）。`, 'exists');
+    if (body?.archive === true) {
+      // 旧脚本不认 --archive：argparse 会报一行英文退出 2，这里先说清出路。看板不替它改名
+      if (!fs.readFileSync(script, 'utf8').includes('--archive')) {
+        throw httpError(400, '这个工作空间的 md2docx.py 是旧版，还不会把上一份 Word 改名保留。'
+          + '先更新工作空间模板（让工作空间 AI 走 pm-template-update），再重新转换。', 'old-script');
+      }
+    } else if (body?.overwrite !== true) {
+      throw httpError(409, `${path.basename(targetRel)} 已存在。重新转换会把它改名保留，再写新的。`, 'exists');
     }
   }
   const pandoc = await findPandoc(root);
@@ -220,7 +230,8 @@ export async function runDocxConvert(project, body) {
       ? `本机的 pandoc 版本过低（${pandoc.version}），需要 3 以上。装好后重启看板；也可以用「复制提示词」。`
       : '本机没有 pandoc 3，装好后重启看板；也可以用「复制提示词」交给工作空间 AI。', 'no-pandoc');
   }
-  const args = [src.rel, '--template', template, ...(body?.overwrite === true ? ['--overwrite'] : [])];
+  const args = [src.rel, '--template', template,
+    ...(body?.archive === true ? ['--archive'] : body?.overwrite === true ? ['--overwrite'] : [])];
   return exclusive(busyTargets, target, () =>
     runScript(root, script, args, { timeoutMs: TIMEOUT_MS.convert, label: '转换' }));
 }

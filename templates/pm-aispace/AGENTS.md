@@ -158,13 +158,13 @@ python3 scripts/ingest.py --force              # 全部重转
 | 脚本 | 做什么 | 写到哪 |
 | --- | --- | --- |
 | `scripts/docx_template.py` | 从客户旧 Word 提炼模板：`collect` 采集，`build` 按决定生成 | 只写 `output/docx-template/<模板名>/` |
-| `scripts/md2docx.py` | 按模板把 `.md` 转成 `.docx`（需 pandoc 3） | 只写 `.md` 同目录同名的 `.docx` |
+| `scripts/md2docx.py` | 按模板把 `.md` 转成 `.docx`（需 pandoc 3） | 只写 `.md` 同目录同名的 `.docx`；`--archive` 时把上一份改名为 `<基名>-<上次转换时间>.docx` |
 
 看板「模版洗炼」「转成 Word」跑的是同一份脚本；用户粘来提示词就照做。
 操作步骤见 [`output/docx-template/README.md`](output/docx-template/README.md)「给 AI 的步骤」。必守的几条：
 
 - **要交付的文档先去 AI 味，转交付稿**，不转原稿。
-- 同名 `.docx` 没有生成标记时脚本会拒绝 —— **不要删它、不要改名绕过**，问用户；有标记的覆盖前也先问。
+- 同名 `.docx` 没有生成标记时脚本会拒绝 —— **不要删它、不要改名绕过**，问用户；有标记的用 `--archive` 重转（上一份改名保留），不要用 `--overwrite`，除非用户明说不要上一份。
 - 提炼的映射方案**先列给用户确认**再生成；模板名已存在要 `--regenerate`，先问用户。
 - 模板目录里是客户的版式材料，不要贴进反馈单或任何公开的地方。
 

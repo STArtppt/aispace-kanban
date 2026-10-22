@@ -198,6 +198,9 @@ try {
   r = run('md2docx.py', ['output/docs/hand.md', '--template', '回归', '--overwrite']);
   check(r.code === 3 && r.result?.kind === 'not-generated' && sha(path.join(docs, 'hand.docx')) === handHash,
     '没有生成标记的同名文件：加 --overwrite 也拒绝，原文件不变');
+  r = run('md2docx.py', ['output/docs/hand.md', '--template', '回归', '--archive']);
+  check(r.code === 3 && r.result?.kind === 'not-generated' && sha(path.join(docs, 'hand.docx')) === handHash,
+    '没有生成标记的同名文件：加 --archive 也拒绝，不改名');
 
   r = run('md2docx.py', ['output/docs/a.md', '--template', '@base'], { env: noPandoc });
   check(r.code === 4 && r.result?.kind === 'no-pandoc' && !existsSync(path.join(docs, 'a.docx')),
@@ -216,6 +219,26 @@ try {
     const base = inspect(path.join(docs, 'a.docx'), null);
     check(base.warnings.length === 0, '通用规范成品各角色格式与规范一致', base.warnings.join('；'));
     check(base.eff.BodyText.size === 12, '通用规范正文 12pt');
+
+    console.log('重新转换时归档上一份');
+    const prevHash = sha(path.join(docs, 'a.docx'));
+    const stamp = zipText(path.join(docs, 'a.docx'), 'docProps/custom.xml').match(/name="aispace-docx-converted"[^>]*>\s*<vt:lpwstr>([^<]*)</);
+    check(Boolean(stamp), '成品记下转换时间');
+    const want = stamp ? (() => {
+      const d = new Date(stamp[1]);
+      const p2 = (n) => String(n).padStart(2, '0');
+      return `output/docs/a-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}.docx`;
+    })() : '';
+    r = run('md2docx.py', ['output/docs/a.md', '--template', '@base', '--archive']);
+    check(r.code === 0 && r.result?.archived === want && !r.result?.overwritten,
+      '--archive：上一份按它记的转换时间改名', JSON.stringify(r.result?.archived));
+    check(existsSync(path.join(ws, want)) && sha(path.join(ws, want)) === prevHash && existsSync(path.join(docs, 'a.docx')),
+      '归档件原样保留，新成品仍叫 a.docx');
+    r = run('md2docx.py', ['output/docs/a.md', '--template', '@base', '--archive']);
+    check(r.code === 0 && /^output\/docs\/a-\d{12}(-2)?\.docx$/.test(r.result?.archived || '') && r.result.archived !== want,
+      '同一分钟再转：归档名追加序号，不覆盖已有归档', r.result?.archived);
+    rmSync(path.join(ws, want), { force: true });
+    if (r.result?.archived) rmSync(path.join(ws, r.result.archived), { force: true });
 
     console.log('格式过滤器');
     const log = r.result.log || [];

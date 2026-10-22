@@ -1225,6 +1225,9 @@ export interface DocxConvertRequest {
   docKey: string;
   /** 模板目录名，或 `@base`（通用规范） */
   template: string;
+  /** 同名成品带生成标记时，先改名为 `<基名>-<上次转换时间>.docx` 保留再写新的（「重新转换」） */
+  archive?: boolean;
+  /** 直接替换同名成品。只留给旧前端与命令行，界面不再发 */
   overwrite?: boolean;
 }
 
@@ -1236,6 +1239,8 @@ export interface DocxConvertResult {
   written?: string[];
   template?: string;
   overwritten?: boolean;
+  /** 上一份成品改名后的路径；没有上一份时缺省 */
+  archived?: string;
   warnings?: string[];
   log?: string[];
 }
@@ -1371,6 +1376,17 @@ export interface DeliveryVersion {
   directlyEdited: boolean;
   /** 这一版上还有几条待处理批注。可选：旧服务不给 */
   pendingNotes?: number;
+  /** 同目录同名的 .docx；null = 没有。可选：旧服务不给（当成没有） */
+  docx?: DeliveryDocx | null;
+}
+
+/** 「转成 Word」的成品：与 .md 同目录同名 */
+export interface DeliveryDocx {
+  path: string;
+  size: number;
+  mtime: string;
+  /** 带看板生成标记；false = 人工放的同名文件，只能预览，不能覆盖 */
+  generated: boolean;
 }
 
 /** GET delivery?docKey=：某份原稿的交付稿 */
@@ -1380,6 +1396,8 @@ export interface DeliveryList {
   versions: DeliveryVersion[];
   /** 原稿的记录编号；没有记录时缺省（交付稿上的批注会退回看板缓存） */
   recordId?: string;
+  /** 原稿同目录同名的 .docx；null = 没有。可选：旧服务不给（当成没有） */
+  sourceDocx?: DeliveryDocx | null;
 }
 
 /**

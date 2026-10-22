@@ -3,6 +3,7 @@
 
     python3 scripts/md2docx.py output/docs/方案.md --template @base      # 通用规范
     python3 scripts/md2docx.py output/docs/方案.md --template 客户甲      # output/docx-template/客户甲/
+    python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --archive --json   # 上一份改名保留，再写新的
     python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --overwrite --json
     python3 scripts/md2docx.py output/delivery/docs/方案/v002.md --template 客户甲   # 交付稿，成品落在交付稿旁边
     python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --keep-bold     # 不解除段中加粗
@@ -19,11 +20,14 @@ date / doctype）→ 开头的 `#` 标题（title）→ project.yaml 的 identit
 需要 pandoc 3（查找顺序：PANDOC_BIN 环境变量 → 工作空间 .env 的 PANDOC_BIN → PATH）。
 模板的写作规定在 `output/docx-template/<模板名>/spec.md`；通用规范的在 `scripts/docxkit/base-spec.json`。
 
-它只写一个文件：与 .md 同目录、同基名的 .docx（中间文件在系统临时目录，结束即删）。
+它只写与 .md 同目录、同基名的 .docx（中间文件在系统临时目录，结束即删）；成品里记下本次转换时间
+（docProps/custom.xml 的 aispace-docx-converted），.md 一个字节都不动。
 同名 .docx 已存在时：
-- 带本工具链的生成标记（上次转出来的）→ 加 --overwrite 才替换；
+- 带本工具链的生成标记（上次转出来的）→ 加 --archive 先把它改名为 `<基名>-<上次转换时间 YYYYMMDDHHmm>.docx`
+  留在原处再写新的（看板「重新转换」用这个；重名追加 -2、-3；旧成品没记转换时间就用文件修改时间），
+  或加 --overwrite 直接替换；都不加就拒绝；
 - 没有标记（人手改过另存的、客户给的原件）→ 一律拒绝，请先改名或移走。
-  注意：在 Word 里打开成品、改完按原名保存，标记还在 —— 覆盖会丢掉那些修改。
+  注意：在 Word 里打开成品、改完按原名保存，标记还在 —— --overwrite 会丢掉那些修改，--archive 不会。
 
 看板产出列表「更多 → 转成 Word」调的就是它（看板只 spawn，自己不写盘；AGENTS.md 不变量 1 第九条）。
 
@@ -47,7 +51,8 @@ from docxkit import (EXIT_ARGS, EXIT_CONFLICT, EXIT_DEPENDENCY, EXIT_FAIL, VERSI
                      ToolError, finish, force_utf8)
 from docxkit.build import build_reference  # noqa: E402
 from docxkit.front import assemble, fill_values, read_front_matter, read_identity, roles_in  # noqa: E402
-from docxkit.ooxml import Package, add_marker, heading_numbered, marker_of, write_atomic  # noqa: E402
+from docxkit.ooxml import (CONVERTED, Package, add_marker, heading_numbered, marker_of,  # noqa: E402
+                           property_of, set_property, write_atomic)
 from docxkit.pandoc import PandocMissing, default_reference, find_pandoc, md_to_docx  # noqa: E402
 from docxkit.postprocess import postprocess  # noqa: E402
 from docxkit.spec import merged  # noqa: E402
@@ -90,10 +95,10 @@ def convert(args) -> tuple[dict, str]:
         if marker_of(target) is None:
             raise ToolError(f"同名的 Word 不是本工具生成的：{rel(target)}", EXIT_CONFLICT,
                             "为避免覆盖人工修改，请先把它改名或移走", "not-generated")
-        if not args.overwrite:
+        if not (args.overwrite or args.archive):
             raise ToolError(f"{rel(target)} 已存在（上次转换生成的）", EXIT_CONFLICT,
-                            "确认要替换就加 --overwrite；在 Word 里对它做过的修改会丢掉", "exists")
-        overwritten = True
+                            "加 --archive 把它改名保留再转；或加 --overwrite 替换（在 Word 里对它做过的修改会丢掉）", "exists")
+        overwritten = not args.archive
     try:
         pandoc_bin, pandoc_ver = find_pandoc(WS)
     except PandocMissing as e:
@@ -121,11 +126,42 @@ def convert(args) -> tuple[dict, str]:
             flog, fw = assemble(out, front, values)
             log += flog
             warnings += fw
-        write_atomic(target, out.to_bytes())
+        set_property(out, CONVERTED, dt.datetime.now().astimezone().isoformat(timespec="seconds"))
+        archived = None
+        if args.archive and target.exists():
+            archived = _archive_name(target)
+            target.rename(archived)
+        try:
+            write_atomic(target, out.to_bytes())
+        except BaseException:
+            if archived is not None and not target.exists():
+                archived.rename(target)  # 新的没写成，上一份放回原名
+            raise
 
     human = "\n".join([f"已生成 {rel(target)}（模板：{args.template}）", *log, *(f"注意：{w}" for w in warnings)])
+    if archived is not None:
+        human += f"\n上一份已改名为 {rel(archived)}"
     return {"written": [rel(target)], "target": rel(target), "template": args.template, "overwritten": overwritten,
+            **({"archived": rel(archived)} if archived is not None else {}),
             "warnings": warnings, "log": log, "pandocVersion": pandoc_ver}, human
+
+
+def _archive_name(target: Path) -> Path:
+    """上一份成品的归档名：`<基名>-<上次转换时间 YYYYMMDDHHmm>.docx`，取不到转换时间用文件修改时间；重名追加 -2、-3。"""
+    when = None
+    raw = property_of(target, CONVERTED)
+    if raw:
+        try:
+            when = dt.datetime.fromisoformat(raw).astimezone()
+        except ValueError:
+            when = None
+    if when is None:
+        when = dt.datetime.fromtimestamp(target.stat().st_mtime)
+    stem = f"{target.stem}-{when.strftime('%Y%m%d%H%M')}"
+    cand, n = target.with_name(stem + target.suffix), 2
+    while cand.exists():
+        cand, n = target.with_name(f"{stem}-{n}{target.suffix}"), n + 1
+    return cand
 
 
 def _front_profile(ref: Path) -> dict:
@@ -147,6 +183,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="按模板把 .md 转成同目录、同名的 .docx")
     ap.add_argument("source", help="来源 .md")
     ap.add_argument("--template", required=True, help="模板名（output/docx-template/ 下的目录名）或 @base（通用规范）")
+    ap.add_argument("--archive", action="store_true",
+                    help="同名 .docx 是上次转换生成的时，先改名为 <基名>-<上次转换时间>.docx 保留，再写新的")
     ap.add_argument("--overwrite", action="store_true", help="同名 .docx 是上次转换生成的时，替换它")
     ap.add_argument("--keep-bold", action="store_true", help="保留 md 里的全部加粗（默认只保留段首标签式加粗）")
     ap.add_argument("--json", action="store_true", help="最后一行打印结果 JSON（给看板用）")

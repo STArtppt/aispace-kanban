@@ -13,7 +13,6 @@ import {
   DialogPortal,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { Switch } from '@/components/ui/switch';
 import { writeClipboard } from '@/components/Primitives';
 import { useDocxTools } from '@/hooks/useDocxTools';
 import { ApiError, api, isUnsupported, type DocxTemplateItem, type FileItem } from '@/lib/api';
@@ -78,10 +77,12 @@ function ConvertResultNotice({
   unfilled,
   warnings,
   log,
+  archived,
 }: {
   unfilled: number;
   warnings: string[];
   log: string[];
+  archived?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // 没有依赖：sonner 每次悬停进出都会重绘，并把 --initial-height 写回它记住的旧值。
@@ -91,6 +92,7 @@ function ConvertResultNotice({
   });
   return (
     <div ref={ref} className="flex flex-col gap-1">
+      {archived ? <span>上一份已改名为 {archived.split('/').pop()}</span> : null}
       {unfilled ? <span className="text-destructive">有 {unfilled} 处待填，发出前在 Word 里补上</span> : null}
       {warnings.length ? <span>注意：{warnings.join('；')}</span> : null}
       {log.length ? (
@@ -107,11 +109,14 @@ function ConvertResultNotice({
 
 function showConvertResultToast({
   name,
+  archived,
   warnings,
   log,
   onPreview,
 }: {
   name: string;
+  /** 上一份改名后的路径 */
+  archived?: string;
   warnings: string[];
   log: string[];
   onPreview: () => void;
@@ -122,8 +127,8 @@ function showConvertResultToast({
   toast.success(`已生成 ${name}`, {
     className: 'docx-result-toast',
     description: warnings.length || log.length ? (
-      <ConvertResultNotice unfilled={unfilled} warnings={warnings} log={log} />
-    ) : undefined,
+      <ConvertResultNotice unfilled={unfilled} warnings={warnings} log={log} archived={archived} />
+    ) : archived ? `上一份已改名为 ${archived.split('/').pop()}` : undefined,
     action: { label: '预览', onClick: onPreview },
     duration,
   });
@@ -132,8 +137,9 @@ function showConvertResultToast({
 /**
  * 产出 `.md` 的「转成 Word」：选模板，然后「转换」（服务端 spawn md2docx.py，第九条例外）或「复制提示词」。
  *
- * 同名 `.docx` 的处理按服务端下发的 `docxGenerated`：带生成标记才给「覆盖」开关，
- * 没有标记直接说明为什么不能转；服务端与脚本还会各自再校验一次，这里只是提前告诉人。
+ * 同名 `.docx` 的处理按服务端下发的 `docxGenerated`：带生成标记的上一份由脚本改名为
+ * `<基名>-<上次转换时间>.docx` 保留，再写新的（载荷总带 `archive: true`，没有同名文件时它不起作用）；
+ * 没有标记直接说明为什么不能转。服务端与脚本还会各自再校验一次，这里只是提前告诉人。
  */
 export function DocxExportDialog({
   projectId,
@@ -158,13 +164,11 @@ export function DocxExportDialog({
   const [templates, setTemplates] = useState<DocxTemplateItem[]>([]);
   const [templatesNote, setTemplatesNote] = useState('');
   const [template, setTemplate] = useState(BASE_TEMPLATE);
-  const [overwrite, setOverwrite] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ message: string; kind?: string } | null>(null);
 
   useEffect(() => {
     if (!open) return;
-    setOverwrite(false);
     setError(null);
     let cancelled = false;
     (async () => {
@@ -191,18 +195,17 @@ export function DocxExportDialog({
   const targetPath = item ? item.path.replace(/\.md$/i, '.docx') : '';
   const targetName = targetPath.split('/').pop() || '';
   const listed = useMemo(() => outputItems.find((f) => f.path === targetPath), [outputItems, targetPath]);
-  // 交付稿不在扫描里，列表里查不到目标：服务端回 409 exists（带生成标记的上次成品）时再给「覆盖」
-  const existsOnServer = error?.kind === 'exists';
-  const existing = listed ?? (existsOnServer ? ({ path: targetPath, docxGenerated: true } as Partial<FileItem>) : undefined);
+  // 交付稿不在扫描里：阅读器把交付稿接口查到的同名 .docx 传进来；查不到时由服务端判断
+  const existing = listed;
   const blockedByHand = existing?.docxGenerated === false || error?.kind === 'not-generated';
-  const needOverwrite = Boolean(existing) && !blockedByHand;
+  const willArchive = Boolean(existing) && !blockedByHand;
+  const stem = targetName.replace(/\.docx$/i, '');
 
   const convertBlocked = !item?.docKey
     ? '看板服务是旧版本，重启后可用'
     : readOnlyReason || pandocReason
       || (scriptsMissing || error?.kind === 'no-script' ? '这个工作空间还没有 docx 工具链，用「复制提示词」让工作空间 AI 补齐' : '')
-      || (blockedByHand ? '同名的 Word 不是本工具生成的，为避免覆盖人工修改，请先改名或移走' : '')
-      || (needOverwrite && !overwrite ? `${targetName} 已存在，要替换请打开「覆盖」` : '');
+      || (blockedByHand ? '同名的 Word 不是本工具生成的，为避免覆盖人工修改，请先改名或移走' : '');
 
   const choose = (name: string) => {
     setTemplate(name);
@@ -229,7 +232,7 @@ export function DocxExportDialog({
       const result = await api.docxConvert(projectId, {
         docKey: item.docKey,
         template,
-        ...(needOverwrite && overwrite ? { overwrite: true } : {}),
+        archive: true,
       });
       const path = result.target || targetPath;
       const name = path.split('/').pop() || targetName;
@@ -240,15 +243,19 @@ export function DocxExportDialog({
       const log = result.log ?? [];
       showConvertResultToast({
         name,
+        archived: result.archived,
         warnings,
         log,
         onPreview: () => onConverted(target),
       });
       onClose();
     } catch (err) {
+      // 新服务收到 archive 不会回 exists：回了说明服务进程是旧版，不认识 archive
       const message = isUnsupported(err)
         ? '看板服务是旧版本，还没有转换接口；重启看板后再试'
-        : (err as Error).message;
+        : err instanceof ApiError && err.kind === 'exists'
+          ? `${targetName} 已存在，旧版看板服务不会把它改名保留；重启看板后再转换`
+          : (err as Error).message;
       setError({ message, kind: err instanceof ApiError ? err.kind : undefined });
     } finally {
       setBusy(false);
@@ -329,21 +336,16 @@ export function DocxExportDialog({
                   同目录已有 {targetName}，但它不是本工具生成的（可能是人手改过另存的，或客户给的原件）。
                   为避免覆盖人工修改，请先把它改名或移走。
                 </p>
-              ) : (
-                <label className="flex items-start justify-between gap-3 rounded-md border border-border px-3 py-2">
-                  <span className="flex flex-col gap-0.5">
-                    <span>覆盖已有的 {targetName}</span>
-                    <span className="text-xs text-muted-foreground">
-                      它是上次转换生成的。覆盖会丢掉你在 Word 里对它做过的修改。
-                    </span>
-                  </span>
-                  <Switch aria-label="覆盖已有文件" checked={overwrite} onCheckedChange={setOverwrite} disabled={busy} />
-                </label>
-              )
+              ) : willArchive ? (
+                <p className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
+                  同目录已有上次转换的 {targetName}。转换时它会改名为「{stem}-上次转换时间.docx」留在原处，
+                  在 Word 里对它做过的修改不会丢；新成品仍叫 {targetName}。
+                </p>
+              ) : null
             ) : null}
 
             {error ? <p className="whitespace-pre-wrap text-xs text-destructive">{error.message}</p> : null}
-            {convertBlocked && !error && !(needOverwrite && !overwrite) && !blockedByHand ? (
+            {convertBlocked && !error && !blockedByHand ? (
               <p className="text-xs text-muted-foreground">「转换」不可用：{convertBlocked}。「复制提示词」照样能用。</p>
             ) : null}
           </DialogBody>

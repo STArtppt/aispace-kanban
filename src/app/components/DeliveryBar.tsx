@@ -1,13 +1,16 @@
 import { useEffect, useState } from 'react';
-import { FileOutput, GitCompare, Pencil } from 'lucide-react';
+import { Copy, FileOutput, FileText, GitCompare } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DiffView } from '@/components/DiffView';
-import { api, type DeliveryList, type DeliveryVersion } from '@/lib/api';
+import { writeClipboard } from '@/components/Primitives';
+import { api, type DeliveryDocx, type DeliveryList, type DeliveryVersion } from '@/lib/api';
+import { deaiPrompt } from '@/lib/deaiPrompt';
 import { cn } from '@/lib/utils';
 
 /**
  * 原稿的交付稿版本（去 AI 味）。只读：看板不写交付稿，只列出、切换、比对、转 Word。
- * 接口 404（旧服务进程）、出错、没有交付稿，一律当成「没有版本条」，不报错。
+ * 接口 404（旧服务进程）、出错，一律当成「没有交付稿」（版本条只剩原稿），不报错。
  */
 export function useDeliveryVersions(projectId: string, docKey: string | undefined, refreshToken: unknown) {
   const [list, setList] = useState<DeliveryList | null>(null);
@@ -58,8 +61,32 @@ function Badge({ children, attention, title }: { children: string; attention?: b
 }
 
 /**
- * 阅读器顶部的版本条：「原稿 · v001 · v002 …」切换阅读；选中某一版时给出对比、批注、转成 Word。
- * orange 只给「原稿已更新」「被直接改过」这两种需要人处理的状态；待处理批注是中性灰。
+ * 「去 AI 味…」：只写剪贴板，不发写请求。取一次规则库只为写上版本号、判断要不要先补齐技能；
+ * 取不到（旧服务 404、出错）也照样复制，只是不带版本号。
+ */
+export async function copyDeaiPrompt(projectId: string, sourcePath: string, nextPath?: string) {
+  let installed = true;
+  let rulesVersion: number | undefined;
+  try {
+    const rules = await api.deaiRules(projectId);
+    installed = rules.installed !== false;
+    rulesVersion = rules.version;
+  } catch {
+    // 旧服务没有这个接口、或读失败：按已安装处理，提示词里不写版本号
+  }
+  const ok = await writeClipboard(deaiPrompt({ sourcePath, rulesVersion, nextPath, installed }));
+  if (ok) toast.success(installed ? '已复制，粘贴给工作空间 AI' : '已复制（含先补齐技能的步骤），粘贴给工作空间 AI');
+  else toast.error('复制失败：浏览器没给剪贴板权限');
+}
+
+const actionClass = 'h-7 px-2 text-xs';
+
+/**
+ * 阅读器顶部的版本条：「原稿 · v001 · v002 …」切换阅读。产出三组的 .md 一律常驻，没有交付稿时只有「原稿」。
+ * 选中原稿给「去 AI 味… / Word」，选中某一版给「对比 / Word」。批注统一走阅读器顶栏的铅笔。
+ * Word 按钮看同目录同名的 .docx：没有是「转成 Word」，有了变成「预览 Word」（在阅读器里就地切换）+「重新转换」
+ * （上一份由脚本改名保留，不覆盖）。
+ * orange 只给「被直接改过」：版本上是有人绕过批注改了这一版，原稿上是原稿在最新一版之后又改过；待处理批注是中性灰。
  */
 export function DeliveryBar({
   versions,
@@ -67,7 +94,10 @@ export function DeliveryBar({
   onSelect,
   compare,
   onCompare,
-  onAnnotate,
+  onDeai,
+  docx,
+  docxPreview,
+  onDocxPreview,
   onConvert,
 }: {
   versions: DeliveryVersion[];
@@ -76,10 +106,17 @@ export function DeliveryBar({
   onSelect: (version: string) => void;
   compare: CompareMode | null;
   onCompare: (mode: CompareMode | null) => void;
-  onAnnotate: () => void;
-  onConvert: (version: DeliveryVersion) => void;
+  /** 原稿的「去 AI 味…」 */
+  onDeai: () => void;
+  /** 当前选中这一份的同名 .docx；null = 还没转过 */
+  docx: DeliveryDocx | null;
+  docxPreview: boolean;
+  onDocxPreview: (on: boolean) => void;
+  onConvert: () => void;
 }) {
   const current = versions.find((v) => v.version === selected);
+  // 各版的 source_sha 照抄底版，最新一版代表交付稿目前跟到哪
+  const sourceEdited = Boolean(versions[versions.length - 1]?.sourceChanged);
   const chip = (key: string, label: string, v?: DeliveryVersion) => (
     <button
       key={key}
@@ -92,62 +129,100 @@ export function DeliveryBar({
       )}
     >
       {label}
-      {v?.sourceChanged ? <Badge attention title="原稿在这一版之后又改过">原稿已更新</Badge> : null}
+      {!v && sourceEdited ? (
+        <Badge attention title="原稿在最新一版交付稿之后又改过，交付稿没跟上；需要的话再去一次 AI 味">被直接改过</Badge>
+      ) : null}
       {v?.directlyEdited ? (
         <Badge attention title="改交付稿请走批注，直接改动不会沉淀成规则">被直接改过</Badge>
       ) : null}
       {v?.pendingNotes ? <Badge>{`${v.pendingNotes} 条待处理`}</Badge> : null}
     </button>
   );
+  const compareButton = (mode: CompareMode, label: string, disabled?: boolean, title?: string) => (
+    <Button
+      variant={compare === mode ? 'secondary' : 'ghost'}
+      size="sm"
+      className={actionClass}
+      aria-pressed={compare === mode}
+      disabled={disabled}
+      title={title}
+      onClick={() => onCompare(compare === mode ? null : mode)}
+    >
+      <GitCompare className="size-3.5" />
+      {label}
+    </Button>
+  );
   return (
     <div className="flex shrink-0 flex-col gap-1.5 border-b border-border px-3 py-2 sm:px-4">
       <div className="flex flex-wrap items-center gap-1">
-        <span className="mr-1 text-xs text-muted-foreground">交付稿</span>
         {chip('source', '原稿')}
         {versions.map((v) => chip(v.version, v.version, v))}
       </div>
-      {current ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-          <span>
-            {current.rulesVersion ? `规则 v${current.rulesVersion}` : '规则版本未记'}
-            {current.hits ? ` · 命中 ${hitsTotal(current.hits)} 处` : ''}
-            {current.notes.length ? ` · 由 ${notesRange(current.notes)} 修订` : current.basedOn === 'source' ? ' · 去味首版' : ''}
-          </span>
-          {current.note ? <span className="truncate" title={current.note}>{current.note}</span> : null}
-          <span className="ml-auto flex flex-wrap gap-1">
-            <Button
-              variant={compare === 'source' ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              aria-pressed={compare === 'source'}
-              onClick={() => onCompare(compare === 'source' ? null : 'source')}
-            >
-              <GitCompare className="size-3.5" />
-              与原稿对比
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {current ? (
+          <>
+            <span>
+              {current.rulesVersion ? `规则 v${current.rulesVersion}` : '规则版本未记'}
+              {current.hits ? ` · 命中 ${hitsTotal(current.hits)} 处` : ''}
+              {current.notes.length ? ` · 由 ${notesRange(current.notes)} 修订` : current.basedOn === 'source' ? ' · 去味首版' : ''}
+            </span>
+            {current.note ? <span className="truncate" title={current.note}>{current.note}</span> : null}
+          </>
+        ) : (
+          <span>若要作为交付稿，可以点右侧「去 AI 味」复制提示词，发给 AI 执行，以融入个人的写作风格。</span>
+        )}
+        <span className="ml-auto flex flex-wrap gap-1">
+          {current ? (
+            <>
+              {compareButton('source', '与原稿对比')}
+              {compareButton(
+                'prev',
+                '与上一版对比',
+                current.basedOn === 'source' || !current.basedOn,
+                current.basedOn === 'source' ? '这是去味首版，上一版就是原稿' : undefined,
+              )}
+            </>
+          ) : (
+            <Button variant="ghost" size="sm" className={actionClass} title="复制去 AI 味的提示词" onClick={onDeai}>
+              <Copy className="size-3.5" />
+              去 AI 味…
             </Button>
-            <Button
-              variant={compare === 'prev' ? 'secondary' : 'ghost'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              aria-pressed={compare === 'prev'}
-              disabled={current.basedOn === 'source' || !current.basedOn}
-              title={current.basedOn === 'source' ? '这是去味首版，上一版就是原稿' : undefined}
-              onClick={() => onCompare(compare === 'prev' ? null : 'prev')}
-            >
-              <GitCompare className="size-3.5" />
-              与上一版对比
-            </Button>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onAnnotate}>
-              <Pencil className="size-3.5" />
-              批注
-            </Button>
-            <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => onConvert(current)}>
+          )}
+          {docx ? (
+            <>
+              <Button
+                variant={docxPreview ? 'secondary' : 'ghost'}
+                size="sm"
+                className={actionClass}
+                aria-pressed={docxPreview}
+                title={docxPreview ? '回到正文' : docx.path}
+                onClick={() => onDocxPreview(!docxPreview)}
+              >
+                <FileText className="size-3.5" />
+                预览 Word
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className={actionClass}
+                disabled={!docx.generated}
+                title={docx.generated
+                  ? '按当前正文重新转换；上一份改名为「基名-上次转换时间.docx」保留，不覆盖'
+                  : '同名的 Word 不是本工具生成的，为避免覆盖人工修改，请先改名或移走'}
+                onClick={onConvert}
+              >
+                <FileOutput className="size-3.5" />
+                重新转换
+              </Button>
+            </>
+          ) : (
+            <Button variant="ghost" size="sm" className={actionClass} onClick={onConvert}>
               <FileOutput className="size-3.5" />
               转成 Word
             </Button>
-          </span>
-        </div>
-      ) : null}
+          )}
+        </span>
+      </div>
     </div>
   );
 }

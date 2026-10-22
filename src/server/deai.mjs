@@ -14,6 +14,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { readDocxMarker } from './docxMarker.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 import { findRecordByTarget, readNoteFile } from './notes.mjs';
 import { resolveInside } from './paths.mjs';
@@ -199,6 +200,19 @@ function listField(value) {
   return String(value || '').split(/[,，、\s]+/).map((v) => v.trim()).filter(Boolean);
 }
 
+/** 某份 .md 同目录同名的 .docx（「转成 Word」的落点）；不存在返回 null。只 stat 和读生成标记，不写。 */
+function docxBeside(root, mdRel) {
+  const rel = mdRel.replace(/\.md$/i, '.docx');
+  try {
+    const abs = resolveInside(root, rel);
+    const st = fs.statSync(abs);
+    if (!st.isFile()) return null;
+    return { path: rel, size: st.size, mtime: st.mtime.toISOString(), generated: readDocxMarker(abs) !== null };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * GET delivery?docKey=：某份原稿的交付稿版本。docKey 只在产出三组的 .md 里反查（交付稿的键换不来原稿）。
  * 每一版带两个判定：`sourceChanged`（原稿在这一版之后又改过）、`directlyEdited`（有人绕过批注直接改了这一版）。
@@ -207,7 +221,8 @@ export function listDelivery(root, docKey) {
   const source = findDocByKey(root, 'output-md', docKey);
   if (!source) throw httpError(400, '在产出文档里找不到这份原稿（列表可能已经变了），刷新后再试。');
   const dir = deliveryDirOf(source);
-  const out = { source, dir, versions: [] };
+  // sourceDocx / 每版的 docx：同名 Word 在不在，「转成 Word」据此变成「预览 Word」
+  const out = { source, dir, versions: [], sourceDocx: docxBeside(root, source) };
   if (!dir) return out;
   const dirAbs = resolveInside(root, dir);
   let entries = [];
@@ -259,6 +274,7 @@ export function listDelivery(root, docKey) {
       sourceChanged: Boolean(meta.source_sha && srcSha && String(meta.source_sha) !== srcSha),
       directlyEdited: Boolean(meta.body_sha && String(meta.body_sha) !== sha16(bodyOf(norm))),
       pendingNotes: pending.get(rel) || 0,
+      docx: docxBeside(root, rel),
     };
     out.versions.push(item);
   }

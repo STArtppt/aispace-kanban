@@ -26,6 +26,9 @@ _PREFIX = {"w": W, "a": A, "wp": WP, "r": R}
 # 生成标记：工具链写出的每一份 .docx 都带它。md2docx 只覆盖带这个标记的同名文件 ——
 # 没有标记的可能是人手改过的成品或客户原件，一律不碰。键名改了要同步看板 src/server/docxTools.mjs
 MARKER = "aispace-docx-generator"
+# 转换时间（带时区的 ISO 时间）：md2docx 每次写成品时记一次。再转换时上一份按它改名归档，
+# 记在成品自己身上而不是 .md 里 —— 原稿、交付稿都不该因为转了一次 Word 而变。Word 另存会保留自定义属性
+CONVERTED = "aispace-docx-converted"
 
 CUSTOM_PART = "docProps/custom.xml"
 CUSTOM_CT = "application/vnd.openxmlformats-officedocument.custom-properties+xml"
@@ -97,15 +100,20 @@ def write_atomic(path: Path, data: bytes) -> None:
         raise
 
 
-# ---------- 生成标记 ----------
+# ---------- 生成标记与其它自定义属性 ----------
 def add_marker(pkg: Package, version: str) -> None:
-    """在 docProps/custom.xml 写入生成标记；没有这个部件就连同内容类型与关系一起补上。"""
-    prop = (f'<property fmtid="{FMTID}" pid="{{pid}}" name="{MARKER}">'
-            f"<vt:lpwstr>{escape(version)}</vt:lpwstr></property>")
+    """在 docProps/custom.xml 写入生成标记。"""
+    set_property(pkg, MARKER, version)
+
+
+def set_property(pkg: Package, name: str, value: str) -> None:
+    """在 docProps/custom.xml 写一个字符串属性；没有这个部件就连同内容类型与关系一起补上。"""
+    prop = (f'<property fmtid="{FMTID}" pid="{{pid}}" name="{escape(name)}">'
+            f"<vt:lpwstr>{escape(value)}</vt:lpwstr></property>")
     if CUSTOM_PART in pkg.files:
         x = pkg.text(CUSTOM_PART)
-        # 已有同名属性（比如以旧版本生成后再处理）先去掉，再按新版本写
-        x = re.sub(r'<property\b[^>]*name="%s"[^>]*>.*?</property>' % re.escape(MARKER), "", x, flags=re.S)
+        # 已有同名属性（比如以旧版本生成后再处理）先去掉，再按新值写
+        x = re.sub(r'<property\b[^>]*name="%s"[^>]*>.*?</property>' % re.escape(name), "", x, flags=re.S)
         pids = [int(p) for p in re.findall(r'\bpid="(\d+)"', x)]
         new = prop.replace("{pid}", str(max(pids + [1]) + 1))
         if re.search(r"<Properties\b[^>]*/>", x):
@@ -136,12 +144,17 @@ def add_marker(pkg: Package, version: str) -> None:
 
 def marker_of(path: Path) -> str | None:
     """读出已有 .docx 的生成标记版本；没有标记、不是 zip、读不了一律返回 None。"""
+    return property_of(path, MARKER)
+
+
+def property_of(path: Path, name: str) -> str | None:
+    """读出已有 .docx 的一个自定义字符串属性；没有、不是 zip、读不了一律返回 None。"""
     try:
         with zipfile.ZipFile(path) as z:
             x = z.read(CUSTOM_PART).decode("utf-8", "ignore")
     except (KeyError, OSError, zipfile.BadZipFile):
         return None
-    m = re.search(r'name="%s"[^>]*>\s*<vt:lpwstr>([^<]*)</vt:lpwstr>' % re.escape(MARKER), x)
+    m = re.search(r'name="%s"[^>]*>\s*<vt:lpwstr>([^<]*)</vt:lpwstr>' % re.escape(name), x)
     return m.group(1) if m else None
 
 

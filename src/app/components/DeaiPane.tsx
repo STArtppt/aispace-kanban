@@ -387,7 +387,7 @@ function Prompts({
       </PromptCard>
       <PromptCard title="批注 → 修改 → 沉淀">
         <p className="text-xs text-muted-foreground">
-          改交付稿不要直接改文件：在阅读器里打开原稿，版本条切到那一版，点「批注」写意见，再「复制提示词」。
+          改交付稿不要直接改文件：在阅读器里打开原稿，版本条切到那一版，点顶栏的铅笔写批注，再「复制提示词」。
           AI 以那一版为底改出下一版，同一轮把能推广的写法偏好沉淀进规则库，回执里写「沉淀为 R0xx（规则库 vN）」。
         </p>
         {pending.length ? (

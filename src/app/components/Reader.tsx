@@ -32,7 +32,7 @@ import { AnnotationLayer } from '@/components/AnnotationLayer';
 import { AnnotationToolbar } from '@/components/AnnotationToolbar';
 import { AssetGalleryReader } from '@/components/AssetGalleryReader';
 import { CodeFileView, codePreviewLabel, codePreviewLanguage } from '@/components/CodeFileView';
-import { DeliveryBar, DeliveryDiff, useDeliveryVersions, type CompareMode } from '@/components/DeliveryBar';
+import { DeliveryBar, DeliveryDiff, copyDeaiPrompt, useDeliveryVersions, type CompareMode } from '@/components/DeliveryBar';
 import { DocxExportDialog } from '@/components/DocxExportDialog';
 import { DocxView } from '@/components/DocxView';
 import {
@@ -975,8 +975,12 @@ interface ReaderBodyExtras {
   topBar?: ReactNode;
   /** 给了就替换掉正文区（交付稿对比视图） */
   replaceBody?: ReactNode;
-  /** 每变一次就打开批注模式（版本条上的「批注」） */
+  /** 每变一次就打开批注模式（从工作台跳进来） */
   annotateSignal?: number;
+  /** 顶栏铅笔从关切到开之前调一次：交付稿要先退出对比视图，正文回来了批注才看得见 */
+  onAnnotateStart?: () => void;
+  /** 给了就让铅笔留着但禁用，值是原因（交付稿的 Word 预览：正文不在，没得批） */
+  annotateDisabledReason?: string;
   /** 正在看某一版交付稿：批注提示词换成「改出下一版 + 同步沉淀」 */
   delivery?: { version: string; nextPath: string; rulesVersion?: number };
   /** 批注回执里的沉淀标签被点中：跳到工作台里这条规则 */
@@ -997,6 +1001,8 @@ function ReaderBody({
   topBar,
   replaceBody,
   annotateSignal = 0,
+  onAnnotateStart,
+  annotateDisabledReason,
   delivery,
   onOpenDeaiRule,
 }: ReaderProps & ReaderBodyExtras) {
@@ -1329,12 +1335,16 @@ function ReaderBody({
               )}
             </HeaderIconButton>
           ) : null}
-          {canAnnotate ? (
+          {canAnnotate || annotateDisabledReason ? (
             <HeaderIconButton
               className={annotate.active ? 'bg-accent' : undefined}
-              label={annotateLabel}
+              label={annotateDisabledReason || annotateLabel}
               pressed={annotate.active}
-              onClick={annotate.toggle}
+              disabled={Boolean(annotateDisabledReason)}
+              onClick={() => {
+                if (!annotate.active) onAnnotateStart?.();
+                annotate.toggle();
+              }}
             >
               <Pencil
                 className={cn(
@@ -1751,10 +1761,10 @@ function ReaderBody({
 const DELIVERY_SOURCE_RE = /^output\/(analysis|docs|decisions)\/.+\.md$/i;
 
 /**
- * 预览区。外面这一层只管去 AI 味的交付稿：原稿有交付稿时在顶栏下显示版本条，
+ * 预览区。外面这一层只管去 AI 味的交付稿：产出三组的 .md 在顶栏下常驻版本条（没有交付稿时只有「原稿」），
  * 切到某一版就把那一版当成一份 .md 交给 ReaderBody（批注、目录、搜索都照常），
- * 选了对比就用对比视图替换正文。没有交付稿、旧服务进程（接口 404）、工作空间目录丢失时，
- * 与改动前完全一样。
+ * 选了对比就用对比视图替换正文；「预览 Word」把同名 .docx 当成一份文件交给 ReaderBody 渲染。
+ * 工作空间目录丢失时没有版本条；旧服务进程（接口 404）只有「原稿」，Word 按钮始终是「转成 Word」。
  */
 export function Reader({
   workspaceAvailable = true,
@@ -1780,10 +1790,14 @@ export function Reader({
   const [annotateSignal, setAnnotateSignal] = useState(0);
   const [converting, setConverting] = useState<FileItem | null>(null);
   const [rulesVersion, setRulesVersion] = useState<number | undefined>(undefined);
+  const [docxPreview, setDocxPreview] = useState(false);
+  /** 刚转出来的成品：交付稿列表还没随 SSE 刷新时，toast 的「预览」先拿它顶上 */
+  const [converted, setConverted] = useState<FileItem | null>(null);
 
   useEffect(() => {
     setSelected('source');
     setCompare(null);
+    setDocxPreview(false);
   }, [item.path]);
 
   useEffect(() => {
@@ -1791,6 +1805,7 @@ export function Reader({
     if (!versions.some((v) => v.version === deliveryFocus.version)) return;
     setSelected(deliveryFocus.version);
     setCompare(null);
+    setDocxPreview(false);
     setAnnotateSignal((n) => n + 1);
     // versions 到位之后再对一次：从工作台跳进来时列表往往还在路上
   }, [deliveryFocus, item.path, versions]);
@@ -1809,7 +1824,7 @@ export function Reader({
   }, [projectId, hasVersions]);
 
   const current = versions.find((v) => v.version === selected);
-  const bodyItem: FileItem = current
+  const mdItem: FileItem = current
     ? {
       path: current.path,
       name: `${current.version}.md`,
@@ -1822,46 +1837,74 @@ export function Reader({
     }
     : item;
   const nextPath = `${deliveryDirOf(item.path)}/${nextVersion(versions.map((v) => v.version))}.md`;
+  // 同目录同名的 .docx（转成 Word 的落点）：服务端给的优先，没刷新到就用刚转出来的那份
+  const docxPath = mdItem.path.replace(/\.md$/i, '.docx');
+  const listedDocx = current ? current.docx : list?.source === item.path ? list.sourceDocx : null;
+  const docx = listedDocx
+    ?? (converted?.path === docxPath ? { path: docxPath, size: 0, mtime: converted.mtime, generated: true } : null);
+  const previewing = docxPreview && Boolean(docx);
+  const bodyItem: FileItem = previewing && docx
+    ? {
+      path: docx.path,
+      name: docx.path.split('/').pop() || docx.path,
+      ext: '.docx',
+      reader: 'external',
+      size: docx.size,
+      mtime: docx.mtime,
+      title: `${mdItem.title || mdItem.name} · Word`,
+      docxGenerated: docx.generated,
+    }
+    : mdItem;
 
   return (
     <>
       <ReaderBody
         {...props}
         item={bodyItem}
-        topBar={hasVersions ? (
+        topBar={eligible ? (
           <DeliveryBar
             versions={versions}
             selected={current ? current.version : 'source'}
             onSelect={(v) => {
               setSelected(v);
               setCompare(null);
+              setDocxPreview(false);
             }}
-            compare={compare}
-            onCompare={setCompare}
-            onAnnotate={() => {
+            compare={previewing ? null : compare}
+            onCompare={(mode) => {
+              setCompare(mode);
+              setDocxPreview(false);
+            }}
+            onDeai={() => void copyDeaiPrompt(projectId, item.path, nextPath)}
+            docx={docx}
+            docxPreview={previewing}
+            onDocxPreview={(on) => {
+              setDocxPreview(on);
               setCompare(null);
-              setAnnotateSignal((n) => n + 1);
             }}
-            onConvert={() => setConverting(bodyItem)}
+            onConvert={() => setConverting(mdItem)}
           />
         ) : undefined}
-        replaceBody={current && compare ? (
+        replaceBody={current && compare && !previewing ? (
           <DeliveryDiff projectId={projectId} source={item.path} versions={versions} current={current} mode={compare} />
         ) : undefined}
         annotateSignal={annotateSignal}
-        delivery={current ? { version: current.version, nextPath, rulesVersion } : undefined}
+        onAnnotateStart={() => setCompare(null)}
+        annotateDisabledReason={previewing ? 'Word 预览时不能批注，先点「预览 Word」回到正文' : undefined}
+        delivery={current && !previewing ? { version: current.version, nextPath, rulesVersion } : undefined}
         onOpenDeaiRule={onOpenDeaiRule}
       />
       {/* 交付稿不在扫描里：目标 .docx 在不在由服务端判断（409 时再给「覆盖」） */}
       <DocxExportDialog
         projectId={projectId}
         item={converting}
-        outputItems={[]}
+        outputItems={docx ? [{ ...bodyItem, path: docx.path, ext: '.docx', docxGenerated: docx.generated }] : []}
         onClose={() => setConverting(null)}
         onConverted={(target) => {
-          if ((props.onOpenPath?.(target.path) ?? 'external') === 'external') {
-            window.open(api.fileUrl(projectId, target.path), '_blank', 'noreferrer');
-          }
+          // 成品与 .md 同目录同名：就地切到「预览 Word」，不跳走
+          setConverted(target);
+          setCompare(null);
+          setDocxPreview(true);
         }}
       />
     </>
