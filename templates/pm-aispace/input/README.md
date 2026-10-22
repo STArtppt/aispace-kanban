@@ -79,6 +79,41 @@ MinerU 的实际限制：单文件 200MB / 200 页，免费额度 1000 页/天�
 **默认不外发文件。** 只有 `--pdf-engine mineru` 或扫描件自动升级才会把资料传到 MinerU 服务器。
 涉密资料保持默认即可，或者先脱敏。这是这个模版里唯一会把资料外发的环节。
 
+## 点表批量归一
+
+电力 / 工控项目常会收到**成百上千个同构的点表小文件**（测点清单）。逐个转换没有意义，
+价值在汇总后**能按测点检索**，所以点表走单独的 `scripts/pointtable.py`：
+
+```bash
+python3 scripts/pointtable.py                  # 自动发现 input/raw/ 下的点表目录（幂等）
+python3 scripts/pointtable.py --dry-run        # 先看识别结果
+python3 scripts/pointtable.py input/raw/集控点表 # 只处理指定目录
+python3 scripts/pointtable.py --force          # 强制重建
+```
+
+靠**内容**识别而不是扩展名（parser 可插拔，见脚本里的 `PARSERS`）：
+
+| parser | 形态 | 典型来源 |
+| --- | --- | --- |
+| `hydro_xls` | 表格型 `.xls`/`.xlsx`，首行表头 + 数据行，设备层级来自**目录路径** | 水电集控（模拟量/开关量/SOE量/温度量） |
+| `scada_ini` | 分段型 `.txt`，`[RTU]`/`[遥信]`/`[遥测]` 分段，GBK 与 UTF-8 混杂 | 风电 / 光伏集中监控 |
+
+产物在 `converted/<点表集名>/`：`_manifest_<点表集名>批量处理.md`（台账，看板预览点这个）、
+`MergedObject/测点主表.csv`（全量 18 列，含源文件 + 源行号）、`MergedObject/分册/<厂站>.csv`、
+`MergedObject/测点.sqlite`（建好索引，**按测点检索一律走 SQL**）：
+
+```bash
+sqlite3 input/converted/集控点表/MergedObject/测点.sqlite \
+  "SELECT 厂站,设备分区,测点描述,测点地址 FROM 测点
+   WHERE 测点描述 LIKE '%水位%' AND 是否备用='' LIMIT 20;"
+```
+
+`ingest.py` 识别到点表就让路；点表目录里的普通表格仍由 `ingest.py` 按 sheet 转 CSV。
+整个目录被 `.ingestignore` 忽略时 `pointtable.py` 直接跳过，不逐个读文件头。
+
+**边界**：只做格式归一，**不做**设备树绑定、间隔匹配、测点编码生成（那些依赖每个厂站的解析规则表，
+属于工程侧数据接入）。分段型点表的「设备名」是启发式推断的，写进正式文档前按解析规则核对并标 `[推断]`。
+
 ## 产物里的 frontmatter
 
 每个 `.md` 产物开头都有一段元数据，这是溯源链的关键：

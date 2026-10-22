@@ -53,6 +53,42 @@ python3 scripts/md2docx.py output/docs/方案.md --template <模板名>
 
 成品是同目录、同名的 `.docx`。需要 pandoc 3。看板产出列表「更多 → 转成 Word」调的是同一支脚本。
 
+## 给 AI 的步骤
+
+用户在看板点「复制提示词」粘给你时照提示词做；没有提示词时按下面做。
+
+### 转 Word
+
+```bash
+python3 scripts/md2docx.py output/docs/方案.md --template @base      # 通用规范
+python3 scripts/md2docx.py output/docs/方案.md --template 客户甲      # 客户模板
+```
+
+1. 转之前对照写作规定检查 md：客户模板看 `<模板名>/spec.md`，通用规范看 `scripts/docxkit/base-spec.json`。
+   要点：文档标题写成开头唯一的 `#`（或 front-matter 的 `title:`），`##` 起是一级标题；标题里的手写编号、
+   `> [!note]` 批注块、句中加粗转换时会自动处理（结果里的 `log` 列出处理了几处）；表题写在表格**下方**一行 `Table: 表 N 标题`；
+   图题写在 `![图 N 标题](路径)` 的方括号里。需要改就改 md 的写法，不改内容。
+   模板带封面（`front.docx`）时，文档类型要在 md 的 front-matter 写 `doctype:`；转换结果里有「【待填：…】」就补上再转。
+   **要交付的文档先去 AI 味、转交付稿**，不要转原稿。
+2. 同名 `.docx` 已存在时：带生成标记（上次转出来的）才能加 `--overwrite` 覆盖，覆盖会丢掉在 Word 里的修改，先问用户；
+   没有标记的（人手改过另存的、客户给的原件）脚本会拒绝 —— **不要删它、不要改名绕过**，问用户怎么处理。
+3. 转完检查：标题编号连续、表格有边框和表头、图片都在；脚本输出里的 warnings 为空。有缺图等提示就先修 md 再转。
+4. 找不到 pandoc 时脚本会说明怎么装。装在非标准位置时在 `.env` 里写 `PANDOC_BIN=<路径>`（这一个键只给路径，不是密钥）。
+
+### 提炼模板
+
+```bash
+python3 scripts/docx_template.py collect input/raw/客户旧文档.docx --name 客户甲
+python3 scripts/docx_template.py build --name 客户甲 --source input/raw/客户旧文档.docx --decisions 决定.json
+```
+
+1. 来源必须在 `input/raw/` 里（读原件的是脚本，不是你；不要把原件内容读进上下文）。
+2. `collect` 之后读 `collect/report.json` 的 `clusters`（格式簇，带 `suggestedRole`）与 `outline`，
+   把映射方案（哪个簇当正文 / 各级标题 / 题注，哪些丢弃，同一角色格式不一致时取哪个值）**列给用户确认**，再写决定 JSON。
+   写法见 `scripts/docxkit/decisions.py` 文件头；不写的簇采用建议角色，所以一份 `{}` 也能生成。决定 JSON 用完即删。
+3. `build` 输出的 warnings 为空，才说明合成样张各角色格式与规范一致；不为空就把差异告诉用户。
+4. 模板名已存在要加 `--regenerate` 才覆盖，先问用户。
+
 ## 别把这些文件外传
 
 `collect/`、`profile.json`、`reference.docx`、`front.docx`、`sample.docx` 里是客户的版式材料（页眉、单位名称、字体、页面设置）。

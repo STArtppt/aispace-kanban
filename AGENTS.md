@@ -1,252 +1,152 @@
 # AGENTS.md —— 项目编码规范总则
 
-> 本文件是 **aispace-kanban** 面向所有编码 Agent(Claude Code / Cursor / Codex / Copilot…)
-> 与人类协作者的**唯一事实源**。`CLAUDE.md` 只是指针,内容不在两处重复。
-> 改协作约定 / 项目说明,**只改本文件**。
->
-> 面向用户的使用说明在 [README.md](./README.md),本文件不重复它。
-> 人类贡献者的入口在 [CONTRIBUTING.md](./CONTRIBUTING.md)。
+> 本文件是 **aispace-kanban** 面向所有编码 Agent 与人类协作者的**唯一事实源**。
+> `CLAUDE.md` 只是指针;改协作约定 / 项目说明**只改本文件**。
+> 使用说明在 [README.md](./README.md),人类贡献者入口在 [CONTRIBUTING.md](./CONTRIBUTING.md)。
 
 ---
 
 ## 1. 项目是什么 + 最硬的不变量
 
-**aispace-kanban** 是**与 AI 反复对话完成知识工作**时用的**只读看板**:
-一个常驻本机的服务,指向若干工作空间目录,在浏览器里切换查看概览 / 输入资料 / 产出文档 / 原型。
-看板只认 `input/` + `output/` 的目录约定(判据见 `config.mjs` 的 `inspectWorkspace`),
-**不绑定任何具体行业或岗位** —— 调研、方案、数据分析、内容创作、项目接手都落在同一套结构上。
+**aispace-kanban** 是**与 AI 反复对话完成知识工作**时用的**只读看板**:常驻本机的服务,
+指向若干工作空间目录,在浏览器里看概览 / 输入资料 / 产出文档 / 原型。
+只认 `input/` + `output/` 的目录约定(判据见 `config.mjs` 的 `inspectWorkspace`),**不绑定行业或岗位**。
 
-工作空间**模板**([`templates/`](./templates))也在本仓一起维护 —— 看板"新建工作空间"调的
-是共享的 `templates/init_workspace.py --from <模板目录>`。内置第一份是
-[`templates/pm-aispace`](./templates/pm-aispace)(产品经理AI空间模板);
-用户自建的落在 `~/.pmwork/templates/`。模板是**另一套语境**(角色自己的技能与约定),
-本文件的编码规范只管看板三平面,**不适用于 `templates/` 内部**;改 PM 模板见
-[`templates/pm-aispace/AGENTS.md`](./templates/pm-aispace/AGENTS.md)。
+工作空间**模板**([`templates/`](./templates))也在本仓维护,是**另一套语境**:本文件的编码规范
+**不适用于 `templates/` 内部**,改 PM 模板见 [`templates/pm-aispace/AGENTS.md`](./templates/pm-aispace/AGENTS.md)。
 
 **不变量(违反即为 bug,不接受任何"顺手写一下"):**
 
-1. **对工作空间只读。** 服务端只 `read`,不 `write` / `rename` / `unlink` 工作空间里的任何文件。
-   真正改工作空间内容的,只能是**用户明确发起、由工作空间自己的工具执行**的子进程:
-   - 注册表 `~/.pmwork/dashboard/projects.json`(`src/server/config.mjs` 的 `writeProjects`)—— 不碰工作空间
-   - 新建工作空间时调 `templates/init_workspace.py --from <模板目录>`(`src/server/http.mjs` 的 `runInit`)——
-     铺骨架由模板负责,看板不自己造目录;铺完写的 `.aispace/template.lock.json`(模板更新的基线)也是这个脚本写的
-   - 资料转换时调工作空间的 `scripts/ingest.py`(`src/server/http.mjs` 的 `startIngest`)——
-     看板只 `spawn`,写 `input/converted/` 的是脚本本身;`ANYDOC_BIN` 由看板注入本地 anydoc 路径,
-     解析不到就不注入(用户可能自己装了,脚本走 PATH)
-   - 忽略待转换资料时追加 `input/.ingestignore`(`src/server/http.mjs` 的 `addIgnore`)——
-     用户在列表点「忽略此文件 / 忽略此目录」才写,只追加一行模式,不改原件。
-     不经过 ingest.py:这不是转换,旧工作空间的脚本也没有写入入口;
-     这份文件是看板和 ingest.py 共用的约定,改动会被 `input/` 的 SSE 捕获、两边同时生效
-   - 采集视觉材料时写 `visualization/`(`src/server/capture.mjs` 的 `writeCaptureDir`)——
-     **这是第二条窄例外,范围就是下面六条,越界即为 bug**:
-     ① 只允许写 `<工作空间根>/visualization/references/<slug>/` 与
-     `visualization/prototypes/<slug>/`;`input/` `output/` `project.yaml` 仍然只读;
-     ② 必须用户在看板上贴 URL 明确发起,没有后台自动抓、没有定时任务;
-     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`);
-     ④ 路径必须过 `resolveInside()`,slug 由服务端生成并安全化,不接受客户端传来的任何路径片段;
-     ⑤ **只新建,不覆盖、不删除** —— 同一 URL 再采生成新 slug,删除由用户自己在文件系统里做;
-     ⑥ 后续别的写入来源(浏览器插件投递等)复用同一个收口,**不得扩大它的目录范围**
-   - 刷新已接入原型时调原型工作区的 `workspace-sync.mjs`(`src/server/http.mjs` 的 `startProtoSync`)——
-     **这是第三条窄例外,范围就是下面五条,越界即为 bug**:
-     ① 看板只 `spawn`,自己不写任何一个字节,与资料转换、新建工作空间同构;
-        真正写盘的是原型工作区的同步脚本
-     ② 必须用户在看板上点「刷新」明确发起,没有后台自动跑、没有定时任务
-     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`)
-     ④ 请求只带原型的 `itemKey`,**不接受任何路径**;脚本路径与原型目录只来自通过三道校验的 `sync.json`
-        (脚本文件名为 `workspace-sync.mjs` 且存在;原型目录存在;`.workspace-link.json` 回指当前工作空间)
-     ⑤ `input/` `output/` `project.yaml` 仍然只读 —— 推送方向只**读**它们的修改时间。
-        工作空间内只允许脚本写 `visualization/prototypes/<slug>/`(整份覆盖
-        `spec/` `docs/` `annotations/` `comments/` `meta.json` `SYNC.md` `sync.json`)
-        与同级 `<slug>-html.zip`;工作空间外只写原型目录的 `.workspace-inbox.md`
-   - 保存未决问题的人工反馈时写 `output/questions/Q<编号>.md`
-     (`src/server/questions.mjs` 的 `writeQuestion`)——
-     **这是第四条窄例外,范围就是下面六条,越界即为 bug**。
-     它与 `spawn` 那几条**形状不同**:第二、三、五条都是「看板只 `spawn`,工作空间自己的脚本写盘」,
-     **这一条是看板服务端自己写**(第六条、第八条是同一个形状,每条各有自己的六条边界,
-     不要因为「反正已经能写了」再开一条没有写进这份清单的写入)。之所以破例:人工反馈没有现成的工作空间脚本可以承接,
-     为它造一个子进程入口只是绕路;而且它是高频小写入(消解十条就是十次),
-     每次起一个进程的延迟会让交互变钝。作为交换,写入面被压到下面六条:
-     ① 只允许**改已存在**的问题文件,不新建、不删除、不改名;文件不存在一律 404;
-     ② 只允许写**人写区**字段(`status` / `human_answer` / `human_note` / `due`)
-     与正文的「## 人工反馈」小节;载荷里出现任何 **AI 写区**字段
-     (`evidence` / `ai_conclusion` / `ai_source` / `flows_to`)一律 400 且不落盘 ——
-     人和 agent 的写区物理隔开,这就是并发方案本身(不用锁,见 `questions/README.md`);
-     ③ 必须用户在看板上点「保存」明确发起,没有后台任务、没有定时、没有自动补全;
-     ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`);
-     ⑤ 请求**只带编号**(`Q0134` 这种形态),**不接受任何路径**;
-     落盘路径由服务端用 `resolveInside()` 自己拼;
-     ⑥ `input/`、`output/` 下的其它一切与 `project.yaml` 仍然只读;
-     `output/decisions/` 的草稿由 agent 生成,看板不写。
-     写入走「先写临时文件再原子替换」,失败不留半截文件
-   - 刷新参考收件箱时调工作空间的 `scripts/web_ingest.py --inbox`(`src/server/http.mjs` 的 `startWebIngest`)——
-     **这是第五条窄例外,范围就是下面五条,越界即为 bug**:
-     ① 看板只 `spawn`,自己不写、不 `rename`、不 `unlink` 任何一个字节,与资料转换、原型刷新同构;
-        真正写盘的是工作空间脚本
-     ② 必须用户在参考 tab 点「刷新」明确发起,没有后台自动跑、没有定时、没有自动入库
-     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`)
-     ④ 请求**不带任何路径、不带文件名、不带 URL**。脚本自己扫 `visualization/references/` 根上的散装
-        `.html` / `.htm`,slug 由脚本生成
-     ⑤ `input/raw/`、`output/`、`project.yaml`、`visualization/prototypes/` 仍然只读;
-        已有参考目录里的 `index.html` 只读不改。脚本只允许:
-        把根上散装文件收成新目录 `visualization/references/<slug>/`(`index.html` + `meta.json`),
-        以及把抽出的 Markdown 写入 `input/converted/`(落点复用 `layout.py`)。
-        URL 模式(`web_ingest.py <URL>`)仍然不向 `visualization/` 写入,看板也不得 spawn 带 URL 的调用
-   - 保存产出物记录的状态变更时写 `output/records/I<编号>.md`
-     (`src/server/records.mjs` 的 `writeRecordStatus`)——
-     **这是第六条窄例外,范围就是下面六条,越界即为 bug**。
-     它与第四条(人工反馈)**同形**:看板服务端自己写盘,不 `spawn`。破例的理由逐条对得上 ——
-     状态变更加一句说明是高频小写入(三类产出物、每份多次流转),没有现成的工作空间脚本能承接,
-     为它造一个子进程入口只是绕路,每次起进程的延迟会让交互变钝。作为交换,写入面压到下面六条:
-     ① 只允许**改已存在**的记录文件,不新建、不删除、不改名;编号不存在一律 404 ——
-     建记录是工作空间技能(`pm-output-record`)的活;
-     ② 只允许写**人写区**字段(`status` / `resolved_by` / `status_changed`)
-     与正文的「## 状态流水」小节(只追加 `###` 子节,不改写已有条目);
-     载荷里出现任何 **AI 写区**字段(`target` / `updated`)或建立时写定的字段
-     (`id` / `kind` / `title` / `created`)一律 400 且不落盘 —— 人和 agent 的写区物理隔开,
-     这就是并发方案本身(不用锁,见 `records/README.md`);
-     ③ 必须用户在看板上点「保存」明确发起,没有后台任务、没有定时、没有自动推导状态;
-     ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`);
-     ⑤ 请求**只带编号**(`I0007` 这种形态),**不接受任何路径**;
-     落盘路径由服务端用 `resolveInside()` 自己拼;
-     ⑥ `output/analysis/`、`output/docs/`、`output/decisions/` 下的产出物本身、
-     `output/` 下的其它一切、`input/`、`project.yaml`、`visualization/` 仍然只读 ——
-     记录是**旁挂**的元数据,产出物文件一个字节都不因为改状态而变。
-     写入走「先写临时文件再原子替换」,失败不留半截文件。
-     状态值必须属于该记录 `kind` 的状态机(三套表在 `src/shared/recordStatus.mjs`),
-     终态(`absorbed` / `superseded` / `overturned`)必须带 `resolved_by`,补充说明为空一律 400
-   - 保存批注时写 `output/records/notes/I<编号>.md`
-     (`src/server/notes.mjs` 的 `appendNotes`)——
-     **仍是第六条窄例外的第二种写入**,不是新开的第七条。
-     它与上面的状态写入同形(看板自己写盘、不 `spawn`),
-     但有一款是对「不新建」的**实质扩张**,单独标出来,不要照着推广:
-     **允许新建(只此一款):** 可以新建 `output/records/notes/I<四位编号>.md`,而且只允许这一种新建。
-        同编号的记录文件 `output/records/I<编号>.md` 必须已存在,不存在一律 404,
-        不因此去建记录(建记录仍是 `pm-output-record` 的活)。
-        除此之外仍然不新建、不删除、不改名。
-        这一款的目录就是 `notes/`,不要推广到 `records/` 根上或别的目录。
-     其余边界:
-     ① 只允许写上述路径。`input/`、`project.yaml`、`visualization/`、
-        `output/` 下的其它一切(含记录文件、产出物本身)仍然只读;
-     ② 只追加新条目,不改写已有条目,不改 `- 状态：` 与 `- 回执：`(那两行是 agent 的);
-     ③ 必须用户点「复制提示词」明确发起,没有后台任务、没有定时、没有自动推导状态;
-     ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
-     ⑤ 请求**只带编号与批注内容,不接受任何路径**;
-        落盘路径由服务端用 `resolveInside()` 自己拼;
-     ⑥ 写入走「先写临时文件再原子替换」,失败不留半截文件。
-        单条意见上限 1000 字、单批上限 50 条,超限 400 且整批不落盘。
-        看板写入的状态只能是 `pending`。
-     交付稿(`output/delivery/<组>/<子路径>/v<序号>.md`)上的批注按**镜像路径**还原成原稿
-     `output/<组>/<子路径>.md`,落到**原稿那份记录**的 `notes/I<编号>.md`,批次多一行 `- 对象：` 注明针对哪个文件;
-     映射只用路径规则、不读交付稿 front-matter。上面的边界一字不变 —— 变的只是「从被批注的文件解析记录编号」这一步
-   - 一次归档时调工作空间的 `scripts/archive_output.py`(`src/server/http.mjs` 的 `runArchive`)——
-     **这是第七条窄例外,范围就是下面六条,越界即为 bug**。
-     它属于「看板只 `spawn`,工作空间脚本写盘」那一族(与第三、五条、资料转换同构),
-     **不是**第四、六条那种服务端直写 —— 归档是 `rename`,而第六条第①款写死了「不改名」,
-     所以看板自己绝不做,交给脚本。与 `startIngest` 不同的是它**同步等脚本退出**(带超时),
-     不做任务态:移一个文件是毫秒级,配一套轮询只是复制代码。
-     ① 看板只 `spawn`,自己不写、不 `rename`、不 `unlink` 任何一个字节;
-     ② 必须用户在产出列表行点「归档」并确认才发起,没有后台自动跑、没有定时,
-        **不按状态自动归档**(`superseded` 不等于该移走 —— 那是人的判断);
-     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
-     ④ 请求**只带组名与文件基名,不接受任何路径**:组名只能是 `analysis` / `docs` / `decisions`,
-        文件名里出现路径分隔符、`..` 或任何目录成分一律 400,**在起脚本之前就拒掉**;
-        落点由脚本自己算。代价是组内子目录里的文件本轮不可归档(界面置灰说明),
-        不要为此开成「带路径但我们会校验」——「不接受任何路径」这句话本身没有例外,才是它的价值;
-     ⑤ 脚本只允许在 `output/<三个组名>/一次归档/` 下写(移入那一份、维护同目录的 `README.md` 交接单);
-        `input/`、`project.yaml`、`visualization/`、`output/records/`、`output/questions/`
-        以及三个组根目录下的其它文件仍然只读;
-     ⑥ 脚本**只移动与追加 README**(只在清单标记之间追加,提示词段一字不碰),不删除任何文件;
-        落点同名时加日期后缀,不覆盖。脚本不存在时接口 400 说清出路,不退化成「看板替你移一下」。
-     「是否已归档」的判据只写在 `src/server/scan.mjs` 的 `outputPlacement`,前端不从路径里自己找。
-     归档不降低可达性:归档项照样扫描、搜索、预览、计入溯源反链。
-     二次归档(分堆 + 短索引)由工作空间 agent 走 `pm-output-archive` 技能做,看板不参与,
-     也**不产出任何「无需再读」清单**
-   - 保存反馈单的发送记录时写 `output/feedback/F<编号>.md`
-     (`src/server/feedback.mjs` 的 `markSent`)——
-     **这是第八条窄例外,范围就是下面六条,越界即为 bug**。
-     它与第四条(人工反馈)、第六条(记录状态)**同形**:看板服务端自己写盘,不 `spawn`。
-     之所以不走 spawn:发送记录是高频小写入(一份反馈可能发不止一次),
-     没有现成的工作空间脚本能承接,为它造一个子进程入口只是绕路,
-     每次起进程的延迟会让「我已发出」变钝。作为交换,写入面压到下面六条:
-     ① 只允许**改已存在**的 `output/feedback/F<编号>.md`,不新建、不删除、不改名;
-        编号不存在一律 404 —— 写反馈单是工作空间智能体的事;
-     ② 只允许写**人写区**:front-matter 的 `sent_at`,以及正文「## 发送记录」小节
-        (只追加 `###` 子节,不改写已有条目)。
-        载荷里出现 AI 写区字段(`status` / `receipt` / `title` / `kind` / `id` / `created` 等)一律 400,不落盘;
-     ③ 必须由用户在看板上点「已发送」明确发起。唤起 mailto 本身**不写盘**;
-        没有后台任务、定时,也不从任何信号自动推断「已发送」;
-     ④ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
-     ⑤ 请求**只带编号**(`F0003` 这种形态),不接受任何路径;
-        落盘路径由服务端用 `resolveInside()` 自己拼;
-     ⑥ `output/feedback/` 下的其它文件、`.kanban-feedback/`、`output/docx-template/`、
-        `input/`、`project.yaml`、`visualization/` 仍然只读。
-        写入走「先写临时文件再原子替换」,失败不留半截文件。
-        结构认不出来(没有 front-matter,或没有「## 发送记录」)一律 409,不硬写
-   - 提炼 Word 模板、把产出 `.md` 转成 Word 时调工作空间的 `scripts/docx_template.py` / `scripts/md2docx.py`
-     (`src/server/docxTools.mjs`,路由在 `http.mjs`)——
-     **这是第九条窄例外,范围就是下面六条,越界即为 bug**。
-     它属于「看板只 `spawn`,工作空间脚本写盘」那一族(与资料转换、第三、五、七条同构),
-     **不是**第四、六、八条那种服务端直写:解析 OOXML、跑 pandoc 是重活,终端和工作空间 AI 也要能跑同一份脚本,
-     看板只是其中一个触发方。与第七条一样**同步等脚本退出**(带超时),不做任务态。
-     ① 看板只 `spawn`,自己不写、不 `rename`、不 `unlink` 工作空间里任何一个字节;
-     ② 必须用户在看板上点「开始分析」「生成模板」「转换」明确发起;没有后台任务、没有定时,不因文件变化自动重跑;
-     ③ 必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
-     ④ **请求不带任何路径**:来源 `.docx` 与待转换的 `.md`(产出三组里的 `.md`,以及交付稿 `output/delivery/**/v<序号>.md`)
-        只用服务端扫描时下发的不透明键 `docKey`
-        (相对路径 SHA-256 前 16 位)指定,服务端重新扫描、在同类条目里反查出路径,查不到就 400,
-        然后过 `resolveInside()` 才交给脚本。**不接受「带路径但我们会校验」**(第七条第 ④ 款的理由原样适用);
-        也不退回「组名 + 基名」,因为产出文档常在组内子目录里,基名不能唯一定位。
-        模板名只接受一层基名(不以 `.` 开头,不含分隔符与 `..`);
-        用户在提炼第 ②③ 步的决定以 JSON 经 stdin 交给脚本,服务端限 256KB、拒绝路径类键名,脚本再校验结构;
-     ⑤ 脚本只允许写两处:`docx_template.py` 只写 `output/docx-template/<模板名>/`
-        (`collect/`、`profile.json`、`reference.docx`、`front.docx`、`spec.md`、`sample.docx`);
-        `md2docx.py` 只写与来源 `.md` 同目录、同基名的 `.docx`(中间文件放系统临时目录,结束即删);
-        来源是交付稿时成品落在交付稿旁边,原稿目录一个字节都不动。
-        `input/`、`project.yaml`、`visualization/`、`.md` 原文以及 `output/` 下的其它一切仍然只读;
-     ⑥ **不覆盖别人的文件**:同名 `.docx` 已存在时,只有它带着工具链的生成标记
-        (`docProps/custom.xml` 的 `aispace-docx-generator`)且用户确认「覆盖」才允许替换,没有标记一律 409;
-        模板名已存在时,只有用户确认「重新生成」才覆盖该模板目录下的上述文件。
-        服务端与脚本各校验一次。脚本不存在、找不到 Python 3 或 pandoc 3 时接口 400 说清出路,
-        不退化成「看板替你写」。上传本期不做:想用本地文件提炼,先把它放进 `input/raw/`
-   - **去 AI 味这条线看板不新增任何写入**(`src/server/deai.mjs` 只读):交付稿 `output/delivery/`、
-     规则库 `.claude/skills/pm-deai-writing/rules/`(含 `history/` 快照与 `CHANGELOG.md`)全由工作空间 AI 按技能写;
-     改交付稿走「批注 → AI 修改 → 同步沉淀」,看板唯一的写入是上面第六条第二种写入的批注落盘,不提供在线编辑
+1. **对工作空间只读。** 服务端不 `write` / `rename` / `unlink` 工作空间里的任何文件。
+   下面列的是**全部**例外;不在清单里的写入一律不许加,要加先改这份清单。
+
+   **所有带编号的例外都共同满足**:必须用户在看板上明确点击发起(没有后台任务、定时、自动推导);
+   必须环回(`allowMutations`)且非跨站(`rejectIfForeignOrigin`),否则 403;
+   各条列出范围以外的工作空间文件仍然只读。
+
+   例外分两种形状,**不要混用**:
+   - **spawn 族**:看板只 `spawn` 工作空间自己的脚本,自己一个字节都不写(资料转换、第三、五、七、九条);
+   - **直写族**:看板服务端自己写。第二条只新建;第四、六、八条是没有现成脚本可承接的高频小写入,
+     一律「先写临时文件再原子替换」,失败不留半截文件。
+     不要因为「反正已经能写了」再开一条清单外的写入。
+
+   **不编号的基础写入:**
+   - 注册表 `~/.pmwork/dashboard/projects.json`(`config.mjs` 的 `writeProjects`)—— 不碰工作空间
+   - 新建工作空间:spawn `templates/init_workspace.py --from <模板目录>`(`http.mjs` 的 `runInit`)。
+     骨架与 `.aispace/template.lock.json` 都由脚本写,看板不自己造目录
+   - 资料转换:spawn 工作空间的 `scripts/ingest.py`(`http.mjs` 的 `startIngest`)。
+     `ANYDOC_BIN` 由看板注入本地 anydoc 路径,解析不到就不注入(脚本走 PATH)
+   - 忽略待转换资料:追加 `input/.ingestignore`(`http.mjs` 的 `addIgnore`)。只追加一行模式,不改原件;
+     这份文件是看板与 ingest.py 的共用约定,不经脚本
+
+   **第二条 · 采集视觉材料**(`capture.mjs` 的 `writeCaptureDir`,直写):
+   ① 只写 `visualization/references/<slug>/` 与 `visualization/prototypes/<slug>/`;
+   ② 用户贴 URL 发起; ③ 环回且非跨站;
+   ④ 路径过 `resolveInside()`,slug 由服务端生成并安全化,不接受客户端的任何路径片段;
+   ⑤ **只新建,不覆盖、不删除**,同一 URL 再采生成新 slug;
+   ⑥ 以后别的写入来源(浏览器插件投递等)复用这个收口,**不得扩大目录范围**
+
+   **第三条 · 刷新已接入原型**(spawn 原型工作区的 `workspace-sync.mjs`,`http.mjs` 的 `startProtoSync`):
+   ① 看板只 spawn; ② 用户点「刷新」发起; ③ 环回且非跨站;
+   ④ 请求只带原型 `itemKey`,**不接受任何路径**;脚本与原型目录只来自通过三道校验的 `sync.json`
+      (脚本名为 `workspace-sync.mjs` 且存在;原型目录存在;`.workspace-link.json` 回指当前工作空间);
+   ⑤ 工作空间内脚本只写 `visualization/prototypes/<slug>/`(整份覆盖 `spec/` `docs/` `annotations/`
+      `comments/` `meta.json` `SYNC.md` `sync.json`)与同级 `<slug>-html.zip`;
+      工作空间外只写原型目录的 `.workspace-inbox.md`;`input/` `output/` `project.yaml` 只读其修改时间
+
+   **第四条 · 未决问题的人工反馈**(写 `output/questions/Q<编号>.md`,`questions.mjs` 的 `writeQuestion`,直写):
+   ① 只**改已存在**的问题文件,不新建、不删除、不改名,不存在 404;
+   ② 只写**人写区**(`status` / `human_answer` / `human_note` / `due` 与正文「## 人工反馈」);
+      载荷带 **AI 写区**字段(`evidence` / `ai_conclusion` / `ai_source` / `flows_to`)一律 400 不落盘 ——
+      写区物理隔开就是并发方案(不用锁,见 `questions/README.md`);
+   ③ 用户点「保存」发起; ④ 环回且非跨站;
+   ⑤ 请求**只带编号**(`Q0134`),落盘路径由服务端过 `resolveInside()` 自己拼;
+   ⑥ 其余 `input/` `output/`(含 agent 生成的 `output/decisions/` 草稿)与 `project.yaml` 只读
+
+   **第五条 · 刷新参考收件箱**(spawn `scripts/web_ingest.py --inbox`,`http.mjs` 的 `startWebIngest`):
+   ① 看板只 spawn; ② 用户在参考 tab 点「刷新」发起; ③ 环回且非跨站;
+   ④ 请求**不带路径、文件名、URL**,脚本自己扫 `visualization/references/` 根上的散装 `.html` / `.htm`;
+   ⑤ 脚本只把散装文件收成新目录 `visualization/references/<slug>/`(`index.html` + `meta.json`),
+      并把抽出的 Markdown 写进 `input/converted/`(落点复用 `layout.py`);已有参考目录只读。
+      URL 模式不写 `visualization/`,看板也不得 spawn 带 URL 的调用
+
+   **第六条 · 产出物记录的状态变更**(写 `output/records/I<编号>.md`,`records.mjs` 的 `writeRecordStatus`,直写):
+   ① 只**改已存在**的记录,不新建、不删除、不改名,不存在 404(建记录是 `pm-output-record` 的活);
+   ② 只写人写区(`status` / `resolved_by` / `status_changed` 与「## 状态流水」,只追加 `###` 子节);
+      载荷带 AI 写区(`target` / `updated`)或建立时写定的字段(`id` / `kind` / `title` / `created`)一律 400;
+   ③ 用户点「保存」发起; ④ 环回且非跨站;
+   ⑤ 请求**只带编号**(`I0007`),路径服务端过 `resolveInside()` 自己拼;
+   ⑥ 产出物本身与其余 `output/` `input/` `project.yaml` `visualization/` 只读 —— 记录是旁挂元数据。
+   状态值必须属于该 `kind` 的状态机(`src/shared/recordStatus.mjs`);终态(`absorbed` / `superseded` /
+   `overturned`)必须带 `resolved_by`;补充说明为空 400。
+
+   **第六条的第二种写入 · 批注**(写 `output/records/notes/I<编号>.md`,`notes.mjs` 的 `appendNotes`,不是第七条):
+   与上面同形,但**允许新建,只此一款**:可新建 `notes/I<四位编号>.md`,前提是同编号记录已存在(否则 404,
+   不顺手建记录);不推广到 `notes/` 以外。其余:
+   ① 只写上述路径; ② 只追加新条目,不改已有条目及其 `- 状态：` `- 回执：`(那两行归 agent);
+   ③ 用户点「复制提示词」发起; ④ 环回且非跨站;
+   ⑤ 请求只带编号与批注内容,不接受路径; ⑥ 原子写;单条 ≤1000 字、单批 ≤50 条,超限整批 400;看板写入状态只能是 `pending`。
+   交付稿 `output/delivery/<组>/<子路径>/v<序号>.md` 上的批注按**镜像路径**还原成原稿 `output/<组>/<子路径>.md`,
+   落到原稿那份记录的批注文件,批次多一行 `- 对象：`;映射只用路径规则,不读交付稿 front-matter。
+
+   **第七条 · 一次归档**(spawn `scripts/archive_output.py`,`http.mjs` 的 `runArchive`,同步等退出、带超时):
+   归档是 `rename`,而第六条 ① 写死「不改名」,所以看板自己绝不做。
+   ① 看板只 spawn; ② 用户在产出列表点「归档」并确认,**不按状态自动归档**; ③ 环回且非跨站;
+   ④ 请求**只带组名(`analysis` / `docs` / `decisions`)与文件基名,不接受任何路径**,含分隔符或 `..` 在起脚本前 400。
+      代价是组内子目录的文件不可归档(界面置灰);不要改成「带路径但会校验」—— 这句话没有例外才有价值;
+   ⑤ 脚本只写 `output/<组>/一次归档/`(移入文件、维护同目录 `README.md`);
+   ⑥ 脚本只移动与在清单标记间追加 README,不删除;同名加日期后缀不覆盖;脚本不存在时 400,不退化成看板代劳。
+   「是否已归档」判据只在 `scan.mjs` 的 `outputPlacement`;归档项照样扫描、搜索、预览、计入反链。
+   二次归档走工作空间的 `pm-output-archive`,看板不参与,也**不产出任何「无需再读」清单**。
+
+   **第八条 · 反馈单发送记录**(写 `output/feedback/F<编号>.md`,`feedback.mjs` 的 `markSent`,直写):
+   ① 只**改已存在**的反馈单,不新建、不删除、不改名,不存在 404;
+   ② 只写人写区:front-matter 的 `sent_at` 与「## 发送记录」(只追加 `###` 子节);
+      载荷带 AI 写区(`status` / `receipt` / `title` / `kind` / `id` / `created` 等)一律 400;
+   ③ 用户点「已发送」发起,唤起 mailto 本身不写盘; ④ 环回且非跨站;
+   ⑤ 请求**只带编号**(`F0003`),路径服务端过 `resolveInside()` 自己拼;
+   ⑥ 其余文件(含 `.kanban-feedback/`、`output/docx-template/`)只读;结构认不出(无 front-matter 或无「## 发送记录」)409
+
+   **第九条 · 提炼 Word 模板 / 转 Word**(spawn `scripts/docx_template.py` / `scripts/md2docx.py`,
+   `docxTools.mjs`,同步等退出、带超时):
+   ① 看板只 spawn; ② 用户点「开始分析」「生成模板」「转换」发起,文件变化不自动重跑; ③ 环回且非跨站;
+   ④ **请求不带任何路径**:来源 `.docx` 与待转 `.md`(产出三组与交付稿 `output/delivery/**/v<序号>.md`)只用扫描下发的
+      不透明键 `docKey`(相对路径 SHA-256 前 16 位)指定,服务端重扫反查、查不到 400,再过 `resolveInside()`;
+      不接受「带路径但会校验」,也不退回「组名 + 基名」(子目录里基名不唯一)。
+      模板名只接受一层基名;提炼决定经 stdin 传 JSON,服务端限 256KB、拒路径类键名,脚本再校验;
+   ⑤ `docx_template.py` 只写 `output/docx-template/<模板名>/`(`collect/` `profile.json` `reference.docx`
+      `front.docx` `spec.md` `sample.docx`);`md2docx.py` 只写来源 `.md` 同目录同基名的 `.docx`
+      (来源是交付稿时落在交付稿旁,原稿目录不动;中间文件放系统临时目录);
+   ⑥ **不覆盖别人的文件**:同名 `.docx` 只有带生成标记(`docProps/custom.xml` 的 `aispace-docx-generator`)
+      且用户确认才替换,否则 409;模板名已存在要用户确认「重新生成」。服务端与脚本各校验一次;
+      缺脚本 / Python 3 / pandoc 3 时 400 说清出路,不退化成看板代劳。
+
+   **去 AI 味这条线不新增任何写入**(`deai.mjs` 只读):交付稿与规则库 `.claude/skills/pm-deai-writing/rules/`
+   全由工作空间 AI 写;改交付稿走「批注 → AI 修改」,看板唯一的写入是第六条第二种写入的批注。
+
 2. **一切工作空间内路径必须过 `resolveInside(root, relPath)`**(`src/server/paths.mjs`),挡 `../` 穿越。
-   新增任何接收路径参数的接口,第一件事就是过它。**只此一份**,不许复制第二份实现。
+   新增接收路径参数的接口第一件事就是过它。**只此一份**,不许复制第二份实现。
 3. **"移出看板"只删登记信息**,不动本地目录和文件。文案与实现都必须保持这个承诺。
-4. **非环回监听时禁写。** `--host` 不是环回地址时,所有会起子进程 / 写注册表的接口一律 403
-   (`createServer({ allowMutations })`,`bin/cli.mjs` 按 `LOOPBACK` 传入)。
-   只读分享(扫目录、读文件、SSE)不受影响。
+4. **非环回监听时禁写。** `--host` 不是环回地址时,所有会起子进程 / 写盘的接口一律 403
+   (`createServer({ allowMutations })`,`bin/cli.mjs` 按 `LOOPBACK` 传入)。只读分享不受影响。
 
 ---
 
 ## 2. 技术栈
 
 - **React 19** + **TypeScript**(`strict`,`noUnusedLocals` / `noUnusedParameters`,bundler 解析)
-- **Vite 7** 构建 / dev server;**Tailwind CSS v4**(`@tailwindcss/vite`,**无 `tailwind.config.js`**)
-- **服务端:瘦 Node**(原生 `node:http`,**无框架**),源码是 `.mjs`,**不参与类型检查**
+- **Vite 7**;**Tailwind CSS v4**(`@tailwindcss/vite`,**无 `tailwind.config.js`**)
+- **服务端:瘦 Node**(原生 `node:http`,**无框架**),`.mjs`,**不参与类型检查**
 - **UI 组件:[startist-ui](../startist-ui)** 经 shadcn registry copy-in 到 `src/app/components/ui/`
 - 包管理器 **pnpm**;**无 ESLint、无测试框架**(闸门见第 4 节)
 
-引入新依赖前先确认:它是给前端平面还是服务端平面用?给服务端用的必须进 `dependencies`
-(`bin/` 会被当 CLI 直接跑,拿不到 devDependencies)。发 npm 包时
-`scripts/build-npm-package.mjs` **按 `src/server` + `bin` 的 import 图重算依赖**,
-服务端引了不在 `dependencies` 里的包,组包会直接报错拦下。
+服务端用的新依赖必须进 `dependencies`(`bin/` 被当 CLI 直接跑,拿不到 devDependencies);
+`scripts/build-npm-package.mjs` 按 `src/server` + `bin` 的 import 图重算依赖,漏了会直接报错。
 
-### 唯一的第三方补丁:micromark 的 GFM 表格扩展
-
-`patches/micromark-extension-gfm-table@2.1.1.patch`(登记在 `pnpm-workspace.yaml` 的
-`patchedDependencies`,那份文件目前**只为这一件事存在**)。
-
-改的是 `EditMap.add`:原实现每加一条编辑都要线性扫一遍已有编辑,表格行一多就是平方级。
-一份 833 行表格的产物,光这一处就占主线程 ~90ms(点开总耗时的一半)。补丁给它加了一张
-`at → change` 的索引表,`map` 本身和 `consume` 的行为一个字没动。
-**产出的 HTML 与打补丁前逐字节相同**(验过:602926 字节两边一致),管线 146ms → 74ms。
-
-上游 2.1.1 是最新版(2025-01),没修这个问题。**升级 `remark-gfm` / micromark 系列时补丁会因
-版本不符失效,pnpm 会当场报错**(不会静默),那时要么重打(`pnpm patch <包>@<新版本>`),
-要么确认上游已修后删掉补丁与 `pnpm-workspace.yaml` 里那行。
-验证照旧:`pnpm test:anchor` + 浏览器里点开一份大表产物看长任务时长。
+**唯一的第三方补丁** `patches/micromark-extension-gfm-table@2.1.1.patch`(登记在 `pnpm-workspace.yaml`,
+那份文件只为它存在):给 `EditMap.add` 加 `at → change` 索引,把大表格解析从平方级降下来
+(833 行表格管线 146ms → 74ms),输出 HTML 逐字节不变。升级 `remark-gfm` / micromark 时补丁失效会当场报错,
+那时重打(`pnpm patch <包>@<新版本>`)或确认上游已修后删掉;验证跑 `pnpm test:anchor` + 浏览器点开大表看长任务。
 
 ---
 
@@ -257,74 +157,45 @@ aispace-kanban/
 ├── bin/cli.mjs             # 平面 1 · CLI:参数解析 + serve/add/list/relink/remove
 ├── src/
 │   ├── server/             # 平面 2 · 常驻服务(.mjs,无类型检查)
-│   │   ├── http.mjs        #   路由 + 静态伺服 + SSE + 系统调用(open);原型刷新 / 参考收件箱 / 一次归档 spawn 也在这
-│   │   ├── config.mjs      #   注册表读写 + 工作空间识别 + 重连候选
-│   │   ├── scan.mjs        #   工作空间扫描 → 结构化 JSON(只读);「是否已归档」判据 outputPlacement 只在这
-│   │   ├── meta.mjs        #   project.yaml 解析 + 完整度统计
+│   │   ├── http.mjs        #   路由 + 静态伺服 + SSE + 各 spawn 入口
+│   │   ├── config.mjs      #   注册表读写 + 工作空间识别 + 重连候选 + 模板根解析
+│   │   ├── scan.mjs        #   工作空间扫描 → JSON(只读);归档判据 outputPlacement
+│   │   ├── meta.mjs        #   project.yaml 解析 + 完整度
 │   │   ├── frontmatter.mjs #   frontmatter / 标题 / 字数
-│   │   ├── records.mjs     #   扫 output/records/ → 产出物记录索引 + 状态写入(不变量 1 第六条例外)
-│   │   ├── notes.mjs       #   批注文件读写:output/records/notes/(第六条例外的第二种写入,允许新建)
-│   │   ├── feedback.mjs    #   扫 output/feedback/ → 反馈单索引 + 发送记录写入(不变量 1 第八条例外)
-│   │   ├── docxTemplates.mjs # 扫 output/docx-template/ → 模板清单(只读)
-│   │   ├── docxTools.mjs   #   提炼模板 / 转 Word 的参数校验与 spawn(不变量 1 第九条例外)
-│   │   ├── docxMarker.mjs  #   读 .docx 的生成标记(只读;覆盖前服务端自己也校验一次)
-│   │   ├── deai.mjs        #   去 AI 味:读规则库(版本 / 快照 / CHANGELOG)、列交付稿版本(只读,不新增写入)
-│   │   ├── patchMarkdown.mjs # 问题单 / 记录单 / 反馈单共用的字段级替换与原子写
-│   │   ├── prototypes.mjs  #   扫 visualization/prototypes/ → 原型清单(index.html / zip / url 形态)
-│   │   ├── references.mjs  #   扫 visualization/references/ → 参考清单(子目录 index.html)
-│   │   ├── questions.mjs   #   扫 output/questions/ → 未决问题索引 + 人工反馈写入(第四条例外)
-│   │   ├── capture.mjs     #   ★ 采集写入的唯一收口:贴 URL 采集 → visualization/ 之下(第二条例外)
-│   │   ├── paths.mjs       #   ★ resolveInside 的唯一实现(不变量 2 的载体)
-│   │   └── platform.mjs    #   ★ 三平台差异只写在这:开浏览器 / 定位文件 / 找 python 与 pandoc
+│   │   ├── records.mjs     #   产出物记录索引 + 状态写入(第六条)
+│   │   ├── notes.mjs       #   批注读写(第六条第二种写入)
+│   │   ├── feedback.mjs    #   反馈单索引 + 发送记录写入(第八条)
+│   │   ├── questions.mjs   #   未决问题索引 + 人工反馈写入(第四条)
+│   │   ├── docxTemplates.mjs / docxTools.mjs / docxMarker.mjs  # Word 模板清单 / spawn(第九条) / 生成标记
+│   │   ├── deai.mjs        #   去 AI 味:读规则库、列交付稿版本(只读)
+│   │   ├── patchMarkdown.mjs # 问题 / 记录 / 反馈单共用的字段级替换与原子写
+│   │   ├── prototypes.mjs / references.mjs  # visualization/ 两个 tab 的清单
+│   │   ├── capture.mjs     #   ★ 采集写入的唯一收口(第二条)
+│   │   ├── paths.mjs       #   ★ resolveInside 的唯一实现(不变量 2)
+│   │   └── platform.mjs    #   ★ 三平台差异只写在这
 │   ├── app/                # 平面 3 · 前端 SPA(TS,`@/` 指向这里)
-│   │   ├── App.tsx         #   外壳:侧栏 + 四视图路由 + 主题
-│   │   ├── components/     #   业务面板(*Panel.tsx)、阅读器、通用小件
-│   │   │   └── ui/         #   @startist/* vendored 快照(shadcn add 生成)
+│   │   ├── components/     #   业务面板(*Panel.tsx)、阅读器、通用小件;ui/ 是 startist vendored 快照
 │   │   ├── hooks/          #   useProjects / useScan(含 SSE 订阅)
 │   │   ├── lib/api.ts      #   ★ 前后端契约:接口封装 + 全部响应类型
 │   │   └── styles/globals.css  # ★ 设计令牌唯一源头
 │   └── shared/             # 平面 2 与 3 共用的**纯函数**(.mjs + JSDoc)
-│       ├── textMatch.mjs   #   归一 + 分词:整表检索在服务端判定、片段加粗在前端,口径必须同源
-│       ├── codeLang.mjs    #   代码扩展名 → 语言:扫描标 text、预览高亮,口径必须同源
-│       ├── recordStatus.mjs #  产出物记录的三套状态机:服务端校验、前端下拉,口径必须同源
-│       └── feedbackMail.mjs #  项目公开反馈邮箱:mailto 收件人与发送记录必须是同一个地址
-├── scripts/                # 平面外 · 仓库工具
-│   ├── build-npm-package.mjs  #   组 npm 包(pnpm build:npm),产出 npm-package/
-│   └── smoke-package.mjs      #   ★ 装包冒烟(pnpm smoke:npm),CI 三平台跑的就是它
-├── openspec/               # 平面外 · 规划产物:changes/<name>/ 是提案与任务,specs/ 是已落地的能力
-│   └── config.yaml         #   ★ 写产物的约束(中文、平面影响面、脱敏红线),自动注入给 AI
-├── .github/workflows/      # 平面外 · CI:ci.yml(日常闸门) + release.yml(推 v* tag 发版)
-├── templates/              # 平面外 · 工作空间模板,看板代码不 import 它们
+├── scripts/                # 仓库工具:组 npm 包、装包冒烟(CI 三平台跑它)、各回归
+├── openspec/               # 规划产物;config.yaml 是写产物的约束,自动注入给 AI
+├── .github/workflows/      # ci.yml(日常闸门) + release.yml(推 v* tag 发版)
+├── templates/              # 工作空间模板,看板代码不 import 它们
 │   ├── init_workspace.py   #   ★ 共享铺骨架入口(runInit --from)
-│   ├── create-prompt.md    #   复制给 AI 的「创建模板」提示词
-│   └── pm-aispace/         #   内置「产品经理AI空间模板」
-│       ├── template.yaml   #     发现用的元信息(id / name / description)
-│       ├── .claude/skills/ #     pm-* 业务技能 + skill-creator
-│       ├── scripts/        #     工作空间自己的工具;看板只 spawn 其中几支:ingest.py / db_ingest.py /
-│       │                   #     web_ingest.py --inbox / archive_output.py(一次归档,第七条例外) /
-│       │                   #     docx_template.py 与 md2docx.py(提炼模板 / 转 Word,第九条例外;公共代码在 docxkit/)
-│       └── input/ output/ visualization/ project.yaml
-│                           #     output/delivery/ = 去 AI 味后的交付稿(按原稿路径镜像、v<序号>.md 逐版存),
-│                           #     不进产出列表,只从阅读器版本条进入;规则库在 .claude/skills/pm-deai-writing/rules/
+│   └── pm-aispace/         #   内置「产品经理AI空间模板」,自带 AGENTS.md
 └── dist/                   # 构建产物(gitignore),serve 非 dev 模式伺服它
 ```
 
-`templates/` 是**另一个语境**:每份模板是一套角色骨架,不是看板的源码。
-看板与它之间**只有一个接口** —— `src/server/http.mjs` 的 `runInit` 起子进程跑
-`templates/init_workspace.py --from <选中的模板>`。
-内置模板根由 `config.mjs` 的 `resolveTemplateRoot` 解析
-(注册表 `templateRoot` > `PMWORK_TEMPLATE_ROOT` > 仓库内 `templates/`);
-用户自建模板扫 `~/.pmwork/templates/`,目录里有 `template.yaml` 即上架。
-本文件第 2 / 5 节的技术栈与编码规范**不适用于 `templates/` 内部**,那边自己有一份 `AGENTS.md`。
+**看板与 `templates/` 只有一个接口**:`runInit` spawn `templates/init_workspace.py --from <模板>`。
+内置模板根由 `config.mjs` 的 `resolveTemplateRoot` 解析(注册表 `templateRoot` > `PMWORK_TEMPLATE_ROOT` > 仓库内 `templates/`);
+用户自建模板扫 `~/.pmwork/templates/`,有 `template.yaml` 即上架。
 
-**单页 HTML 产物落 `templates/pm-aispace/visualization/prototypes/<名字>/index.html`。**
-在本仓库里生成的方案页、设计页、分析页,和工作空间里 AI 产出的成品页,走的是同一条约定:
-一个东西一个子目录,入口必须叫 `index.html`(看板只认这个,散装 `.html` 扫不到),
-`<title>` 就是看板里显示的名字,内联 CSS、不引外部字体和脚本。
-注意这个目录**会随模板发给每个新建的工作空间** —— 放进去就是发出去,别放临时草稿。
-完整规则见 `templates/pm-aispace/AGENTS.md` 的「阶段四:原型」。
+**单页 HTML 产物**(方案页、设计页、分析页)落 `templates/pm-aispace/visualization/prototypes/<名字>/index.html`,
+规则同模板 AGENTS.md「阶段四：视觉呈现」。这个目录**随模板发给每个新工作空间**,别放临时草稿。
 
-**平面职责互斥,判据一句话:**
+**平面职责互斥:**
 
 | 需求 | 落在哪 |
 | --- | --- |
@@ -333,16 +204,10 @@ aispace-kanban/
 | 渲染、交互、状态 | `src/app/**` |
 | 服务端与前端**必须给出同一个答案**的纯计算 | `src/shared/**` |
 
-**跨平面的唯一契约是 `src/app/lib/api.ts`** —— 服务端产出的 JSON 形状必须与它的 type 一致。
-改一侧就必须改另一侧,见 [`dashboard-feature-flow`](.claude/skills/dashboard-feature-flow/SKILL.md)。
-
-**`src/shared/` 的边界很窄:只放两侧共用的纯函数** —— 不碰 DOM、不碰 Node API、零依赖,
-`.mjs` 写、JSDoc 注类型(`tsconfig` 开了 `allowJs`、不开 `checkJs`)。
-它存在的唯一理由是"两边算出不同答案就是 bug 且没有类型检查拦得住"
-(如整表检索的关键词分词:服务端判定命中、前端负责加粗)。
-带 IO 的东西一律留在各自平面;往这里加文件前先问一句"两边真的必须同源吗"。
-**新增文件记得同步 `scripts/build-npm-package.mjs` 的拷贝清单**,否则装包的人一起手就是
-`ERR_MODULE_NOT_FOUND`。
+- **跨平面的唯一契约是 `src/app/lib/api.ts`**:改一侧必改另一侧,见 [`dashboard-feature-flow`](.claude/skills/dashboard-feature-flow/SKILL.md)。
+- **`src/shared/` 只放两侧共用的纯函数**:不碰 DOM / Node API、零依赖,`.mjs` + JSDoc(`allowJs`、不开 `checkJs`)。
+  加文件前先问「两边真的必须同源吗」。
+- **`src/server/` 或 `src/shared/` 新增文件,同步 `scripts/build-npm-package.mjs` 的拷贝清单**,否则装包即 `ERR_MODULE_NOT_FOUND`。
 
 ---
 
@@ -353,27 +218,22 @@ aispace-kanban/
 | 安装依赖 | `pnpm install` |
 | 开发(接口 7788 + Vite 5180,浏览器开 5180) | `pnpm dev` |
 | 只起常驻服务(7788,伺服 `dist/`) | `pnpm serve` |
-| 构建前端 | `pnpm build` |
-| 类型检查 | `pnpm typecheck` |
-| 组 npm 包(发布用) | `pnpm build:npm` → `npm-package/` |
-| 打 tgz + 装包冒烟 | `pnpm pack:npm && pnpm smoke:npm` |
-| docx 工具链回归(改了 `templates/pm-aispace/scripts/docxkit/` 必跑;**仅本地**,CI 不装 pandoc) | `pnpm test:docx`(没有 pandoc 3 时只跳过转换段) |
-| 模板铺设与更新回归(改了 `templates/init_workspace.py`、`template_update.py` 或模板的 `sync` 段必跑;不联网) | `pnpm test:template-update` |
-| 看规划状态(active change / 已落地能力) | `openspec list` / `openspec list --specs` |
+| 构建 / 类型检查 | `pnpm build` / `pnpm typecheck` |
+| 组 npm 包 / 打包冒烟 | `pnpm build:npm` / `pnpm pack:npm && pnpm smoke:npm` |
+| docx 工具链回归(改 `templates/pm-aispace/scripts/docxkit/` 必跑;仅本地,没 pandoc 3 时跳过转换段) | `pnpm test:docx` |
+| 模板铺设与更新回归(改 `init_workspace.py`、`template_update.py` 或模板 `sync` 段必跑) | `pnpm test:template-update` |
+| 规划状态 | `openspec list` / `openspec list --specs` |
 
 **交付闸门(缺一不可):**
 
-1. `pnpm typecheck` 绿 —— 注意它**只覆盖 `src/app`**(见 `tsconfig.json` 的 `include`)
+1. `pnpm typecheck` 绿 —— 它**只覆盖 `src/app`**
 2. `pnpm build` 绿
-3. **手动冒烟**:`src/server/**` 和 `bin/cli.mjs` 没有任何静态检查也没有测试,
-   改动它们后必须重启 `pnpm serve` / `pnpm dev`,`curl -s localhost:7788/api/health`,
-   再在浏览器里把受影响的视图点一遍。
+3. **手动冒烟**:`src/server/**` 与 `bin/cli.mjs` 没有静态检查也没有测试,改了必须重启 `pnpm serve` / `pnpm dev`,
+   `curl -s localhost:7788/api/health`,再在浏览器把受影响视图点一遍。
 
-> **改服务端代码必须重启进程。** 常驻服务不热更;前端才有 Vite 热更。
-> 「接口返回 `未知接口：/api/...`」几乎总是忘了重启,不是路由写错(`lib/api.ts` 里已就此写了提示)。
+> **常驻服务不热更。** 「`未知接口：/api/...`」几乎总是忘了重启,不是路由写错。
 
-目前**没有自动化测试**。新增无 IO 的纯逻辑模块时可以补,但别为现有代码大规模补测试 ——
-先问人。
+没有自动化测试;新增无 IO 的纯逻辑模块可以补,别为现有代码大规模补测试 —— 先问人。
 
 ---
 
@@ -381,200 +241,135 @@ aispace-kanban/
 
 ### 5.1 通用
 
-- **改动最小化**:只动非动不可的地方,不重构没坏的代码,不做没要求的抽象。
-  详见 [`disciplined-coding`](.claude/skills/disciplined-coding/SKILL.md)。
-- **注释写"为什么"**,尤其是反直觉的兜底与降级(现有代码就是这个风格,照抄它)。
-  纯粹重述代码的注释不要写。
-- **中文优先**:注释、界面文案、报错文案、提交信息一律中文,语气与 README 一致 ——
-  平实、说清后果,不说"操作失败请重试"这类空话。
-- **提交**:小步可回滚;信息说明「为什么」而不只是「改了什么」。
+- **改动最小化**:只动非动不可的地方,不做没要求的抽象。详见 [`disciplined-coding`](.claude/skills/disciplined-coding/SKILL.md)。
+- **注释写"为什么"**,尤其是反直觉的兜底与降级;不写重述代码的注释。
+- **中文优先**:注释、界面文案、报错、提交信息一律中文,平实、说清后果,不说"操作失败请重试"。
+- **提交**小步可回滚,信息说明「为什么」。
 
 ### 5.2 前端平面(`src/app/**`)
 
-- **路径别名 `@/` 指向 `src/app/`**(`vite.config.ts` 与 `tsconfig.json` 双向配置),不写 `../../`。
-- **TypeScript**:不用 `any` 兜底。现存唯一例外是 `ProjectMeta.data`
-  (`project.yaml` 是用户自由结构),不要再引入新的 `any`。
-- **函数组件 + Hooks**;一个文件一个主组件,文件名与组件同名(`PascalCase`);
-  hooks `useXxx`;工具函数 `camelCase`。
-- **样式只用 Tailwind 工具类 + 语义令牌**,`cn()` 合并 className。
-  详见 [`react-component-authoring`](.claude/skills/react-component-authoring/SKILL.md)。
-- **通用组件先查 startist registry**,不要在业务组件里手写第二遍 button / dialog / input。
-  `src/app/components/ui/**` 是 vendored 快照,**不做与上游分叉的语义修改**。
+- 路径别名 **`@/` → `src/app/`**,不写 `../../`。
+- 不用 `any` 兜底(唯一例外 `ProjectMeta.data`,不要再加)。
+- 函数组件 + Hooks;一文件一主组件,文件名同组件名(`PascalCase`);hooks `useXxx`;工具函数 `camelCase`。
+- 样式只用 Tailwind 工具类 + 语义令牌,`cn()` 合并。详见 [`react-component-authoring`](.claude/skills/react-component-authoring/SKILL.md)。
+- 通用组件先查 startist registry;`components/ui/**` 是 vendored 快照,**不做与上游分叉的语义修改**。
 
 ### 5.3 服务端平面(`src/server/**`、`bin/cli.mjs`)
 
-- **原生 ESM `.mjs`**,不引入 TypeScript、不引入 Web 框架。类型靠 JSDoc 注释说清。
-- **依赖克制**:只用 `node:` 内置模块 + 已在 `dependencies` 里的轻量包
-  (当前服务端用到 `yaml` 和 `@firecrawl/anydoc`)。加新依赖要在改动说明里讲清理由。
-- **错误用 `throw new Error(中文说明)` + 可选 `err.statusCode`**,由 `createServer` 统一转 JSON。
-  不要在处理函数里各写一套错误响应。
-- **读失败一律降级成空/默认值,不让进程崩**(参考 `config.mjs` 的 `readProjects`):
-  看板是只读工具,少一个文件不该白屏。
-- 扫描新目录时沿用 `scan.mjs` 的 `SKIP` 集合与 `rel()` 相对路径(统一用 `/` 分隔)。
+- 原生 ESM `.mjs`,不引 TypeScript、不引 Web 框架,类型靠 JSDoc。
+- 依赖克制:`node:` 内置 + 已有轻量包(`yaml`、`@firecrawl/anydoc`);加依赖要讲清理由。
+- 错误 `throw new Error(中文说明)` + 可选 `err.statusCode`,由 `createServer` 统一转 JSON。
+- **读失败降级成空/默认值,不让进程崩**(参考 `config.mjs` 的 `readProjects`)。
+- 扫描新目录沿用 `scan.mjs` 的 `SKIP` 集合与 `rel()`(统一 `/` 分隔)。
 
 ### 5.4 视觉与配色(硬约束)
 
-- **令牌唯一源头 `src/app/styles/globals.css`**:`@theme inline` 映射 + `:root` / `.dark` 双层变量。
-  组件里严禁硬编码色值或 `zinc-*` / `stone-*` 原始色阶。
-- **黑白灰为主色。orange(`--destructive`)只用于"需要注意"** —— 在本项目就是
-  待转换资料、内容存疑、目录丢失这类需要人处理的状态。其余地方一律不上彩色。
-- 层级靠边框和灰底,不靠阴影(见 `components/Primitives.tsx`)。
-- 详见 [`design-tokens`](.claude/skills/design-tokens/SKILL.md)。
+- **令牌唯一源头 `src/app/styles/globals.css`**;组件里不硬编码色值,不用 `zinc-*` / `stone-*` 原始色阶。
+- **黑白灰为主。orange(`--destructive`)只用于"需要注意"**(待转换资料、内容存疑、目录丢失)。
+- 层级靠边框和灰底,不靠阴影。详见 [`design-tokens`](.claude/skills/design-tokens/SKILL.md)。
 
 ### 5.5 兼容性(常驻服务特有,最容易踩)
 
-服务是**常驻进程**,用户完全可能用着旧进程 + 新前端(或反过来)。所以:
+用户完全可能用着旧进程 + 新前端(或反过来):
 
-- **接口响应新增字段一律可选**,前端缺字段时**退回改动前的行为**;
-  宁可少显示一块,不能白屏或报错。`Scan.available?` 的注释就是这条规则的实例。
-- 前端不要假设新字段一定存在;服务端不要删已有字段(先加新的、旧的留一版)。
+- **接口新增字段一律可选**,前端缺字段时**退回改动前的行为**,宁可少显示不白屏(实例:`Scan.available?`)。
+- 服务端不删已有字段(先加新的,旧的留一版)。
 
-### 5.6 三平台与 npm 包(改服务端 / 改模板时的硬约束)
+### 5.6 三平台与 npm 包
 
-看板发成 `@startist/aispace-kanban`,在 macOS / Windows / Linux 上都要能跑。要求 **Node ≥ 20**
-(Linux 上 `fs.watch` 的递归监听 —— 也就是 SSE 自动刷新 —— 从 20 才有)。
+发成 `@startist/aispace-kanban`,macOS / Windows / Linux 都要能跑,**Node ≥ 20**(Linux 递归 `fs.watch`)。
 
-- **平台差异只写在 `src/server/platform.mjs`**:开浏览器、在文件管理器里定位、
-  找 Python 解释器。别在别处再写第二次 `spawn('open', ...)`,那是本仓踩过的坑
-  (reveal 接口曾经在非 macOS 上直接返 501)。
-- **界面上跟操作系统有关的文案**(「在访达中显示」)从 `/api/health` 的 `platform` 取,
-  经 `hooks/useFileManager.ts`;**不能用浏览器的 `navigator`** —— 定位动作发生在**服务所在的机器**上。
-- **npm 打包会吃掉两类东西**,模板里有就得绕:
-  - 任何叫 `.gitignore` 的文件(`files` 字段也救不回来)→ 组包时改名存成 `gitignore`,
-    由 `templates/init_workspace.py` 认回来;
-  - 软链接 → `templates/<id>/skills` 不进包,新建工作空间时由 `init_workspace.py` 现建**相对**链接
-    (Windows 建不了就复制一份实体目录)。
-- 包里**没有前端源码和 devDependencies**,所以 `serve --dev` 在包里会明确报错;
-  `dist/` 必须是刚 `pnpm build` 出来的,否则装的人看到的是旧界面。
-- 发布前的冒烟不能只在源码仓跑,但**不用手工点** —— `pnpm smoke:npm`
-  (`scripts/smoke-package.mjs`)会在干净目录装 tgz 起服务,把新建工作空间、扫描、
-  路径穿越拦截等 12 件事验一遍;CI 在 ubuntu / windows / macOS 上跑的就是它。
-  它给子进程换了假 `HOME`,不会污染你自己的注册表。
-- **发版与 CI 的完整流程见 `docs/private/发布与CI.md`**(推 `v*` tag 自动发 npm;私有文档不入库)。
+- **平台差异只写在 `platform.mjs`**(开浏览器、定位文件、找 Python / pandoc),别处不许再写 `spawn('open', ...)`。
+- 与操作系统有关的文案(「在访达中显示」)取 `/api/health` 的 `platform`(经 `hooks/useFileManager.ts`),
+  **不用 `navigator`** —— 动作发生在服务所在机器上。
+- **npm 打包会吃掉** `.gitignore`(组包改名 `gitignore`,`init_workspace.py` 认回)和软链接
+  (`templates/<id>/skills` 不进包,建工作空间时现建相对链接,Windows 不行就复制)。
+- 包里没有前端源码和 devDependencies(`serve --dev` 会明确报错);`dist/` 必须是刚 build 的。
+- 发布前冒烟跑 `pnpm smoke:npm`(干净目录装 tgz、假 `HOME`,验新建、扫描、穿越拦截等),CI 三平台跑的就是它。
+  发版流程见 `docs/private/发布与CI.md`(私有,不入库)。
 
 ---
 
 ## 6. 协作流水线:OpenSpec(规划 → 实施 → 归档)
 
-**非平凡改动先规划再动手。** 跨平面、要动 `src/app/lib/api.ts` 契约、引新依赖、
-或者要在几条路之间做取舍的,先立一个 change —— 把「为什么做、做什么、验收是什么」
-落成**仓内文件**,而不是留在会话里或一次性的网页上。
+**非平凡改动先规划再动手**:跨平面、动 `api.ts` 契约、引新依赖、要在几条路之间取舍的,先立 change。
 
 ```
-/opsx:propose "<想做什么>"   → openspec/changes/<name>/ 下生成 proposal.md + specs/ + design.md + tasks.md
+/opsx:propose "<想做什么>"   → openspec/changes/<name>/ 下生成 proposal / specs / design / tasks
 /opsx:apply <name>           → 按 tasks.md 逐条实现并勾选
-/opsx:archive <name>         → 归档进 openspec/changes/archive/,把 delta 合并回 openspec/specs/
+/opsx:archive <name>         → 归档,delta 合并回 openspec/specs/
 ```
 
-- **琐碎改动直接做**(改文案、调间距、修显式笔误),不套流程 —— 重量随任务大小伸缩。
-- **bug 走 [`systematic-debugging`](.claude/skills/systematic-debugging/SKILL.md)**:
-  小 bug 直接四阶段;大到要改数据形状或跨平面,才值得立 change。
-- **OpenSpec 定「做什么」,skills 定「在这个仓怎么改不出事」**。立完 change 照样按
-  [`dashboard-feature-flow`](.claude/skills/dashboard-feature-flow/SKILL.md) 的顺序改代码,
-  两者叠加,不互相替代。
-- **产物的写法约束不写在这里**,写在 [`openspec/config.yaml`](openspec/config.yaml) 的
-  `context` / `rules`(中文书写、平面影响面、只读红线、验收闸、脱敏清单),
-  它会被自动注入给 AI。**要改约束就改那个文件**,别在单个 change 里重复一遍。
-- `/opsx:*` 用不了时(`.claude/` 丢了)跑 `openspec init --tools claude,pi` 重建 ——
-  **不是** `openspec update`,tool 注册记录一并丢失时它只报 `No configured tools found` 就退出。
-  Claude Code 生成 `.claude/commands/opsx/`(命令带冒号 `/opsx:propose`),pi 生成 `.pi/prompts/opsx-*.md`
-  (pi 不认冒号,命令是连字符 `/opsx-propose`,且项目须已信任才会加载项目级模板)。
-  生成的 `.claude/commands/opsx/`、`.claude/skills/openspec-*/` 与 `.pi/prompts/` **入库但勿手改**,重建会覆盖。
+- **琐碎改动直接做**(文案、间距、笔误)。bug 走 [`systematic-debugging`](.claude/skills/systematic-debugging/SKILL.md),
+  大到要改数据形状或跨平面才立 change。
+- OpenSpec 定「做什么」,skills 定「怎么改不出事」,两者叠加:立完 change 照样按 `dashboard-feature-flow` 改。
+- **产物写法约束只写在 [`openspec/config.yaml`](openspec/config.yaml)**(中文、平面影响面、只读红线、验收闸、脱敏),自动注入给 AI。
+- `/opsx:*` 丢了跑 `openspec init --tools claude,pi` 重建(**不是** `openspec update`)。
+  生成的 `.claude/commands/opsx/`、`.claude/skills/openspec-*/`、`.pi/prompts/` 入库但勿手改。
 
 ### 6.1 公开仓库脱敏红线
 
-本仓已开源(`github.com/STArtppt/aispace-kanban`),**`openspec/` 下的一切都随代码公开发布,
-进了 git 历史就删不干净**。所以规划产物里只写「公开仓库的读者也该看到」的信息:
-真实客户与业务方名称(包括藏在文件名里的)、本机绝对路径、内网地址与内部 Git 远端、
-任何凭据、真实资料的正文与截图,一律不进产物 —— 需要举证就化名或换成合成件。
-
-最容易破防的是 `design.md` 的「Context / 现状」:调研阶段的实测数据经常带着真实文件名和
-本机路径,搬进产物前先替换。**拿不准就不写**,细节留在会话里,产物里只写结论。
-
-完整清单(连同替换写法)在 [`openspec/config.yaml`](openspec/config.yaml) 的 `context`,
-那份是真正注入给 AI 的版本 —— 改脱敏规则改那里。
+本仓已开源(`github.com/STArtppt/aispace-kanban`),**`openspec/` 随代码公开,进了 git 历史就删不干净**。
+真实客户与业务方名称(含文件名里的)、本机绝对路径、内网地址与内部 Git 远端、凭据、真实资料正文与截图,
+一律不进产物,要举证就化名或换合成件。最容易破防的是 `design.md` 的「现状」—— **拿不准就不写**。
+完整清单在 `openspec/config.yaml` 的 `context`,改规则改那里。
 
 ### 6.2 处理工作空间反馈单
 
-工作空间里的 agent **不许改看板源码**:只读 GitHub 上的源码,发现看板缺陷就写
-`output/feedback/F<编号>.md`(字段契约见模板 `output/feedback/README.md`),由用户在工作台反馈单页发出,
-或把文件带到本仓来。旧的 `.kanban-feedback/` 不再新写;看板只统计那里还剩几份 `.md`,
-**不读内容、不移动、不改名、不删除**。
+工作空间 agent **不许改看板源码**,发现问题写 `output/feedback/F<编号>.md`
+(字段契约见模板 `output/feedback/README.md`),由用户发来或带来。
+`~/.pmwork/dashboard/runtime.json` 的 `launch` 为 `source` 时,直接读 `instances` 所列实例的反馈单,
+做法见 [`local-source-sync`](.claude/skills/local-source-sync/SKILL.md);否则等用户带过来。
+旧目录 `.kanban-feedback/` 看板只数份数,不读、不动。
 
-`~/.pmwork/dashboard/runtime.json` 的 `launch` 为 `source` 时,源码仓库里的会话直接读
-`instances` 所列工作空间的 `output/feedback/`,用户不必先把文件拷来,也不必发邮件。
-`launch` 不是 `source`(或这份配置还是旧的)时,仍等用户把反馈单带过来。
-回执仍交给用户转发,本会话不写反馈单。
+**缺陷单**(`kind: bug` 或不写):
 
-用户把反馈单交给你时:
+1. 当作需求输入走本仓流程(要不要立 change → `dashboard-feature-flow` → 第 4 节闸门 → 提交);「建议改法」只作参考。
+2. 进本仓前先按 6.1 脱敏,别默认复现已经是合成的。
+3. 给一段可转发的**回执**:结论、提交号(不修写理由)、那边可撤掉的临时绕法。
 
-1. **当作需求输入**,按本仓流程处理:判断是否立 change、按 `dashboard-feature-flow` 改、过第 4 节的验证闸、提交。
-   反馈单里的「建议改法」只是参考,工作空间 agent 不知道本仓的不变量。
-2. **进本仓之前先脱敏**(6.1)。反馈单要求复现是合成的,但别默认它做到了。
-3. **给出回执**:一段能直接转发的文字 —— 结论、提交号(不修就写理由)、工作空间那边可以撤掉的临时绕法。
-   **不要直接写工作空间里的反馈单**,由用户转给那边的 agent 回写状态。
+**贡献单**(`kind: contribution`)是工作空间沉淀出的通用改进,当作对 `templates/pm-aispace/` 的需求:
 
-反馈单分两种,看 front-matter 的 `kind`:缺陷单(`bug`,不写也按缺陷单)走上面三步;
-**贡献单**(`contribution`)是工作空间沉淀出的通用改进(去 AI 味规则、技能文案、模板脚本修复),
-当作对 `templates/pm-aispace/` 的需求处理:
+1. 按 6.1 复查「合成示例」「改动内容」,带真实资料的改成合成件,拿不准不收;
+2. 判据「换一个项目还成立吗」,只对个别行业 / 客户成立的不收;
+3. 规则类写进模板规则库 `.claude/skills/pm-deai-writing/rules/` 下一版(取下一个空号、按「短名 + 判据」判重,
+   版本、快照、CHANGELOG 按该技能「规则库怎么改」),其它类改对应模板文件;
+4. 过第 4 节闸门(动 docxkit 跑 `test:docx`,动铺设 / 更新脚本跑 `test:template-update`),提交;
+5. 回执写结论 + 模板位置 + 提交号,如「收为模板 R012(规则库 v2),提交 abc1234」。
 
-1. **按 6.1 脱敏红线复查「合成示例」和「改动内容」**,带出真实资料的一律改成合成件再进仓,拿不准就不收;
-2. **判断收不收**:判据是「换一个项目这条还成立」;只对个别行业、个别客户成立的不收;
-3. **收下就合进模板**:规则类写进模板规则库 `.claude/skills/pm-deai-writing/rules/` 的下一版
-   (编号取模板的下一个空号,按「短名 + 判据」与已有规则判重;版本号、快照、CHANGELOG 按该技能的「规则库怎么改」),
-   其它类改对应的模板文件;
-4. **过第 4 节的验证闸、提交**(动了 docxkit 另跑 `pnpm test:docx`,动了铺设或更新脚本另跑 `pnpm test:template-update`);
-5. **给出回执**:结论 + 模板里的位置 + 提交号,如「收为模板 R012(模板规则库 v2),提交 abc1234」;
-   不收写理由。工作空间那边据此把贡献单改成 `fixed` / `wontfix`,规则类另在本地规则里补 `上游:模板 R012`。
+**本会话不写工作空间文件**,回执由用户转给那边的 agent 回写。唯一例外:`launch` 为 `source` 且用户确认计划后,
+运行该实例自己的 `scripts/template_update.py apply --plan <计划文件>`;不跑 `apply --resolved`,
+冲突与 seedOnly 交回工作空间。不变量 1 不因此新增条目。
 
-收下的改进到工作空间,靠那边的 agent 走 `pm-template-update` 更新模板;这边不推送。
-本会话不直接写工作空间文件。唯一例外:`launch` 为 `source` 时,在用户确认计划之后,
-运行该实例自己的 `scripts/template_update.py apply --plan <计划文件>`
-(写盘的是工作空间脚本,不跑源码仓库里的那份)。不运行 `apply --resolved`;
-冲突与 seedOnly 新版交回工作空间智能体。不变量 1 不因此新增条目。
-
-防误点的硬拦在工作空间的 `.claude/settings.local.json`:`templates/init_workspace.py` 新建时写入
-`deny` 规则,禁止改本仓的任何文件,`templates/` 也在内(模板改进走贡献单,不由工作空间直接写)。已有工作空间用
-`python3 templates/init_workspace.py --guard-only --path <工作空间>` 补
-(只写这一个文件、可重复运行);模板约定本身的更新由那边的 agent 走 `pm-template-update`。
-**本仓新增顶层目录或文件后**,已生成的规则覆盖不到它,提醒用户对在用的工作空间重跑一次。
-这层只对 Claude Code 生效、也拦不住 shell 写法,主防线仍是模板里的规则和反馈单这条正路。
+工作空间的 `.claude/settings.local.json` 由 `init_workspace.py` 写入 `deny`,禁止改本仓任何文件(含 `templates/`);
+老工作空间用 `python3 templates/init_workspace.py --guard-only --path <工作空间>` 补。
+**本仓新增顶层目录或文件后**,提醒用户对在用的工作空间重跑一次。它只拦 Claude Code 的写工具,主防线仍是规则本身。
 
 ---
 
 ## 7. Skills 体系:工程平面
 
-本项目只有**一个技能平面 —— 工程平面**:约束「Agent 怎么改这个看板」的纪律与规范,
-不随产品交付。位置 **`.claude/skills/<name>/SKILL.md`**,**只此一份**(不做 `.agents/` 镜像,
-避免两份漂移);非 Claude Code 的 Agent 通过本文件的链接进去读。
+技能约束「Agent 怎么改这个看板」,位置 **`.claude/skills/<name>/SKILL.md`**,只此一份(无 `.agents/` 镜像)。
+来源与分层见 [`.claude/skills/README.md`](.claude/skills/README.md)(同一件事以本地为准)。缺失或过时就顺手补全。
 
 | 技能 | 什么时候读 |
 | --- | --- |
-| [`dashboard-feature-flow`](.claude/skills/dashboard-feature-flow/SKILL.md) | **加/改任何功能时先读它** —— 跨平面改动的顺序与契约清单 |
+| [`dashboard-feature-flow`](.claude/skills/dashboard-feature-flow/SKILL.md) | **加/改任何功能时先读** —— 跨平面顺序与契约清单 |
 | [`project-conventions`](.claude/skills/project-conventions/SKILL.md) | 新建文件、不确定放哪 / 叫什么、提交前 |
-| [`disciplined-coding`](.claude/skills/disciplined-coding/SKILL.md) | 写第一行代码前:先想再写、最小实现 |
+| [`disciplined-coding`](.claude/skills/disciplined-coding/SKILL.md) | 写第一行代码前 |
 | [`react-component-authoring`](.claude/skills/react-component-authoring/SKILL.md) | 新建或重构 React 组件 |
 | [`design-tokens`](.claude/skills/design-tokens/SKILL.md) | 动颜色 / 字体 / 间距 / 主题 |
-| [`design-system-loop`](.claude/skills/design-system-loop/SKILL.md) | 从 startist-ui 拉 / 升级组件、发现缺口回流真源 |
+| [`design-system-loop`](.claude/skills/design-system-loop/SKILL.md) | 从 startist-ui 拉 / 升级组件、缺口回流真源 |
 | [`systematic-debugging`](.claude/skills/systematic-debugging/SKILL.md) | 查 bug、构建报错、行为不符预期 |
 | [`verification-before-completion`](.claude/skills/verification-before-completion/SKILL.md) | 准备说「做完了」之前 |
-| [`local-source-sync`](.claude/skills/local-source-sync/SKILL.md) | 源码启动时,把模板同步到已登记实例、直接读实例里的反馈单。`launch` 不是 `source` 时不适用 |
-
-来源与分层见 [`.claude/skills/README.md`](.claude/skills/README.md)(上游基线 + 本地特化,
-**同一件事以本地为准**)。技能缺失或过时就**顺手补全**,让知识随项目生长。
+| [`local-source-sync`](.claude/skills/local-source-sync/SKILL.md) | 源码启动时同步模板到实例、读实例反馈单 |
 
 ---
 
 ## 8. 给 Agent 的协作守则
 
-1. **非平凡改动先立 change**:跨平面、动契约、引依赖、要做取舍的,先 `/opsx:propose`,
-   别一边聊一边改。琐碎改动不套流程(第 6 节)。
-2. **先定平面再动手**:需求落在 CLI / 服务端 / 前端哪个平面?跨几个平面?
-   跨平面就按 `dashboard-feature-flow` 的顺序走,不要东改一笔西改一笔。
-3. **契约先行**:要改数据形状,先把 `src/app/lib/api.ts` 的 type 和服务端产出对齐,再写 UI。
-4. **只读红线不碰**:任何往工作空间里写的想法,先停下来问人。
-5. **改完必验**:`pnpm typecheck` + `pnpm build` + 重启冒烟,三样都做过再说完成。
-6. **沉淀而非一次性**:踩过的坑补进对应 skill(尤其 `systematic-debugging` 的分诊启发),
-   而不是只改完代码。
-7. **保持事实源唯一**:协作约定只写在本文件,别复制进 `CLAUDE.md` 或 `README.md`;
-   规划产物的写法约束只写在 `openspec/config.yaml`,别复制进单个 change。
+1. **先定平面再动手**,跨平面按 `dashboard-feature-flow` 的顺序走;要改数据形状先对齐 `api.ts`。
+2. **只读红线不碰**:任何往工作空间写的想法,先停下来问人。
+3. **改完必验**:第 4 节三道闸都过了再说完成。
+4. **沉淀而非一次性**:踩过的坑补进对应 skill(尤其 `systematic-debugging` 的分诊表)。
+5. **事实源唯一**:协作约定只写本文件,规划产物约束只写 `openspec/config.yaml`,不复制到别处。
