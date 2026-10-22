@@ -27,7 +27,7 @@ input/  →  （分析）  →  output/  →  visualization/
 | `output/questions/` | 未决问题，一问一文件 `Q<四位编号>.md`；不进文件列表，在看板 ⌘K 工作台「问题单」处理 | 走 `pm-open-questions`；字段见该目录 `README.md` |
 | `output/records/` | 产出物记录，一份产出物一个 `I<四位编号>.md`；在工作台「记录单」处理 | 走 `pm-output-record`；字段见该目录 `README.md` |
 | `output/feedback/` | 交给看板维护者的缺陷单与贡献单 `F<四位编号>.md`；在工作台「反馈单」看和发送 | 字段见该目录 `README.md`；见「看板显示不对时」「贡献改进」 |
-| `output/delivery/` | 去 AI 味后的交付稿：镜像原稿路径，`v<三位序号>.md` 逐版保存；只从原稿阅读器的版本条进入 | 只由 `pm-deai-writing` 写，**每版写出后不再改动**；见「交付前去 AI 味」 |
+| `output/delivery/` | 去 AI 味后的交付稿：镜像原稿路径，`v<三位序号>.md` 逐版保存；只从原稿阅读器的版本条进入。同目录的 `定稿.md` 记「最后交出去的是哪份 Word」 | `v*.md` 只由 `pm-deai-writing` 写，**每版写出后不再改动**；`定稿.md` / `定稿.assets/` 只由看板「定稿」（`scripts/finalize_delivery.py`）写，**不要手改**；见「交付前去 AI 味」 |
 | `output/docx-template/` | Word 模板，一个模板一个子目录；在工作台「模版洗炼」页看和提炼 | 只由 `scripts/docx_template.py` 写，见「Word 模板与转 Word」 |
 | `visualization/references/` | 收下来的**别人的**页面：竞品、友商后台、公开文档站 | 一份一个目录，入口叫 `index.html`；保持原样 |
 | `visualization/prototypes/` | 可预览原型库 | 一个东西一个子目录，入口叫 `index.html`，见「阶段四」 |
@@ -179,6 +179,8 @@ python3 scripts/ingest.py --force              # 全部重转
 - **改交付稿走批注**：人在看板对某一版写批注、复制提示词给你；你改出**下一版**（不改那一版本身），
   同一轮把能推广的写法偏好沉淀进规则库，回执里写「沉淀为 R0xx（规则库 vN）」。
 - **体检**：查重复、冲突、长期零命中，只给建议。
+- **定稿**：交出去的 Word 由人在看板「定稿」，记在镜像目录的 `定稿.md`（front-matter 有每次定稿的记录）。
+  接着改一份已定稿的文档前先读它，看交出去的是哪一版、和最新交付稿差在哪；**不要手改它**。见 `output/delivery/README.md`「定稿」。
 
 旧工作空间没有这个技能：走 `pm-template-update` 更新模板。
 

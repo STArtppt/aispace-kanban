@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
 import Papa from 'papaparse';
+import { toast } from 'sonner';
 import {
   ArrowLeft,
   ArrowLeftToLine,
@@ -13,6 +14,7 @@ import {
   Pencil,
   RefreshCw,
   SquareArrowOutUpRight,
+  Stamp,
   Star,
   X,
 } from 'lucide-react';
@@ -35,6 +37,7 @@ import { CodeFileView, codePreviewLabel, codePreviewLanguage } from '@/component
 import { DeliveryBar, DeliveryDiff, copyDeaiPrompt, useDeliveryVersions, type CompareMode } from '@/components/DeliveryBar';
 import { DocxExportDialog } from '@/components/DocxExportDialog';
 import { DocxView } from '@/components/DocxView';
+import { FinalizeDialog } from '@/components/FinalizeDialog';
 import {
   DocumentToc,
   Markdown,
@@ -985,6 +988,8 @@ interface ReaderBodyExtras {
   delivery?: { version: string; nextPath: string; rulesVersion?: number };
   /** 批注回执里的沉淀标签被点中：跳到工作台里这条规则 */
   onOpenDeaiRule?: (rule: string) => void;
+  /** 顶栏「在访达中显示」之后的额外按钮（原稿的「定稿」） */
+  headerExtra?: ReactNode;
 }
 
 function ReaderBody({
@@ -1005,6 +1010,7 @@ function ReaderBody({
   annotateDisabledReason,
   delivery,
   onOpenDeaiRule,
+  headerExtra,
 }: ReaderProps & ReaderBodyExtras) {
   const fileManager = useFileManagerName();
   // 清单和预览共用一份收藏状态：点这里立刻反映到对应列表的置顶
@@ -1376,6 +1382,7 @@ function ReaderBody({
           >
             <FolderOpen className="size-4" />
           </HeaderIconButton>
+          {headerExtra}
           <HeaderIconButton label="关闭" onClick={onClose}>
             <X className="size-4" />
           </HeaderIconButton>
@@ -1765,6 +1772,7 @@ const DELIVERY_SOURCE_RE = /^output\/(analysis|docs|decisions)\/.+\.md$/i;
  * 切到某一版就把那一版当成一份 .md 交给 ReaderBody（批注、目录、搜索都照常），
  * 选了对比就用对比视图替换正文；「预览 Word」把同名 .docx 当成一份文件交给 ReaderBody 渲染。
  * 工作空间目录丢失时没有版本条；旧服务进程（接口 404）只有「原稿」，Word 按钮始终是「转成 Word」。
+ * 顶栏「定稿」（第十条）作用于原稿，无论版本条选中哪一份；选中「定稿」时正文是 `定稿.md`，不能批注、不能转 Word。
  */
 export function Reader({
   workspaceAvailable = true,
@@ -1782,9 +1790,17 @@ export function Reader({
   onOpenDeaiRule?: (rule: string) => void;
 }) {
   const { projectId, item } = props;
-  const eligible = workspaceAvailable && Boolean(item.docKey) && DELIVERY_SOURCE_RE.test(item.path);
-  const list = useDeliveryVersions(projectId, eligible ? item.docKey : undefined, refreshToken);
+  const isSource = workspaceAvailable && DELIVERY_SOURCE_RE.test(item.path);
+  const eligible = isSource && Boolean(item.docKey);
+  // 定稿成功后自己再拉一次列表：不等 SSE（目录刚建出来时监听可能慢一拍）
+  const [finalizedAt, setFinalizedAt] = useState(0);
+  const listToken = useMemo(() => ({ refreshToken, finalizedAt }), [refreshToken, finalizedAt]);
+  const list = useDeliveryVersions(projectId, eligible ? item.docKey : undefined, listToken);
   const versions = list?.source === item.path ? list.versions : [];
+  const final = list?.source === item.path ? list.final : undefined;
+  const [finalizing, setFinalizing] = useState<{ docKey: string } | null>(null);
+  /** 服务进程是旧的（定稿接口 404）：按钮置灰到下次换文档 */
+  const [finalizeUnsupported, setFinalizeUnsupported] = useState(false);
   const [selected, setSelected] = useState('source');
   const [compare, setCompare] = useState<CompareMode | null>(null);
   const [annotateSignal, setAnnotateSignal] = useState(0);
@@ -1798,6 +1814,7 @@ export function Reader({
     setSelected('source');
     setCompare(null);
     setDocxPreview(false);
+    setFinalizeUnsupported(false);
   }, [item.path]);
 
   useEffect(() => {
@@ -1824,7 +1841,19 @@ export function Reader({
   }, [projectId, hasVersions]);
 
   const current = versions.find((v) => v.version === selected);
-  const mdItem: FileItem = current
+  const onFinal = selected === 'final' && Boolean(final);
+  const latest = versions[versions.length - 1];
+  const mdItem: FileItem = onFinal && final
+    ? {
+      path: final.path,
+      name: '定稿.md',
+      ext: '.md',
+      reader: 'markdown',
+      size: 0,
+      mtime: final.finalizedAt || item.mtime,
+      title: `${item.title || item.name} · 定稿`,
+    }
+    : current
     ? {
       path: current.path,
       name: `${current.version}.md`,
@@ -1839,9 +1868,10 @@ export function Reader({
   const nextPath = `${deliveryDirOf(item.path)}/${nextVersion(versions.map((v) => v.version))}.md`;
   // 同目录同名的 .docx（转成 Word 的落点）：服务端给的优先，没刷新到就用刚转出来的那份
   const docxPath = mdItem.path.replace(/\.md$/i, '.docx');
-  const listedDocx = current ? current.docx : list?.source === item.path ? list.sourceDocx : null;
+  const listedDocx = onFinal ? final?.docx ?? null : current ? current.docx : list?.source === item.path ? list.sourceDocx : null;
+  // 定稿的 Word 只认记录里的那份，不拿刚转出来的成品顶替
   const docx = listedDocx
-    ?? (converted?.path === docxPath ? { path: docxPath, size: 0, mtime: converted.mtime, generated: true } : null);
+    ?? (!onFinal && converted?.path === docxPath ? { path: docxPath, size: 0, mtime: converted.mtime, generated: true } : null);
   const previewing = docxPreview && Boolean(docx);
   const bodyItem: FileItem = previewing && docx
     ? {
@@ -1864,7 +1894,8 @@ export function Reader({
         topBar={eligible ? (
           <DeliveryBar
             versions={versions}
-            selected={current ? current.version : 'source'}
+            final={final}
+            selected={onFinal ? 'final' : current ? current.version : 'source'}
             onSelect={(v) => {
               setSelected(v);
               setCompare(null);
@@ -1885,14 +1916,57 @@ export function Reader({
             onConvert={() => setConverting(mdItem)}
           />
         ) : undefined}
-        replaceBody={current && compare && !previewing ? (
-          <DeliveryDiff projectId={projectId} source={item.path} versions={versions} current={current} mode={compare} />
+        replaceBody={compare && !previewing && onFinal && final ? (
+          <DeliveryDiff
+            projectId={projectId}
+            left={latest ? { path: latest.path, label: latest.version } : { path: item.path, label: '原稿' }}
+            right={{ path: final.path, label: '定稿' }}
+          />
+        ) : compare && compare !== 'final' && !previewing && current ? (
+          <DeliveryDiff
+            projectId={projectId}
+            left={(() => {
+              const base = compare === 'prev' ? versions.find((v) => v.version === current.basedOn) : undefined;
+              return base ? { path: base.path, label: base.version } : { path: item.path, label: '原稿' };
+            })()}
+            right={{ path: current.path, label: current.version }}
+          />
         ) : undefined}
         annotateSignal={annotateSignal}
         onAnnotateStart={() => setCompare(null)}
-        annotateDisabledReason={previewing ? 'Word 预览时不能批注，先点「预览 Word」回到正文' : undefined}
-        delivery={current && !previewing ? { version: current.version, nextPath, rulesVersion } : undefined}
+        annotateDisabledReason={onFinal
+          ? '定稿是交出去的记录，要改请回到原稿或交付稿'
+          : previewing ? 'Word 预览时不能批注，先点「预览 Word」回到正文' : undefined}
+        delivery={current && !onFinal && !previewing ? { version: current.version, nextPath, rulesVersion } : undefined}
         onOpenDeaiRule={onOpenDeaiRule}
+        headerExtra={isSource ? (
+          <HeaderIconButton
+            label={!item.docKey || finalizeUnsupported
+              ? '看板服务是旧版本，重启后可用'
+              : '定稿：选一份交出去的 Word，记为这份文档的定稿'}
+            disabled={!item.docKey || finalizeUnsupported || Boolean(finalizing)}
+            onClick={() => {
+              if (item.docKey) setFinalizing({ docKey: item.docKey });
+            }}
+          >
+            <Stamp className="size-4" />
+          </HeaderIconButton>
+        ) : undefined}
+      />
+      <FinalizeDialog
+        projectId={projectId}
+        request={finalizing}
+        onClose={() => setFinalizing(null)}
+        onUnsupported={() => {
+          setFinalizeUnsupported(true);
+          toast.error('看板服务是旧版本，重启后可用');
+        }}
+        onDone={() => {
+          setFinalizedAt(Date.now());
+          setSelected('final');
+          setCompare(null);
+          setDocxPreview(false);
+        }}
       />
       {/* 交付稿不在扫描里：目标 .docx 在不在由服务端判断（409 时再给「覆盖」） */}
       <DocxExportDialog

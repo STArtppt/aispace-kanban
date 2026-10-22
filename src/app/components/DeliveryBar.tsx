@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { DiffView } from '@/components/DiffView';
 import { writeClipboard } from '@/components/Primitives';
-import { api, type DeliveryDocx, type DeliveryList, type DeliveryVersion } from '@/lib/api';
+import { api, type DeliveryDocx, type DeliveryFinal, type DeliveryList, type DeliveryVersion } from '@/lib/api';
 import { deaiPrompt } from '@/lib/deaiPrompt';
 import { cn } from '@/lib/utils';
 
@@ -44,7 +44,14 @@ export function notesRange(notes: string[]): string {
   return notes.join('、');
 }
 
-export type CompareMode = 'source' | 'prev';
+/** `final`：选中「定稿」时与最新一版（没有版本时与原稿）对比 */
+export type CompareMode = 'source' | 'prev' | 'final';
+
+/** `2026-10-22T16:30:00+08:00` → `10-22 16:30`；认不出原样返回 */
+function shortTime(iso: string): string {
+  const m = /^\d{4}-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/.exec(iso);
+  return m ? `${m[1]}-${m[2]} ${m[3]}:${m[4]}` : iso;
+}
 
 function Badge({ children, attention, title }: { children: string; attention?: boolean; title?: string }) {
   return (
@@ -87,6 +94,8 @@ const actionClass = 'h-7 px-2 text-xs';
  * Word 按钮看同目录同名的 .docx：没有是「转成 Word」，有了变成「预览 Word」（在阅读器里就地切换）+「重新转换」
  * （上一份由脚本改名保留，不覆盖）。
  * orange 只给「被直接改过」：版本上是有人绕过批注改了这一版，原稿上是原稿在最新一版之后又改过；待处理批注是中性灰。
+ * 有 `定稿.md` 时最末多一个「定稿」（选中值 `final`）：只给「预览 Word」（最近一次定稿那份）和对比，
+ * 不给去 AI 味 / 转 Word —— 定稿是交出去的事实记录。没有 `final`（旧服务、未定稿）时与改动前一致。
  */
 export function DeliveryBar({
   versions,
@@ -99,9 +108,10 @@ export function DeliveryBar({
   docxPreview,
   onDocxPreview,
   onConvert,
+  final,
 }: {
   versions: DeliveryVersion[];
-  /** `source` = 原稿 */
+  /** `source` = 原稿，`final` = 定稿 */
   selected: string;
   onSelect: (version: string) => void;
   compare: CompareMode | null;
@@ -113,8 +123,10 @@ export function DeliveryBar({
   docxPreview: boolean;
   onDocxPreview: (on: boolean) => void;
   onConvert: () => void;
+  final?: DeliveryFinal;
 }) {
   const current = versions.find((v) => v.version === selected);
+  const onFinal = selected === 'final' && Boolean(final);
   // 各版的 source_sha 照抄底版，最新一版代表交付稿目前跟到哪
   const sourceEdited = Boolean(versions[versions.length - 1]?.sourceChanged);
   const chip = (key: string, label: string, v?: DeliveryVersion) => (
@@ -157,9 +169,16 @@ export function DeliveryBar({
       <div className="flex flex-wrap items-center gap-1">
         {chip('source', '原稿')}
         {versions.map((v) => chip(v.version, v.version, v))}
+        {final ? chip('final', '定稿') : null}
       </div>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        {current ? (
+        {onFinal && final ? (
+          <span className="truncate" title={final.history.join('\n')}>
+            {`第 ${final.count} 次定稿 · ${shortTime(final.finalizedAt)} · ${final.sourceName}`}
+            {final.originalName ? `（原名 ${final.originalName}）` : ''}
+            {final.note ? ` · ${final.note}` : ''}
+          </span>
+        ) : current ? (
           <>
             <span>
               {current.rulesVersion ? `规则 v${current.rulesVersion}` : '规则版本未记'}
@@ -172,7 +191,9 @@ export function DeliveryBar({
           <span>若要作为交付稿，可以点右侧「去 AI 味」复制提示词，发给 AI 执行，以融入个人的写作风格。</span>
         )}
         <span className="ml-auto flex flex-wrap gap-1">
-          {current ? (
+          {onFinal ? (
+            compareButton('final', versions.length ? '与最新一版对比' : '与原稿对比')
+          ) : current ? (
             <>
               {compareButton('source', '与原稿对比')}
               {compareButton(
@@ -201,7 +222,7 @@ export function DeliveryBar({
                 <FileText className="size-3.5" />
                 预览 Word
               </Button>
-              <Button
+              {onFinal ? null : <Button
                 variant="ghost"
                 size="sm"
                 className={actionClass}
@@ -213,9 +234,9 @@ export function DeliveryBar({
               >
                 <FileOutput className="size-3.5" />
                 重新转换
-              </Button>
+              </Button>}
             </>
-          ) : (
+          ) : onFinal ? null : (
             <Button variant="ghost" size="sm" className={actionClass} onClick={onConvert}>
               <FileOutput className="size-3.5" />
               转成 Word
@@ -232,30 +253,23 @@ function stripFrontmatter(text: string): string {
   return m ? text.slice(m[0].length) : text;
 }
 
-/** 两版全文对比。左边是原稿或 `based_on` 那一版，右边是当前这一版；front-matter 不参与比对。 */
+/** 两份全文对比（左旧右新）；front-matter 不参与比对。路径由调用方按版本条的选中值算好。 */
 export function DeliveryDiff({
   projectId,
-  source,
-  versions,
-  current,
-  mode,
+  left,
+  right,
 }: {
   projectId: string;
-  source: string;
-  versions: DeliveryVersion[];
-  current: DeliveryVersion;
-  mode: CompareMode;
+  left: { path: string; label: string };
+  right: { path: string; label: string };
 }) {
-  const base = mode === 'prev' ? versions.find((v) => v.version === current.basedOn) : undefined;
-  const leftPath = base?.path ?? source;
-  const leftLabel = base ? base.version : '原稿';
   const [texts, setTexts] = useState<{ left: string; right: string } | null>(null);
   const [error, setError] = useState('');
   useEffect(() => {
     let alive = true;
     setTexts(null);
     setError('');
-    Promise.all([api.file(projectId, leftPath), api.file(projectId, current.path)])
+    Promise.all([api.file(projectId, left.path), api.file(projectId, right.path)])
       .then(([l, r]) => {
         if (!alive) return;
         setTexts({ left: stripFrontmatter(String(l.content ?? '')), right: stripFrontmatter(String(r.content ?? '')) });
@@ -264,8 +278,8 @@ export function DeliveryDiff({
     return () => {
       alive = false;
     };
-  }, [projectId, leftPath, current.path]);
+  }, [projectId, left.path, right.path]);
   if (error) return <p className="text-sm text-destructive">{error}</p>;
   if (!texts) return <p className="text-sm text-muted-foreground">读取中…</p>;
-  return <DiffView left={texts.left} right={texts.right} leftLabel={leftLabel} rightLabel={current.version} />;
+  return <DiffView left={texts.left} right={texts.right} leftLabel={left.label} rightLabel={right.label} />;
 }

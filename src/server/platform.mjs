@@ -1,6 +1,6 @@
 /**
  * 跨平台的系统调用都集中在这里：打开浏览器、在文件管理器里定位文件、找 Python 解释器与 pandoc、
- * 弹出系统原生目录选择框。三个平台的命令名和参数形态完全不一样，散在各处很容易写着写着只剩 macOS 能用。
+ * 弹出系统原生目录 / 文件选择框。三个平台的命令名和参数形态完全不一样，散在各处很容易写着写着只剩 macOS 能用。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -156,8 +156,8 @@ export async function findPandoc(root) {
 /** 目录选择框开太久就杀子进程，避免一个挂住的 HTTP 请求一直占着。 */
 const PICK_DIRECTORY_TIMEOUT_MS = 120_000;
 
-function unavailableError() {
-  return new Error('这台机器上起不了目录选择框，请手工填绝对路径');
+function unavailableError(message = '这台机器上起不了目录选择框，请手工填绝对路径') {
+  return new Error(message);
 }
 
 function timeoutError() {
@@ -226,7 +226,7 @@ function runCaptured(cmd, args, { timeoutMs = PICK_DIRECTORY_TIMEOUT_MS, windows
  * 三个平台取消的表现不一样（非零退出、退出码 1、空输出），一律不当错误。
  * 真正起不来（没装 zenity、没有桌面、DISPLAY 为空）才抛中文说明。
  */
-function interpretPick({ code, stdout, stderr }) {
+function interpretPick({ code, stdout, stderr }, unavailable = unavailableError) {
   const chosen = stripTrailingSep(stdout.replace(/\r?\n/g, '').trim());
   if (chosen) return { picked: true, path: chosen };
   const err = (stderr || '').trim();
@@ -236,7 +236,7 @@ function interpretPick({ code, stdout, stderr }) {
     && /unable|cannot|error|display|failed|not found|找不到|no display/i.test(err)
     && !/cancel/i.test(err);
   if (looksCanceled && !looksBroken) return { picked: false };
-  throw unavailableError();
+  throw unavailable();
 }
 
 function macosPickArgs(prompt) {
@@ -336,6 +336,99 @@ export async function pickDirectory({
     return await run(kCmd, kArgs);
   } catch (err) {
     if (err.code === 'ENOENT' || !err.statusCode) throw unavailableError();
+    throw err;
+  }
+}
+
+const DOCX_UTI = 'org.openxmlformats.wordprocessingml.document';
+
+function docxUnavailableError() {
+  const err = unavailableError('这台机器上起不了选文件框（没有桌面环境，或缺 zenity / kdialog），没法定稿。请在看板所在的电脑上操作。');
+  err.statusCode = 400;
+  return err;
+}
+
+function macosDocxArgs(prompt, defaultDir) {
+  const where = defaultDir ? ` default location (POSIX file "${escapeAppleScript(defaultDir)}")` : '';
+  const script = [
+    'tell application "System Events" to activate',
+    'try',
+    `  return POSIX path of (choose file with prompt "${escapeAppleScript(prompt)}" of type {"${DOCX_UTI}"}${where})`,
+    'on error number -128',
+    '  return ""',
+    'end try',
+  ].join('\n');
+  return ['osascript', ['-e', script]];
+}
+
+function windowsDocxArgs(prompt, defaultDir) {
+  const q = (text) => String(text).replace(/'/g, "''");
+  const script = [
+    'Add-Type -AssemblyName System.Windows.Forms',
+    '$dialog = New-Object System.Windows.Forms.OpenFileDialog',
+    `$dialog.Title = '${q(prompt)}'`,
+    "$dialog.Filter = 'Word 文档 (*.docx)|*.docx'",
+    '$dialog.Multiselect = $false',
+    ...(defaultDir ? [`$dialog.InitialDirectory = '${q(defaultDir)}'`] : []),
+    '$form = New-Object System.Windows.Forms.Form',
+    '$form.TopMost = $true',
+    "$form.StartPosition = 'Manual'",
+    '$form.Location = New-Object System.Drawing.Point(-2000, -2000)',
+    '$form.Size = New-Object System.Drawing.Size(1, 1)',
+    '$form.ShowInTaskbar = $false',
+    '$result = $dialog.ShowDialog($form)',
+    '$path = $dialog.FileName',
+    '$form.Dispose()',
+    'if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $path) {',
+    '  [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false',
+    '  [Console]::Out.Write($path)',
+    '}',
+  ].join('\n');
+  return ['powershell.exe', ['-NoProfile', '-STA', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')]];
+}
+
+/**
+ * 在服务所在的机器上弹出系统原生选文件框，只允许选 `.docx`，默认打开 `defaultDir`。
+ * 取消 → `{ picked: false }`；起不来 → 400 中文 Error。选框只是过滤，调用方与脚本还要各查一次扩展名。
+ * 与 pickDirectory 共用 runCaptured / interpretPick，四条平台分支同构。
+ *
+ * @param {{ prompt?: string, defaultDir?: string, timeoutMs?: number }} [opts]
+ * @returns {Promise<{ picked: boolean, path?: string }>}
+ */
+export async function pickDocxFile({
+  prompt = '选择 Word 文档',
+  defaultDir = '',
+  timeoutMs = PICK_DIRECTORY_TIMEOUT_MS,
+} = {}) {
+  const run = (cmd, args, extra = {}) =>
+    runCaptured(cmd, args, { timeoutMs, ...extra }).then((r) => interpretPick(r, docxUnavailableError));
+  const nativeOnly = async (cmd, args, extra) => {
+    try {
+      return await run(cmd, args, extra);
+    } catch (err) {
+      if (err.code === 'ENOENT') throw docxUnavailableError();
+      throw err;
+    }
+  };
+
+  if (process.platform === 'darwin') return nativeOnly(...macosDocxArgs(prompt, defaultDir));
+  if (process.platform === 'win32') return nativeOnly(...windowsDocxArgs(prompt, defaultDir), { windowsHide: true });
+
+  // zenity 的 --filename 以 / 结尾才表示「打开这个目录」
+  const dirArg = defaultDir ? `${defaultDir.replace(/\/+$/, '')}/` : '';
+  try {
+    return await run('zenity', ['--file-selection', `--title=${prompt}`, '--file-filter=Word 文档 | *.docx',
+      ...(dirArg ? [`--filename=${dirArg}`] : [])]);
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      if (err.statusCode) throw err;
+      throw docxUnavailableError();
+    }
+  }
+  try {
+    return await run('kdialog', ['--getopenfilename', defaultDir || os.homedir() || '/', '*.docx|Word 文档', `--title=${prompt}`]);
+  } catch (err) {
+    if (err.code === 'ENOENT' || !err.statusCode) throw docxUnavailableError();
     throw err;
   }
 }

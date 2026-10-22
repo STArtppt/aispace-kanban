@@ -1,4 +1,5 @@
-"""docx 工具链的公共包：提炼客户 Word 模板（docx_template.py）、按模板把 .md 转成 .docx（md2docx.py）。
+"""docx 工具链的公共包：提炼客户 Word 模板（docx_template.py）、按模板把 .md 转成 .docx（md2docx.py），
+定稿（finalize_delivery.py，借用这里的退出码与结果 JSON 约定）。
 
 只依赖 Python 3 标准库；md → docx 另需 pandoc 3。模块划分与踩坑清单见同目录 README.md。
 
@@ -16,7 +17,7 @@ import sys
 
 # 写进生成标记与结果 JSON。改了生成逻辑（样式、后处理）就升一位，
 # 看板靠它提示「工作空间里的脚本比看板自带的旧」。
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 
 EXIT_OK, EXIT_FAIL, EXIT_ARGS, EXIT_CONFLICT, EXIT_DEPENDENCY = 0, 1, 2, 3, 4
 

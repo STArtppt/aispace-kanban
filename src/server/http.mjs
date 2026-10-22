@@ -37,6 +37,7 @@ import { PYTHON_CANDIDATES, findPython, pickDirectory, revealInSystem } from './
 import { resolvePrototypeCover, resolvePrototypeServeDir, resolveRefreshTarget, scanPrototypes } from './prototypes.mjs';
 import { listDocxTemplates, readDocxTemplate } from './docxTemplates.mjs';
 import { docxToolsHealth, runDocxBuild, runDocxCollect, runDocxConvert } from './docxTools.mjs';
+import { confirmFinal, pickFinal } from './finalize.mjs';
 import { listFeedback, markSent, readFeedback } from './feedback.mjs';
 import { readQuestion, scanQuestions, writeQuestion } from './questions.mjs';
 import { readRecord, scanRecords, writeRecordStatus } from './records.mjs';
@@ -1775,6 +1776,17 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     if (segments.length === 4) return json(res, 200, readDeaiRules(project.root));
     if (segments.length === 6 && segments[4] === 'versions') return json(res, 200, readDeaiRuleVersion(project.root, segments[5]));
     return json(res, 400, { error: '规则库接口只有 rules 与 rules/versions/<正整数>' });
+  }
+  // 交付稿定稿：**第十条窄例外**。pick 在本机弹系统选文件框、只回一次性令牌；confirm 只收令牌（和可选备注），
+  // spawn 工作空间的 finalize_delivery.py。两步都不收任何路径（见 finalize.mjs）。
+  if (head === 'projects' && id && action === 'delivery' && segments[3] === 'final'
+      && (segments.length === 4 || (segments.length === 5 && segments[4] === 'pick'))) {
+    if (req.method !== 'POST') return json(res, 405, { error: '只接受 POST' });
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
+    const project = requireProject(id);
+    const body = await readBody(req);
+    return json(res, 200, segments.length === 5 ? await pickFinal(project, body) : await confirmFinal(project, body));
   }
   if (head === 'projects' && id && action === 'delivery' && segments.length === 3) {
     if (req.method !== 'GET') return json(res, 405, { error: '只接受 GET' });

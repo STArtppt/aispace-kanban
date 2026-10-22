@@ -202,7 +202,10 @@ function listField(value) {
 
 /** 某份 .md 同目录同名的 .docx（「转成 Word」的落点）；不存在返回 null。只 stat 和读生成标记，不写。 */
 function docxBeside(root, mdRel) {
-  const rel = mdRel.replace(/\.md$/i, '.docx');
+  return docxAt(root, mdRel.replace(/\.md$/i, '.docx'));
+}
+
+function docxAt(root, rel) {
   try {
     const abs = resolveInside(root, rel);
     const st = fs.statSync(abs);
@@ -211,6 +214,38 @@ function docxBeside(root, mdRel) {
   } catch {
     return null;
   }
+}
+
+const FINAL_MD = '定稿.md';
+
+/**
+ * 镜像目录下的 `定稿.md`（第十条，由 scripts/finalize_delivery.py 写）→ 列表的可选字段 `final`；没有就是 undefined。
+ * 「最近一次用的哪份 Word」只认 front-matter 的 `docx`，且必须直接落在镜像目录里，否则当 null（不按修改时间猜）。
+ * history 行：`<时间> | <镜像目录里的文件名> | 镜像目录 | 备注 …` 或 `… | 其他目录（原名 <原文件名>） | …`。
+ */
+function readFinal(root, dir) {
+  const rel = `${dir}/${FINAL_MD}`;
+  const text = readText(resolveInside(root, rel));
+  if (text === null) return undefined;
+  const { meta } = parseFrontmatter(normalize(text));
+  const history = Array.isArray(meta.history) ? meta.history.map(String) : [];
+  const last = (history[history.length - 1] || '').split(' | ').map((x) => x.trim());
+  const docxRel = typeof meta.docx === 'string' ? meta.docx : '';
+  const inMirror = docxRel.startsWith(`${dir}/`) && !docxRel.slice(dir.length + 1).includes('/')
+    && /\.docx$/i.test(docxRel);
+  const original = /^其他目录（原名 (.+)）$/.exec(last[2] || '');
+  const count = /^\d+$/.test(String(meta.count || '')) ? Number(meta.count) : history.length;
+  return {
+    path: rel,
+    count,
+    finalizedAt: typeof meta.finalized_at === 'string' ? meta.finalized_at : '',
+    sourceName: last[1] || (inMirror ? path.posix.basename(docxRel) : ''),
+    fromMirror: last[2] === '镜像目录',
+    ...(original ? { originalName: original[1] } : {}),
+    ...(typeof meta.note === 'string' && meta.note ? { note: meta.note } : {}),
+    docx: inMirror ? docxAt(root, docxRel) : null,
+    history,
+  };
 }
 
 /**
@@ -279,6 +314,8 @@ export function listDelivery(root, docKey) {
     out.versions.push(item);
   }
   out.versions.sort((a, b) => a.version.localeCompare(b.version));
+  const final = readFinal(root, dir);
+  if (final) out.final = final;
   if (recordId) out.recordId = recordId;
   return out;
 }

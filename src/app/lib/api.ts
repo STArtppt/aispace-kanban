@@ -1398,6 +1398,45 @@ export interface DeliveryList {
   recordId?: string;
   /** 原稿同目录同名的 .docx；null = 没有。可选：旧服务不给（当成没有） */
   sourceDocx?: DeliveryDocx | null;
+  /** 镜像目录下的 `定稿.md`。可选：旧服务、还没定稿都没有（版本条不出现「定稿」） */
+  final?: DeliveryFinal;
+}
+
+/** 定稿（第十条）：最近一次交出去的那份 Word 及历次记录，读自 `定稿.md` 的 front-matter */
+export interface DeliveryFinal {
+  /** `output/delivery/…/定稿.md` */
+  path: string;
+  /** 第几次定稿 */
+  count: number;
+  /** ISO 8601 */
+  finalizedAt: string;
+  /** 本次所用 .docx 在镜像目录里的文件名 */
+  sourceName: string;
+  /** 选的就是镜像目录里的文件（没复制） */
+  fromMirror: boolean;
+  /** 来自其他目录时的原文件名 */
+  originalName?: string;
+  /** 最近一次定稿的备注 */
+  note?: string;
+  /** 最近一次定稿所用的 .docx；记录指向的文件不在了是 null */
+  docx: DeliveryDocx | null;
+  /** 逐次一行：`时间 | 文件名 | 来源 | 备注` */
+  history: string[];
+}
+
+/** POST delivery/final/pick：选中后只回令牌和展示信息，**没有路径** */
+export type FinalizePickResult =
+  | { picked: false }
+  | { picked: true; token: string; name: string; inMirror: boolean; copyAs?: string; nextCount: number };
+
+/** POST delivery/final：脚本的结果（路径都是工作空间相对的） */
+export interface FinalizeResult {
+  ok: boolean;
+  final: string;
+  docx: string;
+  inMirror: boolean;
+  count: number;
+  copiedAs?: string;
 }
 
 /**
@@ -1796,6 +1835,21 @@ export const api = {
    */
   deliveryVersions: (id: string, docKey: string) =>
     request<DeliveryList>(`/api/projects/${id}/delivery?docKey=${encodeURIComponent(docKey)}`),
+  /**
+   * 定稿第一步：服务端在本机弹系统选文件框（只能选 .docx），只回一次性令牌（第十条）。
+   * 旧服务 404（`isUnsupported`）→ 按钮置灰提示重启；缺脚本 / Python 400；已有选框开着 409。
+   */
+  finalizePick: (id: string, docKey: string) =>
+    request<FinalizePickResult>(`/api/projects/${id}/delivery/final/pick`, {
+      method: 'POST',
+      body: JSON.stringify({ docKey }),
+    }),
+  /** 定稿第二步：只带令牌和可选备注（≤60 字单行）。令牌过期 / 已用过 400，选中的文件不在了 400 */
+  finalizeConfirm: (id: string, token: string, note?: string) =>
+    request<FinalizeResult>(`/api/projects/${id}/delivery/final`, {
+      method: 'POST',
+      body: JSON.stringify(note ? { token, note } : { token }),
+    }),
   /** 只清看板缓存那一半。工作空间里的批注文件不动，响应里它们还在。 */
   clearNoteHistory: (id: string, file: string) =>
     request<NoteHistory>(`/api/projects/${id}/note-history?file=${encodeURIComponent(file)}`, {

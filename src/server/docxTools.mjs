@@ -9,6 +9,8 @@
  * - 同名 `.docx` 没有生成标记一律 409，带标记也要用户确认 `overwrite`（脚本再校验一次）；
  * - 同步等脚本退出、带超时；同一模板 / 同一目标文件在前一个没结束时直接 409。
  * 环回与跨站两道闸在 http.mjs 的路由上（`allowMutations` + `rejectIfForeignOrigin`）。
+ *
+ * `runScript` / `exclusive` / `requirePython` 也给第十条（定稿，finalize.mjs）用，只此一份，别复制。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -81,7 +83,7 @@ function requireScript(root, file) {
   return abs;
 }
 
-async function requirePython() {
+export async function requirePython() {
   const py = await findPython();
   if (!py) {
     throw httpError(400, '找不到 Python 3。docx 工具链要靠它跑，请先装 Python 3'
@@ -107,7 +109,7 @@ function resolveDoc(root, kind, docKey) {
  * spawn 一个工作空间脚本并同步等它退出。返回解析后的最后一行 JSON；
  * 退出码按脚本约定映射：2 → 400，3 → 409，4 → 400（缺依赖），其余 → 500。
  */
-async function runScript(root, script, args, { input, timeoutMs, label }) {
+export async function runScript(root, script, args, { input, timeoutMs, label }) {
   const [bin, ...prefix] = await requirePython();
   const result = await new Promise((resolve) => {
     const child = spawn(bin, [...prefix, script, ...args, '--json'], {
@@ -150,7 +152,7 @@ async function runScript(root, script, args, { input, timeoutMs, label }) {
   throw httpError(status, message, parsed?.kind || (result.code === 4 ? 'no-pandoc' : undefined));
 }
 
-async function exclusive(set, key, fn) {
+export async function exclusive(set, key, fn) {
   if (set.has(key)) throw httpError(409, '同一个目标正在处理中，等它结束再试。', 'busy');
   set.add(key);
   try {
