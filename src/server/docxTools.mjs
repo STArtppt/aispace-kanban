@@ -212,7 +212,9 @@ export async function runDocxConvert(project, body) {
   }
   const targetRel = src.rel.replace(/\.md$/i, '.docx');
   const target = resolveInside(root, targetRel);
-  if (fs.existsSync(target)) {
+  // 前端总带 archive：没有同名成品时不传 --archive，旧版脚本照样能做首次转换
+  const exists = fs.existsSync(target);
+  if (exists) {
     if (readDocxMarker(target) === null) {
       throw httpError(409, '同名的 Word 不是本工具生成的，为避免覆盖人工修改，请先改名或移走。', 'not-generated');
     }
@@ -233,7 +235,7 @@ export async function runDocxConvert(project, body) {
       : '本机没有 pandoc 3，装好后重启看板；也可以用「复制提示词」交给工作空间 AI。', 'no-pandoc');
   }
   const args = [src.rel, '--template', template,
-    ...(body?.archive === true ? ['--archive'] : body?.overwrite === true ? ['--overwrite'] : [])];
+    ...(!exists ? [] : body?.archive === true ? ['--archive'] : body?.overwrite === true ? ['--overwrite'] : [])];
   return exclusive(busyTargets, target, () =>
     runScript(root, script, args, { timeoutMs: TIMEOUT_MS.convert, label: '转换' }));
 }
