@@ -279,6 +279,7 @@ export function Workbench({
               reload={feedback.reload}
               workspaceAvailable={workspaceAvailable}
               version={version}
+              projectName={projectName}
             />
           </div>
           <div

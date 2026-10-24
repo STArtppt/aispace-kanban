@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, FileWarning } from 'lucide-react';
+import { ChevronRight, Copy, FileWarning } from 'lucide-react';
 import { toast } from 'sonner';
 import { Markdown } from '@/components/Markdown';
 import { Badge } from '@/components/ui/badge';
@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { useFeedbackDetail } from '@/hooks/useFeedback';
 import { ApiError, api, type FeedbackDetail, type FeedbackIndex, type FeedbackItem } from '@/lib/api';
+import { sourceUpdatePrompt } from '@/lib/feedbackPrompt';
 import { cn } from '@/lib/utils';
 import {
   FEEDBACK_EMAIL,
@@ -128,8 +129,10 @@ export function FeedbackPane({
   reload,
   workspaceAvailable = true,
   version,
+  projectName = '',
 }: {
   projectId: string;
+  projectName?: string;
   index: FeedbackIndex | null;
   loading: boolean;
   error: string;
@@ -203,6 +206,7 @@ export function FeedbackPane({
   return (
     <FeedbackBody
       projectId={projectId}
+      projectName={projectName}
       index={index}
       changeToken={changeToken}
       reload={reload}
@@ -213,12 +217,14 @@ export function FeedbackPane({
 
 function FeedbackBody({
   projectId,
+  projectName,
   index,
   changeToken,
   reload,
   version,
 }: {
   projectId: string;
+  projectName: string;
   index: FeedbackIndex | null;
   changeToken: number;
   reload: (silent?: boolean) => void;
@@ -259,6 +265,24 @@ function FeedbackBody({
   const flat = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
   const selected = flat.find((item) => item.id === selectedId) || flat[0] || null;
   const legacyCount = index?.legacyCount ?? 0;
+
+  // 「待发送」「已发送」都还没修：源码那边要处理的就是这两组
+  const unresolved = useMemo(
+    () => groups.filter((group) => group.key === 'pending' || group.key === 'sent').flatMap((group) => group.rows),
+    [groups],
+  );
+  const copyUpdatePrompt = () => {
+    const prompt = sourceUpdatePrompt({
+      projectId,
+      projectName,
+      items: unresolved.map((item) => ({
+        id: item.id || item.name || '',
+        title: item.title || item.name || '',
+        kind: kindLabel(item),
+      })),
+    });
+    void copyText(prompt, `已复制，含 ${unresolved.length} 份反馈单`);
+  };
 
   const isOpen = (key: GroupKey) => toggled.get(key) ?? key === 'pending';
 
@@ -335,6 +359,22 @@ function FeedbackBody({
             </p>
           )}
         </ScrollArea>
+        {launch === 'source' && unresolved.length > 0 ? (
+          <div className="flex shrink-0 items-center gap-2 border-t border-border py-1.5 pr-1.5 pl-3 text-xs text-muted-foreground">
+            <span className="min-w-0 flex-1">
+              复制更新 Prompts，发给 AI 批量更新<span className="text-destructive">源码</span>
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={copyUpdatePrompt}
+              aria-label="复制更新 Prompts"
+              title="给看板源码目录里的 AI，让它直接读这个工作空间的反馈单并更新源码"
+            >
+              <Copy className="size-4" aria-hidden />
+            </Button>
+          </div>
+        ) : null}
       </div>
       <ScrollArea className="min-h-0 flex-1" viewportClassName="focus-visible:ring-0">
         {selected?.id ? (
