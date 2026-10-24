@@ -254,7 +254,7 @@ export function AnnotationToolbar({
       )}
     >
       {panelOpen ? (
-        <div className={cn(CARD, SURFACE, 'max-h-96 min-h-0 overflow-hidden')}>
+        <div className={cn(CARD, SURFACE, 'overflow-hidden')}>
           <div className="border-b border-border px-3 py-2">
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">
@@ -290,7 +290,7 @@ export function AnnotationToolbar({
               </div>
             ) : null}
           </div>
-          <ScrollArea className="max-h-[20rem]" viewportClassName="p-3">
+          <ScrollArea viewportClassName="max-h-[20rem] p-3">
             {notes.length ? (
               <ul className="flex flex-col gap-2">
                 {notes.map((note, index) => (
