@@ -21,6 +21,7 @@ import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
+import { ImageLightbox, type ImageLightboxItem } from '@/components/ImageLightbox';
 import { MarkdownCodeBlock } from '@/components/MarkdownCodeBlock';
 import { MermaidBlock } from '@/components/MermaidBlock';
 import { useScrollActivity } from '@/hooks/useScrollActivity';
@@ -325,7 +326,7 @@ function buildComponents(): ComponentProps<typeof ReactMarkdown>['components'] {
     ),
     img: ({ className, style, ...props }) => (
       <img
-        className={cn('my-4 h-auto max-w-full rounded-lg border border-border', className)}
+        className={cn('my-4 h-auto max-w-full cursor-zoom-in rounded-lg border border-border', className)}
         // 老的 pandoc 时代产物会带 Word 的固定宽高（如 6.76in）；窄栏下保留高度会把图压扁
         style={style ? { ...style, height: 'auto' } : undefined}
         {...props}
@@ -490,6 +491,13 @@ export function DocumentToc({
   );
 }
 
+/** 可点开大图的正文图片：链接里的图保留跳转，裂图不开 */
+function zoomableImages(root: HTMLElement): HTMLImageElement[] {
+  return Array.from(root.querySelectorAll('img')).filter(
+    (img) => !img.closest('a[href]') && !(img.complete && img.naturalWidth === 0),
+  );
+}
+
 /** 渲染 markdown 正文；布局完成后从真实 DOM 生成目录。 */
 export function Markdown({
   children,
@@ -515,6 +523,7 @@ export function Markdown({
   sourceByteOffset?: number;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const [lightbox, setLightbox] = useState<{ items: ImageLightboxItem[]; index: number } | null>(null);
   const onHeadingsChangeRef = useRef(onHeadingsChange);
   onHeadingsChangeRef.current = onHeadingsChange;
   // 调用方给的是行内箭头函数（每次 render 换个身份）。下面要按身份 memo 整棵正文，
@@ -617,12 +626,31 @@ export function Markdown({
     onHeadingsChangeRef.current?.(items);
   }, [children]);
 
+  // 委托在根上点图开大图，不进 memo 的正文树；裸 HTML 的 <img> 也一并覆盖。
+  // 同篇所有图按文档顺序成组，可左右翻页。
+  const onClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const root = rootRef.current;
+    const img = event.target instanceof HTMLImageElement ? event.target : null;
+    if (!root || !img || !isPlainClick(event) || root.closest('[data-annotating]')) return;
+    const images = zoomableImages(root);
+    const index = images.indexOf(img);
+    if (index < 0) return;
+    setLightbox({
+      items: images.map((el) => ({ src: el.currentSrc || el.src, alt: el.alt || undefined })),
+      index,
+    });
+  };
+
   return (
     <div
       ref={rootRef}
       className={cn('markdown-body max-w-[76ch]', sourceFile && 'markdown-preserve-breaks')}
+      onClick={onClick}
     >
       <LinkContext.Provider value={linkHandlers}>{rendered}</LinkContext.Provider>
+      {lightbox ? (
+        <ImageLightbox items={lightbox.items} initialIndex={lightbox.index} onClose={() => setLightbox(null)} />
+      ) : null}
     </div>
   );
 }

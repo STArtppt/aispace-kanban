@@ -441,6 +441,8 @@ export function AnnotationLayer({
   return (
     <div
       ref={wrapRef}
+      // 正文里点图会开大图；批注期间让位给选元素 / 划词（见 Markdown 的 onClick）
+      data-annotating={active ? '' : undefined}
       className={cn('relative', picking && 'cursor-crosshair select-none')}
       onMouseMove={onMouseMove}
       onMouseUp={onMouseUp}
