@@ -227,3 +227,19 @@
 [data-sonner-toast].docx-result-toast[data-mounted='true'][data-expanded='true']:has(details[open]) {
   height: auto;
 }
+
+/*
+ * 预览正文字号档位。Tailwind v4 的 text-* / 间距工具类都读 --text-* 与 --spacing，
+ * 在正文容器上按 --reader-scale 重定义它们，字号、行高、段距一起等比放大；
+ * 不用 zoom，批注层的坐标换算不受影响。只作用于挂了这个 class 的正文区。
+ */
+.reader-font-scale {
+  --reader-scale: 1;
+  --spacing: calc(0.25rem * var(--reader-scale));
+  --text-xs: calc(0.75rem * var(--reader-scale));
+  --text-sm: calc(0.875rem * var(--reader-scale));
+  --text-base: calc(1rem * var(--reader-scale));
+  --text-lg: calc(1.125rem * var(--reader-scale));
+  --text-xl: calc(1.25rem * var(--reader-scale));
+  --text-2xl: calc(1.5rem * var(--reader-scale));
+}

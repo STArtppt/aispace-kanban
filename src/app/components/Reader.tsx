@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode, type Ref } from 'react';
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 import Papa from 'papaparse';
 import { toast } from 'sonner';
 import {
@@ -47,6 +47,8 @@ import {
   type TocItem,
 } from '@/components/Markdown';
 import {
+  PREVIEW_FONT_STEPS,
+  PreviewFontSize,
   PreviewSearch,
   PreviewToolbar,
   PreviewToolButton,
@@ -992,6 +994,28 @@ interface ReaderBodyExtras {
   headerExtra?: ReactNode;
 }
 
+const FONT_LEVEL_KEY = 'aispace-kanban:reader-font-level';
+
+/** 预览正文字号档位（PREVIEW_FONT_STEPS 下标）。localStorage 读写都兜住，存不下就只在本次生效 */
+function usePreviewFontLevel() {
+  const [level, setLevel] = useState(() => {
+    try {
+      const raw = Number(localStorage.getItem(FONT_LEVEL_KEY));
+      return Number.isInteger(raw) && raw >= 0 && raw < PREVIEW_FONT_STEPS.length ? raw : 0;
+    } catch {
+      return 0;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(FONT_LEVEL_KEY, String(level));
+    } catch {
+      // 隐私模式等存不下：不影响使用
+    }
+  }, [level]);
+  return [level, setLevel] as const;
+}
+
 function ReaderBody({
   projectId,
   item,
@@ -1148,6 +1172,11 @@ function ReaderBody({
   // 单文件 HTML（output/docs 下的汇报材料）没有 _manifest.md，校验说明这一栏不该出现
   const hasManifest = (multiSheet || mode === 'html') && isDir;
   const [htmlTab, setHtmlTab] = useState<'preview' | 'manifest'>('preview');
+  // 正文字号档位：跨文件、跨会话记住（小屏上调大一次就够了）
+  const [fontLevel, setFontLevel] = usePreviewFontLevel();
+  const fontScaleStyle = {
+    '--reader-scale': PREVIEW_FONT_STEPS[fontLevel] / PREVIEW_FONT_STEPS[0],
+  } as CSSProperties;
   // 汇报时把预览区撑满整屏：iframe 自己进全屏，不牵动看板其余布局
   const htmlFrameRef = useRef<HTMLIFrameElement>(null);
   // 点表等大包默认先看摘要（规模分布 / SQL），再按需翻数据
@@ -1291,7 +1320,7 @@ function ReaderBody({
     [projectId, item.path, jumper],
   );
 
-  // 「后退」与搜索同在正文左上角的悬浮条里
+  // 「后退」、字号、搜索同在正文左上角的悬浮条里。字号与搜索同条件出现：有文字才有字可调
   const previewToolbar =
     onBack || canSearch ? (
       <PreviewToolbar>
@@ -1300,6 +1329,7 @@ function ReaderBody({
             <ArrowLeft className="size-3.5" />
           </PreviewToolButton>
         ) : null}
+        {canSearch ? <PreviewFontSize level={fontLevel} onChange={setFontLevel} /> : null}
         {canSearch ? (
           <PreviewSearch
             key={searchResetKey}
@@ -1414,7 +1444,7 @@ function ReaderBody({
               {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {content && !error ? (
-                <div className="mx-auto w-full max-w-[76ch]">
+                <div className="reader-font-scale mx-auto w-full max-w-[76ch]" style={fontScaleStyle}>
                   <SourceBar
                     key={item.path}
                     meta={meta}
@@ -1510,7 +1540,7 @@ function ReaderBody({
                 {manifestLoading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
                 {manifestError ? <p className="text-sm text-destructive">{manifestError}</p> : null}
                 {manifestContent && !manifestError ? (
-                  <div className="mx-auto w-full max-w-[76ch]">
+                  <div className="reader-font-scale mx-auto w-full max-w-[76ch]" style={fontScaleStyle}>
                     <SourceBar
                       key={item.path}
                       meta={meta}
@@ -1556,15 +1586,17 @@ function ReaderBody({
             </div>
           ) : (
             <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
-              <TableReader
-                ref={tableHandleRef}
-                projectId={projectId}
-                item={item}
-                sheets={sheets}
-                jumper={jumper}
-                onActivePathChange={setActiveTablePath}
-                onActiveSheetChange={(sheet) => setActiveTableSheet(sheet || '')}
-              />
+              <div className="reader-font-scale" style={fontScaleStyle}>
+                <TableReader
+                  ref={tableHandleRef}
+                  projectId={projectId}
+                  item={item}
+                  sheets={sheets}
+                  jumper={jumper}
+                  onActivePathChange={setActiveTablePath}
+                  onActiveSheetChange={(sheet) => setActiveTableSheet(sheet || '')}
+                />
+              </div>
             </ScrollArea>
           )}
           </div>
@@ -1574,7 +1606,7 @@ function ReaderBody({
         {previewToolbar}
         <ScrollArea className="min-h-0 min-w-0 flex-1" viewportClassName="px-4 py-4 sm:px-6 sm:py-5">
           {mode === 'text' ? (
-            <>
+            <div className="reader-font-scale" style={fontScaleStyle}>
               {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {content && !error ? (
@@ -1598,19 +1630,21 @@ function ReaderBody({
                   </pre>
                 )
               ) : null}
-            </>
+            </div>
           ) : null}
 
           {mode === 'table' ? (
-            <TableReader
-              ref={tableHandleRef}
-              projectId={projectId}
-              item={item}
-              sheets={multiSheet ? sheets : [{ path: item.path, name: item.name, size: item.size }]}
-              jumper={jumper}
-              onActivePathChange={setActiveTablePath}
-              onActiveSheetChange={(sheet) => setActiveTableSheet(sheet || '')}
-            />
+            <div className="reader-font-scale" style={fontScaleStyle}>
+              <TableReader
+                ref={tableHandleRef}
+                projectId={projectId}
+                item={item}
+                sheets={multiSheet ? sheets : [{ path: item.path, name: item.name, size: item.size }]}
+                jumper={jumper}
+                onActivePathChange={setActiveTablePath}
+                onActiveSheetChange={(sheet) => setActiveTableSheet(sheet || '')}
+              />
+            </div>
           ) : null}
 
           {mode === 'gallery' && isGallery(item) ? (
@@ -1691,7 +1725,7 @@ function ReaderBody({
                   {manifestLoading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
                   {manifestError ? <p className="text-sm text-destructive">{manifestError}</p> : null}
                   {manifestContent && !manifestError ? (
-                    <div className="mx-auto w-full max-w-[76ch]">
+                    <div className="reader-font-scale mx-auto w-full max-w-[76ch]" style={fontScaleStyle}>
                       <Markdown
                         key={`${item.path}-manifest`}
                         urlTransform={manifestUrlTransform}

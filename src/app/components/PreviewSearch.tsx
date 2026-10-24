@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Search, X } from 'lucide-react';
+import { ALargeSmall, Search, X } from 'lucide-react';
 import { collectBlocks, type BlockEntry, type SearchJumper } from '@/lib/blockIndex';
 import { searchBlocks, type SnippetPart } from '@/lib/fuzzySearch';
 import { cn } from '@/lib/utils';
@@ -364,8 +364,120 @@ export function PreviewToolButton({
   );
 }
 
+/** 正文字号四档(正文段落的像素值);缩放比 = 档位 / 14,14 是改动前的默认字号 */
+export const PREVIEW_FONT_STEPS = [14, 16, 18, 20] as const;
+
 /**
- * 预览正文左上角的悬浮工具条:「后退」在左、搜索在右。
+ * 正文字号调节:方钮点开,下方淡入一条四档滑杆,拖动即时生效。
+ * 档位由上层持有(要记住、要作用到正文),这里只管开合与输入。
+ */
+export function PreviewFontSize({
+  level,
+  onChange,
+}: {
+  /** PREVIEW_FONT_STEPS 的下标 */
+  level: number;
+  onChange: (level: number) => void;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const last = PREVIEW_FONT_STEPS.length - 1;
+
+  // 点外面关闭;Esc 关闭并把焦点还给方钮
+  useEffect(() => {
+    if (!open) return;
+    const onDocMouseDown = (event: MouseEvent) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (containerRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [open]);
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative shrink-0"
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || !open) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        buttonRef.current?.focus();
+      }}
+    >
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-label="调节字号"
+        title="调节字号"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className={cn(
+          TOOL_SHELL,
+          'w-8 justify-center text-muted-foreground hover:text-foreground hover:opacity-100 focus-visible:border-ring focus-visible:opacity-100 focus-visible:outline-none',
+          open ? 'text-foreground opacity-100' : 'opacity-85',
+        )}
+      >
+        <ALargeSmall className="size-4" />
+      </button>
+
+      {/* 常驻 DOM,只切透明度与位移,开合才有过渡;收起时 inert,不进 Tab 序 */}
+      <div
+        inert={!open}
+        className={cn(
+          'absolute top-[calc(100%+0.375rem)] left-0 z-20 w-56 rounded-lg border border-border bg-popover px-3 pt-2.5 pb-2 shadow-md',
+          'origin-top-left transition-[opacity,transform] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]',
+          open ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0',
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <span aria-hidden className="text-[11px] text-muted-foreground">A</span>
+          <input
+            type="range"
+            min={0}
+            max={last}
+            step={1}
+            value={level}
+            aria-label="正文字号"
+            aria-valuetext={`${PREVIEW_FONT_STEPS[level]} 像素`}
+            onChange={(event) => onChange(Number(event.target.value))}
+            className="h-4 min-w-0 flex-1 cursor-pointer accent-foreground"
+          />
+          <span aria-hidden className="text-base text-muted-foreground">A</span>
+        </div>
+        {/* 刻度:与滑杆同宽,点数字也能直接跳档 */}
+        <div className="mt-1 flex items-center gap-2">
+          <span aria-hidden className="invisible text-[11px]">A</span>
+          <div className="relative h-4 flex-1">
+            {PREVIEW_FONT_STEPS.map((px, index) => (
+              <button
+                key={px}
+                type="button"
+                tabIndex={-1}
+                onClick={() => onChange(index)}
+                style={{ left: `calc(7px + (100% - 14px) * ${index / last})` }}
+                className={cn(
+                  'absolute top-0 -translate-x-1/2 font-mono text-[10px] leading-4 tabular-nums',
+                  index === level ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                {px}
+              </button>
+            ))}
+          </div>
+          <span aria-hidden className="invisible text-base">A</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 预览正文左上角的悬浮工具条:「后退」、字号、搜索,从左到右。
  * 左缘跟预览顶栏标题对齐(header px-3 sm:px-4);顶缘跟左侧清单标题行
  * (产出列表 / 输入列表,ScrollArea py-4 + min-h-8)垂直居中。
  * 收起时半透明:悬浮在 csv 表格上方会挡住表头与首行,让它透出来;
