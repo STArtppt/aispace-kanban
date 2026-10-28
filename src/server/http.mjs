@@ -36,13 +36,13 @@ import { matchesAllTokens, queryTokens } from '../shared/textMatch.mjs';
 import { PYTHON_CANDIDATES, findPython, pickDirectory, revealInSystem } from './platform.mjs';
 import { resolvePrototypeCover, resolvePrototypeServeDir, resolveRefreshTarget, scanPrototypes } from './prototypes.mjs';
 import { listDocxTemplates, readDocxTemplate } from './docxTemplates.mjs';
-import { docxToolsHealth, runDocxBuild, runDocxCollect, runDocxConvert } from './docxTools.mjs';
+import { docxToolsHealth, runDocxBuild, runDocxCollect, runDocxConvert, runScript } from './docxTools.mjs';
 import { confirmFinal, pickFinal } from './finalize.mjs';
 import { listFeedback, markSent, readFeedback } from './feedback.mjs';
 import { readQuestion, scanQuestions, writeQuestion } from './questions.mjs';
 import { readRecord, scanRecords, writeRecordStatus } from './records.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
-import { ARCHIVE_DIR, OUTPUT_GROUPS, scanWorkspace, verifySource } from './scan.mjs';
+import { ARCHIVE_DIR, OUTPUT_GROUPS, findDocByKey, scanWorkspace, verifySource } from './scan.mjs';
 import { readSheetPage, scanSheet } from './spreadsheet.mjs';
 import { resolveAppVersion } from './version.mjs';
 
@@ -1185,6 +1185,79 @@ async function runArchive(project, body) {
   }
 }
 
+const RENAME_TIMEOUT_MS = 60 * 1000;
+const RENAME_MAX_NAME = 120;
+const RENAME_BAD_CHARS = /[/\\\0<>:"|?*#[\]\u0000-\u001f]/;
+
+/**
+ * 重命名请求的校验，**在起脚本之前**全部做完。请求只带 `docKey` 与新基名，不接受路径：
+ * 键在 `output-file`（三组下的所有文件）里反查，查不到 400；新基名与 rename_output.py 的 check_name 同一规则
+ * （两边各拦一次）。和原名相同、冲突这类要看磁盘的判断留给脚本。
+ */
+function resolveRenameTarget(root, body) {
+  const bad = (message, kind = 'invalid') => {
+    const err = new Error(message);
+    err.statusCode = 400;
+    err.kind = kind;
+    return err;
+  };
+  const relPath = findDocByKey(root, 'output-file', body?.docKey);
+  if (!relPath) throw bad('在产出文档里找不到这份文件（列表可能已经变了），刷新后再试。', 'stale-key');
+  resolveInside(root, relPath);
+  const name = typeof body?.name === 'string' ? body.name.trim() : '';
+  if (!name) throw bad('新名字是空的。');
+  if (name.startsWith('.') || name.endsWith('.') || name.includes('..') || RENAME_BAD_CHARS.test(name)) {
+    throw bad(`新名字不合法：${name}。不以 . 开头或结尾，不含 / \\ .. 和 < > : " | ? * # [ ]；只填名字本身，扩展名不用写。`);
+  }
+  if (name === ARCHIVE_DIR) throw bad(`「${ARCHIVE_DIR}」是归档目录的名字，换一个。`);
+  if (name.length > RENAME_MAX_NAME) throw bad(`新名字超过 ${RENAME_MAX_NAME} 个字。`);
+  return { relPath, name };
+}
+
+/**
+ * 重命名：spawn 工作空间的 scripts/rename_output.py（**AGENTS.md 不变量 1 第十一条窄例外**）。
+ * 看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；改名、改链接、留痕都是脚本做的。
+ * 预览（`--dry-run`）与执行（`--apply --expect <指纹>`）是同一支脚本的两种模式：
+ * 执行时脚本重算计划，与预览指纹不符就退出 3，不在服务端存任何预览状态。
+ *
+ * 退出码映射：2 且 kind=conflict → 409（名字被占用），其余 2 → 400；3 → 409（预览后有文件变了）；超时 504。
+ */
+async function runRename(project, body, { apply }) {
+  const target = resolveRenameTarget(project.root, body);
+  const script = path.join(project.root, 'scripts', 'rename_output.py');
+  if (!fs.existsSync(script)) {
+    const err = new Error(
+      '这个工作空间没有 scripts/rename_output.py，看板没法替你改名。'
+        + '更新模板（让工作空间 AI 走 pm-template-update）之后就有了；不要在文件夹里手改，交付稿和记录会对不上。',
+    );
+    err.statusCode = 400;
+    err.kind = 'no-script';
+    throw err;
+  }
+  const args = ['--source', target.relPath, '--to', target.name];
+  if (apply) {
+    const expect = typeof body?.plan === 'string' ? body.plan : '';
+    if (!/^[0-9a-f]{16}$/.test(expect)) {
+      const err = new Error('执行改名要带预览给出的指纹，先预览一次。');
+      err.statusCode = 400;
+      throw err;
+    }
+    args.push('--apply', '--expect', expect);
+  } else {
+    args.push('--dry-run');
+  }
+  try {
+    return await runScript(project.root, script, args, { timeoutMs: RENAME_TIMEOUT_MS, label: apply ? '改名' : '改名预览' });
+  } catch (err) {
+    if (err.kind === 'conflict') err.statusCode = 409;
+    if (err.kind === 'timeout') {
+      err.statusCode = 504;
+      if (apply) err.message += `。${target.relPath} 可能已经改名了，刷新列表看一眼再决定要不要重试。`;
+    }
+    throw err;
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -2107,6 +2180,19 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, await runArchive(project, body));
+  }
+
+  // 重命名（不变量 1 第十一条窄例外）：看板只 spawn 工作空间的 scripts/rename_output.py，
+  // 请求只带 docKey、新基名与（执行时）预览指纹，不接受任何路径；同步等脚本退出。
+  // 预览也起子进程，所以两条都过环回与同源两道闸
+  if (head === 'projects' && id && action === 'rename' && req.method === 'POST') {
+    const sub = segments[3] || '';
+    if (sub && sub !== 'preview') return json(res, 400, { error: `不认识这个操作：${sub}` });
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
+    const project = requireProject(id);
+    const body = await readBody(req);
+    return json(res, 200, await runRename(project, body, { apply: sub !== 'preview' }));
   }
 
   if (head === 'projects' && id && action === 'web-ingest') {

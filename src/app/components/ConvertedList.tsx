@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppWindow, CodeXml, Copy, FileText, Image, RefreshCw, Star, StarOff, Table } from 'lucide-react';
+import { AppWindow, CodeXml, Copy, FileText, Image, PencilLine, RefreshCw, Star, StarOff, Table } from 'lucide-react';
 import { EmptyState, ListPager, Row, RowActions, writeClipboard } from '@/components/Primitives';
 import { DirActions, FileTree, type ViewMode } from '@/components/FileTree';
 import { codePreviewLanguage } from '@/components/CodeFileView';
@@ -163,6 +163,14 @@ function ConvertedRow({
             onSelect: () => {
               void writeClipboard(absPath(item.path));
             },
+          },
+          // 只为说明：转换产物改了名，下次转换还会按原件名再生成一份
+          {
+            label: '重命名',
+            icon: PencilLine,
+            disabled: true,
+            hint: '转换产物由资料转换生成，改名后下次转换会再生成一份旧名的；要改名请改 input/raw/ 里的原件',
+            onSelect: () => undefined,
           },
         ]}
       />

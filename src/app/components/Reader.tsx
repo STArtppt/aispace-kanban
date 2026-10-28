@@ -1896,7 +1896,9 @@ function DeliveryReader({
   const [finalizedAt, setFinalizedAt] = useState(0);
   const listToken = useMemo(() => ({ refreshToken, finalizedAt }), [refreshToken, finalizedAt]);
   // 产出原稿与输入转换产物共用这一次请求。换文件时上一份列表先留着，对上 source 才用，避免串栏。
-  const list = useDeliveryVersions(projectId, eligible || isConvertedMd ? item.docKey : undefined, listToken);
+  const { list, settledFor } = useDeliveryVersions(projectId, eligible || isConvertedMd ? item.docKey : undefined, listToken);
+  // 原稿的版本列表还没到：先不画正文，免得先闪一下原稿再跳到默认版本
+  const listPending = eligible && settledFor !== item.docKey;
   const outputList = list?.source === item.path && list.sourceKind !== 'input' ? list : null;
   const inputList = isConvertedMd && list?.source === item.path && list.sourceKind === 'input' ? list : null;
   const versions = outputList?.versions ?? [];
@@ -1904,7 +1906,9 @@ function DeliveryReader({
   const [finalizing, setFinalizing] = useState<{ docKey: string } | null>(null);
   /** 服务进程是旧的（定稿接口 404）：按钮置灰到下次换文档 */
   const [finalizeUnsupported, setFinalizeUnsupported] = useState(false);
-  const [selected, setSelected] = useState('source');
+  /** 用户（或工作台跳转）在某个条目上的显式选择；换条目后自然失效，不靠 effect 重置 */
+  const [picked, setPicked] = useState<{ path: string; value: string } | null>(null);
+  const setSelected = (value: string) => setPicked({ path: item.path, value });
   const [compare, setCompare] = useState<CompareMode | null>(null);
   const [annotateSignal, setAnnotateSignal] = useState(0);
   const [converting, setConverting] = useState<FileItem | null>(null);
@@ -1914,12 +1918,15 @@ function DeliveryReader({
   const [converted, setConverted] = useState<FileItem | null>(null);
 
   useEffect(() => {
-    setSelected('source');
     setCompare(null);
     setDocxPreview(false);
     setFinalizeUnsupported(false);
     setConverted(null);
   }, [item.path]);
+
+  // 没有显式选择时：有定稿落定稿，否则落最新交付稿，都没有才是原稿。渲染时直接算，不经过一帧原稿。
+  const defaultPick = final ? 'final' : versions[versions.length - 1]?.version ?? 'source';
+  const selected = picked?.path === item.path ? picked.value : defaultPick;
 
   useEffect(() => {
     if (!deliveryFocus || deliveryFocus.source !== item.path) return;
@@ -2022,7 +2029,7 @@ function DeliveryReader({
             }}
             onConvert={() => setConverting(mdItem)}
           />
-        ) : eligible ? (
+        ) : eligible && !listPending ? (
           <DeliveryBar
             versions={versions}
             final={final}
@@ -2047,7 +2054,9 @@ function DeliveryReader({
             onConvert={() => setConverting(mdItem)}
           />
         ) : undefined}
-        replaceBody={compare && !previewing && onFinal && final ? (
+        replaceBody={listPending ? (
+          <div aria-busy="true" className="min-h-[40vh]" />
+        ) : compare && !previewing && onFinal && final ? (
           <DeliveryDiff
             projectId={projectId}
             left={latest ? { path: latest.path, label: latest.version } : { path: item.path, label: '原稿' }}

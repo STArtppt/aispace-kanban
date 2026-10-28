@@ -66,8 +66,9 @@ export interface FileItem {
   /** 在组内子目录里（不在 一次归档/ 下）。本轮只能归档组根目录下的文件，这类要置灰说明 */
   nested?: boolean;
   /**
-   * 不透明键：产出三组里的 `.md`、`input/raw/` 里的 `.docx`、转换产物根下的单文件 `.md` 才有。
-   * 「转成 Word」「提炼模板」只拿它指定来源，不传路径（AGENTS.md 不变量 1 第九条）。
+   * 不透明键：产出三组里的所有文件、`input/raw/` 里的 `.docx`、转换产物根下的单文件 `.md` 才有。
+   * 「转成 Word」「提炼模板」「重命名」只拿它指定来源，不传路径（AGENTS.md 不变量 1 第九、十一条）。
+   * 产出组里非 `.md` 的键只用于重命名，「转成 Word」仍按 `ext === '.md'` 判断。
    * 可选：旧服务进程没有。产出列表缺了就置灰；输入转换产物缺了就不出现交付稿栏。
    */
   docKey?: string;
@@ -99,6 +100,56 @@ export interface ArchiveResult {
   from: string;
   to: string;
   records: string[];
+}
+
+/**
+ * POST /api/projects/:id/rename/preview 与 /rename 的请求体。**只带 docKey 与新基名**，不带路径。
+ * `name` 不含扩展名（沿用原文件的）；执行时 `plan` 必须是预览给出的指纹。
+ */
+export interface RenameRequest {
+  docKey: string;
+  name: string;
+  plan?: string;
+}
+
+/** 改名计划里的一处改名：原稿、交付稿镜像目录、镜像里或原稿旁的 `<基名>.docx` */
+export interface RenamePair {
+  from: string;
+  to: string;
+  kind: 'file' | 'dir';
+}
+
+/** 要改写的一个文件。`path` 是改名前的位置，`newPath` 是改名后（镜像目录里的文件跟着目录走） */
+export interface RenameFileChange {
+  path: string;
+  newPath: string;
+  /** 改了几处链接；0 表示只是 source_sha 跟进或留痕 */
+  links: number;
+  /** 交付稿 front-matter 的 source_sha 跟着原稿新内容换了 */
+  sourceSha?: boolean;
+  /** 记录「## 状态流水」追加了改名留痕 */
+  flow?: boolean;
+}
+
+/** 预览结果（`rename_output.py --dry-run --json`）。排除范围里的命中不在 files 里 */
+export interface RenamePlan {
+  ok: true;
+  source: string;
+  to: string;
+  renames: RenamePair[];
+  files: RenameFileChange[];
+  /** 有链接改动的文件数与总处数：「将更新 N 个文件中的 M 处链接」 */
+  linkFiles: number;
+  links: number;
+  /** 追加了改名留痕的记录编号 */
+  records: string[];
+  /** 计划指纹，执行时原样带回 */
+  plan: string;
+}
+
+/** 执行结果：形状同预览。`failed` 非空时改名已完成但部分文件没更新（这时接口会报错，不会走到这里） */
+export interface RenameResult extends RenamePlan {
+  failed?: string[];
 }
 
 export interface ConvertedItem extends FileItem {
@@ -517,6 +568,11 @@ export interface Scan {
      * 可选：旧服务进程没有这个字段 —— 那时不置灰，点了会撞 404，提示重启服务。
      */
     canArchive?: boolean;
+    /**
+     * 工作空间里有 scripts/rename_output.py 时为 true。false 时「重命名」置灰并提示更新模板。
+     * 可选：旧服务进程没有这个字段 —— 和归档不同，这时也置灰（弹窗一开就要调预览接口，旧进程会 404）。
+     */
+    canRename?: boolean;
   };
   /**
    * visualization/references/ 的参考清单。
@@ -1627,6 +1683,24 @@ export const api = {
    */
   archiveOutput: (id: string, body: ArchiveRequest) =>
     request<ArchiveResult>(`/api/projects/${id}/archive`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 重命名预览：服务端 spawn `scripts/rename_output.py --dry-run`，磁盘不变。
+   * 409 = 新名字被占用（kind `conflict`）；400 = 名字不合法或键查不到。
+   */
+  renamePreview: (id: string, body: RenameRequest) =>
+    request<RenamePlan>(`/api/projects/${id}/rename/preview`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 执行重命名：脚本按预览指纹重算，对不上 409（kind `stale`），磁盘不变。
+   * 看板自己不写盘（不变量 1 第十一条窄例外），错误信息是脚本原话。
+   */
+  renameOutput: (id: string, body: RenameRequest & { plan: string }) =>
+    request<RenameResult>(`/api/projects/${id}/rename`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),

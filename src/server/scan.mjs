@@ -156,10 +156,15 @@ export function docxTargetOf(relPath) {
   return text.replace(/\.md$/i, '.docx');
 }
 
-/** docKey 的四类来源。反查只在对应的那一类里找，产出的键换不来原件、也换不来输入转换产物。 */
+/**
+ * docKey 的五类来源。反查只在对应的那一类里找，产出的键换不来原件、也换不来输入转换产物。
+ * `output-file` 是三组下的所有文件（重命名用，第十一条）；`output-md` 仍只在其中的 .md 里找，
+ * 非 .md 的键在「转成 Word」上照样查不到。
+ */
 const DOC_KEY_KINDS = {
   'output-md': (root) => OUTPUT_GROUPS.flatMap((g) => listFiles(path.join(root, 'output', g)))
     .filter((abs) => path.extname(abs).toLowerCase() === '.md'),
+  'output-file': (root) => OUTPUT_GROUPS.flatMap((g) => listFiles(path.join(root, 'output', g))),
   'raw-docx': (root) => listFiles(path.join(root, 'input', 'raw'))
     .filter((abs) => path.extname(abs).toLowerCase() === '.docx'),
   // 只收三组镜像目录下的 v<序号>.md；组名不对的（output/delivery/misc/…）不算交付稿
@@ -172,7 +177,7 @@ const DOC_KEY_KINDS = {
 /**
  * 按 docKey 反查工作空间相对路径；查不到返回 null。
  * @param {string} root
- * @param {'output-md' | 'raw-docx' | 'delivery-md' | 'converted-md'} kind
+ * @param {'output-md' | 'output-file' | 'raw-docx' | 'delivery-md' | 'converted-md'} kind
  * @param {string} key
  */
 export function findDocByKey(root, kind, key) {
@@ -1015,8 +1020,9 @@ function scanOutput(root) {
         if (body) docs.push({ path: item.path, text: body });
         // 归档项仍留在本组数组里，只打标记：旧前端不认这个字段，照旧混在主列表里显示，
         // 等于「功能没启用」；新前端按标记分区。
-        // 可选：「转成 Word」用它指定来源 .md（第九条例外不收路径）。没有它（旧服务进程）菜单项置灰
-        if (item.ext === '.md') item.docKey = docKeyOf(item.path);
+        // 可选：「转成 Word」（只认 .md，前端按 ext 判断）与「重命名」（三组所有文件）用它指定来源，
+        // 两条例外都不收路径。没有它（旧服务进程）菜单项置灰
+        item.docKey = docKeyOf(item.path);
         // 可选：这份 Word 是不是工具链转出来的（带生成标记）。「转成 Word」弹窗据此决定给不给「覆盖」
         if (item.ext === '.docx') item.docxGenerated = readDocxMarker(abs) !== null;
         const placement = outputPlacement(item.path);
@@ -1079,6 +1085,8 @@ function scanOutput(root) {
       ...groups,
       // 模板工作空间才有归档脚本；自己 mkdir 的目录没有，前端据此把「归档」置灰并说明
       canArchive: fs.existsSync(path.join(root, 'scripts', 'archive_output.py')),
+      // 同理：模板更新后才有改名脚本。旧服务进程不给这个字段，前端按「重启后可用」置灰
+      canRename: fs.existsSync(path.join(root, 'scripts', 'rename_output.py')),
       stats: {
         analysis: inMain('analysis').length,
         docs: inMain('docs').length,

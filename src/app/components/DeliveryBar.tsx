@@ -14,20 +14,24 @@ import { cn } from '@/lib/utils';
  */
 export function useDeliveryVersions(projectId: string, docKey: string | undefined, refreshToken: unknown) {
   const [list, setList] = useState<DeliveryList | null>(null);
+  /** 最近一次请求（成功或失败）落定时对应的 docKey：调用方据此区分「还在路上」和「确实没有」 */
+  const [settledFor, setSettledFor] = useState<string | undefined>(undefined);
   useEffect(() => {
     if (!docKey) {
       setList(null);
+      setSettledFor(undefined);
       return;
     }
     let alive = true;
     api.deliveryVersions(projectId, docKey)
       .then((data) => { if (alive) setList(Array.isArray(data.versions) ? data : null); })
-      .catch(() => { if (alive) setList(null); });
+      .catch(() => { if (alive) setList(null); })
+      .finally(() => { if (alive) setSettledFor(docKey); });
     return () => {
       alive = false;
     };
   }, [projectId, docKey, refreshToken]);
-  return list;
+  return { list, settledFor };
 }
 
 /** `R001×13, R004×40` → 53 */

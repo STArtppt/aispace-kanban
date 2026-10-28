@@ -65,5 +65,22 @@ export function usePins(projectId: string) {
     [projectId],
   );
 
-  return { pins, togglePin };
+  /** 文件改名后把收藏跟到新路径，位置不变。没收藏过就什么都不做；存不进去就算了，只是少一颗星 */
+  const movePin = useCallback(
+    (from: string, to: string) => {
+      const store = readStore();
+      const current = store[projectId] || EMPTY;
+      if (!current.includes(from)) return;
+      store[projectId] = current.map((item) => (item === from ? to : item));
+      try {
+        localStorage.setItem(PIN_KEY, JSON.stringify(store));
+      } catch {
+        // 内存里的缓存已经改了，这次会话照样显示在置顶位置
+      }
+      for (const notify of listeners) notify();
+    },
+    [projectId],
+  );
+
+  return { pins, togglePin, movePin };
 }

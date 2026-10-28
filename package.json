@@ -22,7 +22,8 @@
     "test:questions": "node scripts/check-questions.mjs",
     "test:docx": "node scripts/check-docx.mjs",
     "test:template-update": "node scripts/check-template-update.mjs",
-    "test:converted-migration": "node scripts/check-converted-migration.mjs"
+    "test:converted-migration": "node scripts/check-converted-migration.mjs",
+    "test:rename": "node scripts/check-rename.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

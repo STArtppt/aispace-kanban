@@ -14,6 +14,7 @@ import {
   ListFilter,
   MonitorPlay,
   MoreHorizontal,
+  PencilLine,
   Star,
   StarOff,
   Table,
@@ -30,6 +31,7 @@ import {
   type ConvertedFilter,
 } from '@/components/ConvertedList';
 import { DocxExportDialog } from '@/components/DocxExportDialog';
+import { RenameDialog } from '@/components/RenameDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -188,6 +190,18 @@ function archiveBlockedReason(item: FileItem, canArchive: boolean | undefined): 
   return '';
 }
 
+/**
+ * 「重命名」为什么不能点；能点时返回空串。和归档不同，旧服务进程（没有 canRename / docKey）也置灰：
+ * 弹窗一打开就要调预览接口，旧进程只会 404。
+ */
+function renameBlockedReason(item: FileItem, canRename: boolean | 'missing' | undefined): string {
+  if (canRename === 'missing') return '工作空间目录找不到了，重新关联之后才能改名';
+  if (canRename === undefined || !item.docKey) return '看板服务是旧版本，重启后可用';
+  if (canRename === false) return '这个工作空间没有改名脚本 scripts/rename_output.py，更新模板后可用';
+  if (item.archiveRole) return '归档区的说明文件，归档脚本靠这个名字找它，不能改名';
+  return '';
+}
+
 const ARCHIVE_ROLE_LABEL = { handoff: '交接单', index: '堆索引' } as const;
 
 /**
@@ -210,6 +224,8 @@ function OutputRow({
   onOpen,
   archiveBlocked,
   onArchive,
+  renameBlocked,
+  onRename,
   onConvert,
   selection,
 }: {
@@ -227,6 +243,9 @@ function OutputRow({
   /** 「归档」不能点的理由；空串 = 可以归档 */
   archiveBlocked: string;
   onArchive: (item: FileItem) => void;
+  /** 「重命名」不能点的理由；空串 = 可以 */
+  renameBlocked: string;
+  onRename: (item: FileItem) => void;
   /** 「转成 Word」。不传（工作空间目录丢失）就不出现这一项；只对 .md 生效 */
   onConvert?: (item: FileItem) => void;
   /** 批量模式下传：点行 = 勾选 / 取消，不打开预览，行尾菜单也收起来 */
@@ -322,6 +341,13 @@ function OutputRow({
                 }]
               : []),
             {
+              label: '重命名',
+              icon: PencilLine,
+              disabled: Boolean(renameBlocked),
+              hint: renameBlocked || undefined,
+              onSelect: () => onRename(item),
+            },
+            {
               label: '归档',
               icon: Archive,
               disabled: Boolean(archiveBlocked),
@@ -345,6 +371,8 @@ function OutputGroup({
   archivedTotal,
   canArchive,
   onArchive,
+  canRename,
+  onRename,
   onConvert,
   searching,
   viewMode,
@@ -371,6 +399,9 @@ function OutputGroup({
   archivedTotal: number;
   canArchive: boolean | undefined;
   onArchive: (item: FileItem) => void;
+  /** `'missing'` = 工作空间目录丢失（扫描是降级态） */
+  canRename: boolean | 'missing' | undefined;
+  onRename: (item: FileItem) => void;
   onConvert?: (item: FileItem) => void;
   searching: boolean;
   viewMode: ViewMode;
@@ -398,6 +429,8 @@ function OutputGroup({
     onOpen,
     archiveBlocked: archiveBlockedReason(item, canArchive),
     onArchive,
+    renameBlocked: renameBlockedReason(item, canRename),
+    onRename,
     onConvert,
     selection: selected ? { checked: selected.has(item.path), onToggle: onToggleSelect } : undefined,
   });
@@ -492,6 +525,10 @@ export function OutputPanel({
   const [archiving, setArchiving] = useState<{ items: FileItem[]; group: GroupKey } | null>(null);
   const [archiveBusy, setArchiveBusy] = useState(false);
   const [archiveError, setArchiveError] = useState('');
+  /** 「重命名」弹窗的对象；null = 关着 */
+  const [renaming, setRenaming] = useState<FileItem | null>(null);
+  /** 改名时正开着预览：等新扫描里出现新路径，换成扫描下发的条目（docKey 由服务端按新路径算） */
+  const [followPath, setFollowPath] = useState('');
   /** 「转成 Word」弹窗的来源 .md；null = 关着 */
   const [converting, setConverting] = useState<FileItem | null>(null);
   // 目录丢失时不给「转成 Word」：扫描结果是空的降级态，点了也只会撞 400
@@ -505,7 +542,16 @@ export function OutputPanel({
     [scan.project.root, sep],
   );
   // 预览头部也有同一个收藏按钮，两处共用一份状态
-  const { pins, togglePin } = usePins(projectId);
+  const { pins, togglePin, movePin } = usePins(projectId);
+
+  useEffect(() => {
+    if (!followPath) return;
+    const found = allOutputItems.find((item) => item.path === followPath);
+    if (found) {
+      setFollowPath('');
+      if (openPath === followPath) onOpen(found);
+    }
+  }, [allOutputItems, followPath, openPath, onOpen]);
   const [sortKey, setSortKey] = useState<SortKey>(readOutputSort);
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(OUTPUT_VIEW_KEY));
   const [query, setQuery] = useState('');
@@ -824,6 +870,8 @@ export function OutputPanel({
                   setArchiveError('');
                   setArchiving({ items: [item], group: key });
                 }}
+                canRename={canConvert ? output.canRename : 'missing'}
+                onRename={setRenaming}
                 onConvert={canConvert ? setConverting : undefined}
                 searching={searching}
                 viewMode={viewMode}
@@ -862,6 +910,28 @@ export function OutputPanel({
           </TabsContent>
         </Tabs>
       </section>
+
+      <RenameDialog
+        projectId={projectId}
+        item={renaming}
+        onClose={() => setRenaming(null)}
+        onRenamed={(item, result) => {
+          // 收藏和正开着的预览跟到新路径；列表本身由 SSE 推来的新扫描刷新
+          movePin(item.path, result.to);
+          if (openPath === item.path) {
+            // 先按新路径打开占位条目，不带旧 docKey（服务端已认不出它）；新扫描到了再换成正式条目
+            const name = result.to.split('/').pop() || item.name;
+            const oldStem = item.name.replace(/\.[^.]+$/, '');
+            const newStem = name.replace(/\.[^.]+$/, '');
+            const title = !item.title || item.title === item.name ? name : item.title === oldStem ? newStem : item.title;
+            onOpen({ ...item, path: result.to, name, title, docKey: undefined });
+            setFollowPath(result.to);
+          }
+          toast.success(`已改名为 ${result.to.split('/').pop()}`, {
+            description: result.links ? `更新了 ${result.linkFiles} 个文件中的 ${result.links} 处链接` : undefined,
+          });
+        }}
+      />
 
       <DocxExportDialog
         projectId={projectId}
