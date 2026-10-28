@@ -14,6 +14,32 @@ export function deliveryDirOf(sourcePath: string): string {
   return `output/delivery/${sourcePath.replace(/^output\//, '').replace(/\.md$/i, '')}`;
 }
 
+const OUTPUT_GROUP = /^(analysis|docs|decisions)$/;
+/** 转换产物根的两种位置，与服务端 scan.mjs 的 CONVERTED_ROOTS 同一组 */
+export const CONVERTED_ROOTS = ['output/converted/', 'input/converted/'];
+
+/**
+ * 转 Word 的落点。与服务端 scan.mjs 的 docxTargetOf、模板 md2docx.py 的 placement_target 同一规则。
+ * 弹窗里的目标文件用它显示；真正写盘的是脚本，这里不算给服务端传路径。
+ */
+export function docxTargetOf(relPath: string): string {
+  const text = String(relPath || '').replace(/\\/g, '/');
+  if (deliveryOf(text)) return text.replace(/\.md$/i, '.docx');
+  const parts = text.split('/');
+  if (parts[0] === 'output' && OUTPUT_GROUP.test(parts[1] || '') && parts.length >= 3 && /\.md$/i.test(text)) {
+    const base = parts[parts.length - 1].replace(/\.md$/i, '');
+    return `${deliveryDirOf(text)}/${base}.docx`;
+  }
+  // 转换产物两种布局（output/converted 新、input/converted 旧）落到同一个镜像目录
+  const convertedPrefix = CONVERTED_ROOTS.find((root) => text.toLowerCase().startsWith(root));
+  if (convertedPrefix && /\.md$/i.test(text) && !parts.some((p) => !p || p === '.' || p === '..')) {
+    const rest = text.slice(convertedPrefix.length).replace(/\.md$/i, '');
+    const base = rest.split('/').pop() || '';
+    return `output/delivery/converted/${rest}/${base}.docx`;
+  }
+  return text.replace(/\.md$/i, '.docx');
+}
+
 /** 交付稿路径 → 原稿路径与版本；不是交付稿返回 null（与服务端 scan.mjs 的 deliveryOf 同一规则） */
 export function deliveryOf(path: string): { source: string; version: string } | null {
   const m = /^output\/delivery\/(analysis|docs|decisions)\/(.+)\/(v\d{3})\.md$/.exec(path);

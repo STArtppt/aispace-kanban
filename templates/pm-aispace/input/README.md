@@ -12,16 +12,17 @@ python3 scripts/ingest.py                             # 转换
 不用手动分类、不用改文件名、不用先删掉没用的——先全部进来，`INDEX.md` 会列出清单，
 之后再判断哪些是权威版本。
 
-## 三个子目录
+## 子目录与转换产物
 
 - **`raw/`** — 原始文件。**只读**：不改名、不编辑、不删除。它是所有结论的溯源终点，
   评审时被质疑「这条需求哪来的」，答案必须能落到这里的某个文件。
-- **`converted/`** — 脚本产物，**不要手改**（重跑会覆盖）。发现转换质量有问题，
-  改脚本或在 `output/analysis/` 里记录修正，不要改产物。
+- **转换产物在 `output/converted/`**（不在 `input/` 下）—— 脚本产物，**不要手改**（重跑会覆盖）。
+  发现转换质量有问题，改脚本或在 `output/analysis/` 里记录修正，不要改产物。
   **目录结构镜像 `raw/`**：你在 `raw/` 里怎么分目录，产物就怎么分，删一批资料的产物只要删对应目录。
   一份源文件拆出多个产物时（xlsx 每个 sheet 一个 csv），正文收进 `SplittingObject/<文件名>/`，
   摘要 `_manifest_<文件名>.md` 留在外面；整个目录汇总成一份的（点表）收进 `MergedObject/`。
-  规则写在 `scripts/layout.py`。
+  规则写在 `scripts/layout.py`。产物还在 `input/converted/` 的旧工作空间先跑
+  `python3 scripts/migrate_converted_to_output.py --dry-run` 看迁移计划。
 - **`assets/`** — 图片资料，按来源分目录：`assets/<文档名>/` 是从那份文档里抽出来的图，
   `assets/未分类/` 是直接放进 `raw/` 的单张图片（附 `_manifest.md` 记来源）。
   Claude 用 Read 工具可以直接看图，流程图、界面截图这类信息量很大的资料别漏掉。
@@ -98,12 +99,12 @@ python3 scripts/pointtable.py --force          # 强制重建
 | `hydro_xls` | 表格型 `.xls`/`.xlsx`，首行表头 + 数据行，设备层级来自**目录路径** | 水电集控（模拟量/开关量/SOE量/温度量） |
 | `scada_ini` | 分段型 `.txt`，`[RTU]`/`[遥信]`/`[遥测]` 分段，GBK 与 UTF-8 混杂 | 风电 / 光伏集中监控 |
 
-产物在 `converted/<点表集名>/`：`_manifest_<点表集名>批量处理.md`（台账，看板预览点这个）、
+产物在 `output/converted/<点表集名>/`：`_manifest_<点表集名>批量处理.md`（台账，看板预览点这个）、
 `MergedObject/测点主表.csv`（全量 18 列，含源文件 + 源行号）、`MergedObject/分册/<厂站>.csv`、
 `MergedObject/测点.sqlite`（建好索引，**按测点检索一律走 SQL**）：
 
 ```bash
-sqlite3 input/converted/集控点表/MergedObject/测点.sqlite \
+sqlite3 output/converted/集控点表/MergedObject/测点.sqlite \
   "SELECT 厂站,设备分区,测点描述,测点地址 FROM 测点
    WHERE 测点描述 LIKE '%水位%' AND 是否备用='' LIMIT 20;"
 ```

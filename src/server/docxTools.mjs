@@ -4,7 +4,8 @@
  * **AGENTS.md 不变量 1 的第九条窄例外**（「看板只 spawn，工作空间脚本写盘」一族，与第七条同构）：
  * - 看板只 spawn 工作空间的 `scripts/docx_template.py` / `scripts/md2docx.py`，自己不写、不 rename、不 unlink 任何一个字节；
  * - 请求**不带任何路径**：来源只用扫描时下发的 `docKey` 指定，这里重新走目录反查，查不到 400；
- *   待转换的 .md 可以是产出三组里的，也可以是交付稿（成品落在交付稿旁边，原稿目录不动）；
+ *   待转换的 .md 可以是产出三组、交付稿，或转换产物根（`output/converted/`，旧布局 `input/converted/`）下的单文件
+ *   （成品按 scan.mjs 的 docxTargetOf 落在交付稿镜像目录，不写 input/）；
  *   模板名只接受一层基名；决定 JSON 限 256KB、拒绝路径类键名，经 stdin 交给脚本（脚本再校验结构）；
  * - 同名 `.docx` 没有生成标记一律 409，带标记也要用户确认 `overwrite`（脚本再校验一次）；
  * - 同步等脚本退出、带超时；同一模板 / 同一目标文件在前一个没结束时直接 409。
@@ -19,7 +20,7 @@ import { DOCX_TEMPLATE_DIR } from './docxTemplates.mjs';
 import { readDocxMarker } from './docxMarker.mjs';
 import { resolveInside } from './paths.mjs';
 import { findPandoc, findPython } from './platform.mjs';
-import { findDocByKey } from './scan.mjs';
+import { docxTargetOf, findDocByKey } from './scan.mjs';
 
 const TIMEOUT_MS = { collect: 60_000, build: 120_000, convert: 120_000 };
 const MAX_DECISIONS_BYTES = 256 * 1024;
@@ -93,14 +94,16 @@ export async function requirePython() {
 }
 
 function resolveDoc(root, kind, docKey) {
-  // 「转成 Word」的来源既可以是产出三组里的 .md，也可以是交付稿（output/delivery/**/v<序号>.md）
+  // 「转成 Word」按序反查：产出三组、交付稿、输入转换产物。三类键互相换不来路径。
   const rel = kind === 'output-md'
-    ? findDocByKey(root, 'output-md', docKey) || findDocByKey(root, 'delivery-md', docKey)
+    ? findDocByKey(root, 'output-md', docKey)
+      || findDocByKey(root, 'delivery-md', docKey)
+      || findDocByKey(root, 'converted-md', docKey)
     : findDocByKey(root, kind, docKey);
   if (!rel) {
     throw httpError(400, kind === 'raw-docx'
       ? '在 input/raw/ 里找不到这份 Word（列表可能已经变了），刷新后重新选择。'
-      : '在产出文档里找不到这份 .md（列表可能已经变了），刷新后再试。', 'stale-key');
+      : '找不到这份 .md（列表可能已经变了），刷新后再试。', 'stale-key');
   }
   return { rel, abs: resolveInside(root, rel) };
 }
@@ -210,9 +213,20 @@ export async function runDocxConvert(project, body) {
       throw httpError(400, `模板「${template}」不存在或还没生成。去工作台「模版洗炼」生成它，或改用通用规范。`, 'no-template');
     }
   }
-  const targetRel = src.rel.replace(/\.md$/i, '.docx');
+  const scriptText = fs.readFileSync(script, 'utf8');
+  // 旧脚本用 .md 旁边当落点。对输入转换产物那就是写进 input/，所以所有来源都先拦住，不 spawn。
+  if (!scriptText.includes('delivery-mirror')) {
+    throw httpError(400, '这个工作空间的 md2docx.py 是旧版，还会把 Word 写到来源旁边（输入资料就会写进 input/）。'
+      + '先更新工作空间模板（让工作空间 AI 走 pm-template-update），再转换。', 'old-script');
+  }
+  // 只认 input/converted/ 的那版脚本会把 output/converted/ 的来源写到它旁边，与下面算出的落点对不上
+  if (src.rel.startsWith('output/converted/') && !scriptText.includes('converted-in-output')) {
+    throw httpError(400, '这个工作空间的 md2docx.py 还不认 output/converted/ 下的转换产物。'
+      + '先更新工作空间模板（让工作空间 AI 走 pm-template-update），再转换。', 'old-script');
+  }
+  const targetRel = docxTargetOf(src.rel);
   const target = resolveInside(root, targetRel);
-  // 前端总带 archive：没有同名成品时不传 --archive，旧版脚本照样能做首次转换
+  // 前端总带 archive：没有同名成品时不传 --archive，脚本只在落点上已有文件时才改名
   const exists = fs.existsSync(target);
   if (exists) {
     if (readDocxMarker(target) === null) {
@@ -220,7 +234,7 @@ export async function runDocxConvert(project, body) {
     }
     if (body?.archive === true) {
       // 旧脚本不认 --archive：argparse 会报一行英文退出 2，这里先说清出路。看板不替它改名
-      if (!fs.readFileSync(script, 'utf8').includes('--archive')) {
+      if (!scriptText.includes('--archive')) {
         throw httpError(400, '这个工作空间的 md2docx.py 是旧版，还不会把上一份 Word 改名保留。'
           + '先更新工作空间模板（让工作空间 AI 走 pm-template-update），再重新转换。', 'old-script');
       }

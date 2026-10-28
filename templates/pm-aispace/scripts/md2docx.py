@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""按模板把一份 .md 转成同目录、同名的 .docx。
+"""按模板把一份 .md 转成 Word。成品落点由来源位置决定（PLACEMENT = "delivery-mirror"）。
 
-    python3 scripts/md2docx.py output/docs/方案.md --template @base      # 通用规范
-    python3 scripts/md2docx.py output/docs/方案.md --template 客户甲      # output/docx-template/客户甲/
-    python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --archive --json   # 上一份改名保留，再写新的
-    python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --overwrite --json
-    python3 scripts/md2docx.py output/delivery/docs/方案/v002.md --template 客户甲   # 交付稿，成品落在交付稿旁边
+    python3 scripts/md2docx.py output/docs/方案.md --template @base      # → output/delivery/docs/方案/方案.docx
+    python3 scripts/md2docx.py output/docs/方案/总体设计.md --template 客户甲  # → output/delivery/docs/方案/总体设计/总体设计.docx
+    python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --archive --json   # 上一份在落点改名保留，再写新的
+    python3 scripts/md2docx.py output/delivery/docs/方案/v002.md --template 客户甲   # 交付稿，成品仍是同目录 v002.docx
+    python3 scripts/md2docx.py output/converted/调研/方案.md --template 客户甲  # → output/delivery/converted/调研/方案/方案.docx
+    python3 scripts/md2docx.py notes/草稿.md --template @base            # 其他位置仍落在旁边
     python3 scripts/md2docx.py output/docs/方案.md --template 客户甲 --keep-bold     # 不解除段中加粗
 
 转换前由 docxkit/filters/deai-format.lua 做格式处理（只动格式、不改文字，每项计数写进结果的 log）：
@@ -20,9 +21,16 @@ date / doctype）→ 开头的 `#` 标题（title）→ project.yaml 的 identit
 需要 pandoc 3（查找顺序：PANDOC_BIN 环境变量 → 工作空间 .env 的 PANDOC_BIN → PATH）。
 模板的写作规定在 `output/docx-template/<模板名>/spec.md`；通用规范的在 `scripts/docxkit/base-spec.json`。
 
-它只写与 .md 同目录、同基名的 .docx（中间文件在系统临时目录，结束即删）；成品里记下本次转换时间
+落点只此一套（与看板 scan.mjs 的 docxTargetOf 同一规则），按需建目录：
+- 产出三组原稿 output/<组>/<子路径>.md → output/delivery/<组>/<子路径>/<基名>.docx
+- 交付稿 output/delivery/<组>/<子路径>/v<序号>.md → 同目录 v<序号>.docx
+- 转换产物 output/converted/<子路径>.md（旧布局 input/converted/，同一镜像）→ output/delivery/converted/<子路径>/<基名>.docx
+  （来源目录一个字节都不写；算出来的落点不在这个目录下就退出 2，不写盘）
+- 以上都不是 → .md 同目录同基名
+
+中间文件在系统临时目录，结束即删。成品里记下本次转换时间
 （docProps/custom.xml 的 aispace-docx-converted），.md 一个字节都不动。
-同名 .docx 已存在时：
+同名 .docx 已存在时（看的是落点，不是来源旁边）：
 - 带本工具链的生成标记（上次转出来的）→ 加 --archive 先把它改名为 `<基名>-<上次转换时间 YYYYMMDDHHmm>.docx`
   留在原处再写新的（看板「重新转换」用这个；重名追加 -2、-3；旧成品没记转换时间就用文件修改时间），
   或加 --overwrite 直接替换；都不加就拒绝；
@@ -39,6 +47,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -58,6 +67,14 @@ from docxkit.postprocess import postprocess  # noqa: E402
 from docxkit.spec import merged  # noqa: E402
 
 BASE = "@base"
+# 服务端 spawn 前读脚本文本，没有这个字符串就 400，不让旧脚本把成品写进来源旁边（输入资料就会进 input/）。
+PLACEMENT = "delivery-mirror"
+# 认 output/converted/ 的来源；没有这个字符串的旧脚本，看板对 output/converted/ 的来源同样 400。
+CONVERTED_LAYOUT = "converted-in-output"
+# 转换产物根的两种位置（与看板 scan.mjs 的 CONVERTED_ROOTS 同一组），两种布局落到同一个镜像目录
+_CONVERTED_ROOTS = ("output/converted/", "input/converted/")
+_OUTPUT_GROUPS = ("analysis", "docs", "decisions")
+_DELIVERY_FILE = re.compile(r"^v\d{3}\.md$")
 
 
 def rel(p: Path) -> str:
@@ -81,15 +98,74 @@ def resolve_template(name: str) -> Path | None:
     return ref
 
 
+def placement_target(rel_path: str) -> str:
+    """工作空间相对路径 → 成品相对路径。与看板 scan.mjs 的 docxTargetOf 同一规则。
+
+    输入转换产物算出来的落点不在 output/delivery/converted/ 下时抛 ToolError（退出码 2），调用方不得写盘。
+    """
+    text = rel_path.replace("\\", "/")
+    parts = [p for p in text.split("/") if p != ""]
+    if (len(parts) >= 4 and parts[0] == "output" and parts[1] == "delivery"
+            and parts[2] in _OUTPUT_GROUPS and _DELIVERY_FILE.match(parts[-1])
+            and not any(p in (".", "..") for p in parts)):
+        return text[:-3] + ".docx" if text.lower().endswith(".md") else text + ".docx"
+    if (len(parts) >= 3 and parts[0] == "output" and parts[1] in _OUTPUT_GROUPS
+            and text.lower().endswith(".md") and not any(p in (".", "..") for p in parts)):
+        rest = text[len("output/"):-3]
+        stem = Path(parts[-1]).stem
+        return f"output/delivery/{rest}/{stem}.docx"
+    prefix = _converted_prefix(text)
+    if prefix and text.lower().endswith(".md"):
+        rest = text[len(prefix):-3]
+        segs = rest.split("/") if rest else []
+        target = f"output/delivery/converted/{rest}/{segs[-1]}.docx" if segs else ""
+        if (not rest or any(p in ("", ".", "..") for p in segs)
+                or not target.startswith("output/delivery/converted/")):
+            raise ToolError("转换产物的成品必须落在 output/delivery/converted/ 下", EXIT_ARGS,
+                            "来源路径不合法，没有写盘", "bad-target")
+        return target
+    if text.lower().endswith(".md"):
+        return text[:-3] + ".docx"
+    return str(Path(text).with_suffix(".docx"))
+
+
+def _converted_prefix(text: str) -> str:
+    low = text.lower()
+    return next((p for p in _CONVERTED_ROOTS if low.startswith(p)), "")
+
+
+def mirror_target(md: Path) -> Path:
+    """按来源位置算成品绝对路径。与 placement_target 同一规则；工作空间外的文件仍落在旁边。"""
+    raw = md.as_posix()
+    if not md.is_absolute() and _converted_prefix(raw) and ".." in raw.split("/"):
+        raise ToolError("转换产物的成品必须落在 output/delivery/converted/ 下", EXIT_ARGS,
+                        "来源路径不合法，没有写盘", "bad-target")
+    resolved = md.resolve()
+    try:
+        rel_path = resolved.relative_to(WS.resolve()).as_posix()
+    except ValueError:
+        return resolved.with_suffix(".docx")
+    rel_out = placement_target(rel_path)
+    target = WS / rel_out
+    if _converted_prefix(rel_path):
+        try:
+            target.resolve().relative_to((WS / "output" / "delivery" / "converted").resolve())
+        except ValueError:
+            raise ToolError("转换产物的成品必须落在 output/delivery/converted/ 下", EXIT_ARGS,
+                            "没有写盘", "bad-target") from None
+    return target
+
+
 def convert(args) -> tuple[dict, str]:
     md = Path(args.source)
+    # 先算落点：转换产物路径夹着 .. 时在看文件是否存在之前就拒绝，避免消掉 .. 之后写进 input/
+    target = mirror_target(md)
     if not md.is_file() or md.suffix.lower() != ".md":
         raise ToolError(f"来源不是一个存在的 .md 文件：{md}", EXIT_ARGS, None, "no-source")
     md = md.resolve()
     ref = resolve_template(args.template)
     front_path = ref.parent / "front.docx" if ref is not None else None
     front = Package.read(front_path) if front_path is not None and front_path.is_file() else None
-    target = md.with_suffix(".docx")
     overwritten = False
     if target.exists():
         if marker_of(target) is None:
@@ -128,6 +204,7 @@ def convert(args) -> tuple[dict, str]:
             warnings += fw
         set_property(out, CONVERTED, dt.datetime.now().astimezone().isoformat(timespec="seconds"))
         archived = None
+        target.parent.mkdir(parents=True, exist_ok=True)
         if args.archive and target.exists():
             archived = _archive_name(target)
             target.rename(archived)
@@ -180,7 +257,7 @@ def _bytes_file(p: Path, data: bytes) -> Path:
 
 def main() -> int:
     force_utf8()
-    ap = argparse.ArgumentParser(description="按模板把 .md 转成同目录、同名的 .docx")
+    ap = argparse.ArgumentParser(description="按模板把 .md 转成 Word（落点由来源位置决定，见文件头）")
     ap.add_argument("source", help="来源 .md")
     ap.add_argument("--template", required=True, help="模板名（output/docx-template/ 下的目录名）或 @base（通用规范）")
     ap.add_argument("--archive", action="store_true",

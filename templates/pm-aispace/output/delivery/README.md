@@ -9,6 +9,10 @@
 output/docs/方案/总体设计.md                      ← 原稿，一个字节都不动
 output/delivery/docs/方案/总体设计/v001.md        ← 第一版交付稿（去味）
 output/delivery/docs/方案/总体设计/v002.md        ← 按 v001 上的批注改出来的下一版
+output/delivery/docs/方案/总体设计/v002.docx      ← 这一版转成的 Word（与 .md 同目录）
+output/delivery/docs/方案/总体设计/总体设计.docx  ← 原稿直接转成的 Word（不在原稿旁边）
+output/delivery/converted/需求调研/实施方案/实施方案.docx
+                                                  ← output/converted/ 下单文件转成的 Word
 ```
 
 - 目录 = 原稿在 `output/` 下的相对路径去掉 `.md`；文件名 `v<三位序号>.md`，序号取已有最大序号加一，**不覆盖已有版本**。
@@ -16,7 +20,9 @@ output/delivery/docs/方案/总体设计/v002.md        ← 按 v001 上的批�
 - **改交付稿走批注**：在看板阅读器里打开原稿，版本条切到那一版，进入批注模式写批注、复制提示词给 AI。
   批注落在原稿那份记录的批注文件里（`output/records/notes/I<编号>.md`），批次注明针对哪一版。
   直接改文件看板会标「被直接改过」，而且这些改动不会沉淀成规则。
-- 转 Word 时选**交付稿**（阅读器版本条上的「转成 Word」），成品落在交付稿旁边（`v002.docx`），原稿目录不动。
+- 转 Word 的成品都在这个镜像目录里：交付稿是同目录的 `v002.docx`；原稿是同目录的 `<基名>.docx`（`总体设计.docx`），原稿旁边不再落新文件。
+  `output/converted/<子路径>.md` 转到 `output/delivery/converted/<子路径>/<基名>.docx`，`output/converted/` 里不写 Word。
+  改动前已经落在原稿旁边的旧 `.docx` 留在原地，不搬、不删。
 - 这个目录不进看板的产出列表、全局搜索和完整度统计，只从原稿的阅读器版本条进入。
 
 ## 定稿：`定稿.md`（看板生成，不要手改）

@@ -40,13 +40,25 @@ export function countAnnotations(body) {
 }
 
 /**
+ * 转换产物根的两种位置（与 scan.mjs 的 CONVERTED_ROOTS 同一组；scan 引着本文件，这里不反向引它）。
+ * 产物从 `input/converted/` 搬到 `output/converted/` 后，迁移前写下的引用文字不改写，
+ * 所以完整路径两种前缀都要认 —— 旧前缀是新路径的别名，反过来也一样。
+ */
+const CONVERTED_ROOTS = ['output/converted/', 'input/converted/'];
+
+/**
  * 一份转换产物在产出正文里可能被写成的几种样子。
- * 溯源约定要求写完整路径（`（来源：input/converted/需求规格.md，"3.2 计费规则"）`），
+ * 溯源约定要求写完整路径（`（来源：output/converted/需求规格.md，"3.2 计费规则"）`），
  * 但实际产出里常简写成文件名、甚至去掉扩展名（`（来源：需求规格 §4.2）`）—— 都得认。
  */
 function aliasesOf(item) {
   const stem = item.name.replace(/\.[^.]+$/, '');
   const all = [item.path, item.name, stem];
+  const prefix = CONVERTED_ROOTS.find((root) => item.path.startsWith(root));
+  if (prefix) {
+    const rest = item.path.slice(prefix.length);
+    for (const root of CONVERTED_ROOTS) all.push(root + rest);
+  }
   // 一两个字符的别名（如 `1`）会命中正文里任何地方，宁可不认这一个别名
   return [...new Set(all.filter((s) => s && s.length >= 2))];
 }

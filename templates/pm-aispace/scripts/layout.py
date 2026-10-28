@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`input/` 的共用约定——`ingest.py` / `pointtable.py` / `realdata.py` 共用一份。
+"""转换链路的共用约定（读 `input/raw/`，写 `output/converted/`）——`ingest.py` / `pointtable.py` / `realdata.py` 共用一份。
 
 两件事：**哪些资料进转换链路**（`.ingestignore` 忽略清单，见文件末尾）和
 **产物落到哪儿**（下面这套镜像规则）。三个脚本各写一套的话，
@@ -7,7 +7,7 @@
 
 为什么要有这个模块
 ------------------
-转换产物早先是一股脑平铺在 `input/converted/` 根下的。资料上千份以后，那个目录既看不出
+转换产物早先是一股脑平铺在 `input/converted/` 根下的（现在搬到了 `output/converted/`）。资料上千份以后，那个目录既看不出
 哪份产物对应 raw 里的哪批资料，也没法按批次删除（客户重发一版站点数据，你得挨个认名字）。
 现在**产物目录与 `input/raw/` 一一对齐**，删 `converted/站点数据/0_公共/` 就等于删掉那批资料
 的全部产物，不留残渣。
@@ -17,25 +17,25 @@
 1. **镜像**：产物落在 `converted/<源文件在 raw 下的相对目录>/`。
 
        input/raw/站点数据/0_公共/六大库汛限（正常高）水位.docx
-         → input/converted/站点数据/0_公共/六大库汛限(正常高)水位.md
+         → output/converted/站点数据/0_公共/六大库汛限(正常高)水位.md
 
 2. **一源多产物**：正文收进镜像目录下的 `SplittingObject/<文件名>/`，摘要
    `_manifest_<文件名>.md` 留在镜像目录里（看板预览点它）。
 
        input/raw/站点数据/0_公共/7大库闸门底坎库容.xlsx
-         → input/converted/站点数据/0_公共/_manifest_7大库闸门底坎库容.md
-         → input/converted/站点数据/0_公共/SplittingObject/7大库闸门底坎库容/Sheet1.csv
+         → output/converted/站点数据/0_公共/_manifest_7大库闸门底坎库容.md
+         → output/converted/站点数据/0_公共/SplittingObject/7大库闸门底坎库容/Sheet1.csv
 
 3. **整目录合并成一份产物**（点表、现场数据这类几百个同构文件汇总成一个库）：正文收进
    `MergedObject/`，摘要 `_manifest_<目录名>批量处理.md`。同一目录里的普通文件不受影响，
    仍按规则 1 / 2 各走各的。
 
        input/raw/集控点表/（11 个厂站目录）
-         → input/converted/集控点表/_manifest_集控点表批量处理.md
-         → input/converted/集控点表/MergedObject/测点.sqlite
+         → output/converted/集控点表/_manifest_集控点表批量处理.md
+         → output/converted/集控点表/MergedObject/测点.sqlite
        input/raw/集控点表/南瑞-水调系统测点.xlsx        ← 同目录的普通表格，走规则 2
-         → input/converted/集控点表/_manifest_南瑞-水调系统测点.md
-         → input/converted/集控点表/SplittingObject/南瑞-水调系统测点/*.csv
+         → output/converted/集控点表/_manifest_南瑞-水调系统测点.md
+         → output/converted/集控点表/SplittingObject/南瑞-水调系统测点/*.csv
 
 摘要的 frontmatter 里必须写 `payload:`（正文目录，相对摘要自己所在目录），
 `ingest.py` 靠它判断产物完不完整，看板靠它把摘要和正文认成同一份产物。
@@ -50,7 +50,9 @@ from pathlib import Path, PurePosixPath
 
 REPO = Path(__file__).resolve().parent.parent
 RAW = REPO / "input" / "raw"
-CONVERTED = REPO / "input" / "converted"
+CONVERTED = REPO / "output" / "converted"
+# 旧布局的产物根。只用来认出「还没迁移」，新产物一律不往这里写
+LEGACY_CONVERTED = REPO / "input" / "converted"
 # 忽略清单：不进转换、也不在看板上算「待转换」的资料。gitignore 风格，看板同读这一份
 IGNOREFILE = REPO / "input" / ".ingestignore"
 
@@ -75,8 +77,42 @@ def safe_component(name: str) -> str:
     return name or "untitled"
 
 
+# converted/ 下的保留名：根上的 `_sources/` 归数据库源（db_ingest.py），`_manifest*` 是产物摘要。
+# input/raw/ 里碰巧有同名目录时，镜像目录名改掉，免得产物混进数据库源或被认成摘要
+RESERVED_TOP = "_sources"
+MANIFEST_PREFIX = "_manifest"
+
+
+def _mirror_component(part: str, top: bool) -> str:
+    name = safe_component(part)
+    if top and name == RESERVED_TOP:
+        return f"{name}-raw"
+    if name.startswith(MANIFEST_PREFIX):
+        return name.lstrip("_") or "untitled"
+    return name
+
+
+def has_entries(path: Path) -> bool:
+    return path.is_dir() and any(not p.name.startswith(".") for p in path.iterdir())
+
+
+def ensure_layout() -> None:
+    """产物还在旧位置 `input/converted/`、新位置还没有时，拒绝写产物。
+
+    否则新产物落 `output/converted/`、旧产物留在 `input/`，看板只认新位置，旧的那半就「不见了」。
+    """
+    # 与看板 scan.mjs 的 convertedRootOf 同一判据：看有没有非隐藏内容，不看目录在不在
+    if has_entries(CONVERTED) or not has_entries(LEGACY_CONVERTED):
+        return
+    raise SystemExit(
+        "转换产物还在旧位置 input/converted/，先迁移到 output/converted/ 再转换：\n"
+        "  python3 scripts/migrate_converted_to_output.py --dry-run   # 先看计划\n"
+        "  python3 scripts/migrate_converted_to_output.py             # 执行迁移"
+    )
+
+
 def mirror_of(path: Path) -> Path:
-    """`input/raw/` 下的一个目录 → `input/converted/` 下与之同构的目录。
+    """`input/raw/` 下的一个目录 → `output/converted/` 下与之同构的目录。
 
     不在 `input/raw/` 下的路径（手工指定了别处的文件）退回 converted/ 根，不猜。
     """
@@ -84,7 +120,7 @@ def mirror_of(path: Path) -> Path:
         rel = path.resolve().relative_to(RAW)
     except ValueError:
         return CONVERTED
-    return CONVERTED.joinpath(*(safe_component(part) for part in rel.parts))
+    return CONVERTED.joinpath(*(_mirror_component(part, i == 0) for i, part in enumerate(rel.parts)))
 
 
 def mirror_dir(src: Path) -> Path:

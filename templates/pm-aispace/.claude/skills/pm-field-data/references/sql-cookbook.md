@@ -1,11 +1,11 @@
 # 现场实测数据 · SQL 速查
 
-对 `input/converted/<raw 相对目录>/SplittingObject/<文件名>/实测数据.sqlite`。
+对 `output/converted/<raw 相对目录>/SplittingObject/<文件名>/实测数据.sqlite`。
 表结构见镜像目录里的 `_manifest_<文件名>.md`（库在哪由它的 frontmatter `payload:` 给出）。
 所有查询都**只取回几十行**，不要 `SELECT *` 扫事实表。
 
 ```bash
-DB="input/converted/现场数据/SplittingObject/wds_real_data/实测数据.sqlite"
+DB="output/converted/现场数据/SplittingObject/wds_real_data/实测数据.sqlite"
 ```
 
 ## 一、覆盖：这个测点现场有没有数
@@ -112,7 +112,7 @@ WHERE 状态码分布 LIKE '%|%' ORDER BY 场站名称 LIMIT 30;
 ## 七、日指标（太极 t02_product_day）
 
 ```bash
-DB="input/converted/现场数据/SplittingObject/t02_product_day/日指标.sqlite"
+DB="output/converted/现场数据/SplittingObject/t02_product_day/日指标.sqlite"
 ```
 
 粒度是（组织 × 机组 × 指标 × 日）。查厂站日值时加上 `机组编码 = '-1'`（含义待现场确认）。

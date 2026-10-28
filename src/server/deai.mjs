@@ -19,7 +19,7 @@ import { parseFrontmatter } from './frontmatter.mjs';
 import { findRecordByTarget, readNoteFile } from './notes.mjs';
 import { resolveInside } from './paths.mjs';
 import { scanRecords } from './records.mjs';
-import { DELIVERY_FILE_RE, deliveryDirOf, deliveryOf, docKeyOf, findDocByKey } from './scan.mjs';
+import { DELIVERY_FILE_RE, deliveryDirOf, deliveryOf, docKeyOf, docxTargetOf, findDocByKey } from './scan.mjs';
 
 export const DEAI_SKILL_DIR = '.claude/skills/pm-deai-writing';
 const RULES_DIR = `${DEAI_SKILL_DIR}/rules`;
@@ -249,15 +249,35 @@ function readFinal(root, dir) {
 }
 
 /**
- * GET delivery?docKey=：某份原稿的交付稿版本。docKey 只在产出三组的 .md 里反查（交付稿的键换不来原稿）。
+ * GET delivery?docKey=：某份原稿的交付稿版本，或某份输入转换产物的 Word 成品。
+ * 产出的键只在产出三组的 .md 里反查（交付稿的键换不来原稿）；输入的键只在 converted-md 里反查。
  * 每一版带两个判定：`sourceChanged`（原稿在这一版之后又改过）、`directlyEdited`（有人绕过批注直接改了这一版）。
+ * 输入来源没有版本、定稿、记录，只返回镜像目录里的 Word。
  */
 export function listDelivery(root, docKey) {
+  const converted = findDocByKey(root, 'converted-md', docKey);
+  if (converted) {
+    const target = docxTargetOf(converted);
+    return {
+      source: converted,
+      dir: target.slice(0, target.lastIndexOf('/')),
+      sourceKind: 'input',
+      versions: [],
+      sourceDocx: docxAt(root, target),
+    };
+  }
   const source = findDocByKey(root, 'output-md', docKey);
   if (!source) throw httpError(400, '在产出文档里找不到这份原稿（列表可能已经变了），刷新后再试。');
   const dir = deliveryDirOf(source);
-  // sourceDocx / 每版的 docx：同名 Word 在不在，「转成 Word」据此变成「预览 Word」
-  const out = { source, dir, versions: [], sourceDocx: docxBeside(root, source) };
+  // 镜像目录优先；只有原稿旁边那份旧成品时才用它。「重新转换」仍写到镜像，不碰旧文件。
+  const mirror = docxTargetOf(source);
+  const out = {
+    source,
+    dir,
+    sourceKind: 'output',
+    versions: [],
+    sourceDocx: docxAt(root, mirror) ?? docxBeside(root, source),
+  };
   if (!dir) return out;
   const dirAbs = resolveInside(root, dir);
   let entries = [];

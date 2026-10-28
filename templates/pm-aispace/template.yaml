@@ -22,5 +22,6 @@ sync:
     # input/ 只铺 README.md 和 .ingestignore；下面这些是示例和占位，目录由铺设脚本现建
     - input/raw/**
     - input/converted/**
+    - output/converted/**
     - input/assets/**
     - input/sources/**

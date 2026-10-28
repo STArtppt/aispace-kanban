@@ -549,7 +549,7 @@ function resolveAnydocBin() {
 
 /**
  * 在工作空间里异步跑 scripts/ingest.py。
- * 看板只 spawn，真正写 input/converted/ 的是工作空间自己的脚本 —— 与 runInit 同构。
+ * 看板只 spawn，真正写转换产物（`output/converted/`，旧布局 `input/converted/`）的是工作空间自己的脚本 —— 与 runInit 同构。
  * 接口立刻返回，进度靠 GET /ingest 轮询；写盘会被 watchWorkspace 捕获，页面自己刷新。
  * relPath 有值时只转它（ingest.py 的 paths 参数，可以是文件也可以是目录）；缺省转整个 input/raw/。
  */
@@ -709,7 +709,7 @@ function resolveSourceTarget(root, rawName) {
 
 /**
  * 在工作空间里异步跑 `scripts/db_ingest.py schema <源名>`。
- * 与 startIngest 同构：看板只 spawn，真正写 input/converted/_sources/ 的是工作空间自己的脚本；
+ * 与 startIngest 同构：看板只 spawn，真正写转换产物根 `_sources/` 的是工作空间自己的脚本；
  * 接口立刻返回，进度靠轮询；写盘会被 watchWorkspace 捕获，页面自己刷新。
  *
  * **看板自己不连数据库**、不加驱动依赖 —— 连库这件事整个发生在子进程里。
@@ -954,7 +954,7 @@ function summarizeWebIngestLog(log, exitCode) {
 
 /**
  * 在工作空间里异步跑 `scripts/web_ingest.py --inbox`。
- * 看板只 spawn，真正写 visualization/references/<slug>/ 与 input/converted/ 的是脚本本身。
+ * 看板只 spawn，真正写 visualization/references/<slug>/ 与转换产物根（`output/converted/`）的是脚本本身。
  * 参数由服务端写死为 `--inbox`，不读请求体里的任何路径或 URL。
  */
 async function startWebIngest(project) {
@@ -1328,7 +1328,8 @@ function requireProject(id) {
  * `visualization/` 整树（覆盖 references/ 与 prototypes/ 两个子目录）：
  * 参考或原型包增删、zip 替换后都要推。原型刷新写的镜像和离线 zip、
  * 参考收件箱收下的新目录也在这棵树上，完成后参考 tab 会自己刷新。
- * 收件箱抽出的 Markdown 落在 `input/converted/`，同样在监听内。
+ * 收件箱抽出的 Markdown 落在转换产物根：新布局 `output/converted/`、旧布局 `input/converted/`，
+ * 两处都在 input/ output/ 的递归监听内，搬家不用加 watcher。
  * 推送给原型仓的 `.workspace-inbox.md` 在工作空间外，
  * 不接 SSE，只在任务结果行体现。
  * 它**可能启动时还不存在** —— 老工作空间要等用户
@@ -1794,8 +1795,8 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return json(res, 200, listDelivery(project.root, url.searchParams.get('docKey') || ''));
   }
 
-  // 产出 .md 转成 Word：**第九条窄例外**。看板只 spawn 工作空间的 md2docx.py，
-  // 载荷只有 docKey、模板名与 overwrite，不收路径；成品落在 .md 同目录、同名（见 docxTools.mjs）。
+  // .md 转成 Word：**第九条窄例外**。看板只 spawn 工作空间的 md2docx.py，
+  // 载荷只有 docKey、模板名与 overwrite，不收路径；成品落点由脚本按来源计算（见 docxTools.mjs）。
   if (head === 'projects' && id && action === 'docx' && segments[3] === 'convert' && segments.length === 4) {
     if (req.method !== 'POST') return json(res, 405, { error: '只接受 POST' });
     if (rejectIfRemoteWrite(res, allowMutations)) return undefined;

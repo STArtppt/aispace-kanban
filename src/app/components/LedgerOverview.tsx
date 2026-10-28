@@ -3,8 +3,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SectionTitle, Stat } from '@/components/Primitives';
 import { Completeness, MetaView } from '@/components/MetaView';
-import type { FileItem, Scan } from '@/lib/api';
+import type { Scan } from '@/lib/api';
 import { formatRelative, formatWords } from '@/lib/format';
+import { cn } from '@/lib/utils';
 
 type Stage = { key: string; title: string; hint: string; done: boolean; current: boolean };
 
@@ -23,8 +24,8 @@ function inferStages(scan: Scan): Stage[] {
   const showcased = (references?.items.length || 0) > 0 || prototypes.items.length > 0;
 
   const stages: Stage[] = [
-    { key: 'ingest', title: '资料入库', hint: 'input/raw → input/converted', done: converted, current: false },
-    { key: 'analysis', title: '现状与需求分析', hint: 'output/analysis', done: analyzed, current: false },
+    { key: 'ingest', title: '资料入库', hint: 'input/raw → converted', done: converted, current: false },
+    { key: 'analysis', title: '需求分析', hint: 'output/analysis', done: analyzed, current: false },
     { key: 'docs', title: '文档交付', hint: 'output/docs', done: documented, current: false },
     { key: 'showcase', title: '视觉呈现', hint: 'visualization/', done: showcased, current: false },
   ];
@@ -34,18 +35,24 @@ function inferStages(scan: Scan): Stage[] {
   return stages;
 }
 
-export function OverviewPanel({
+/**
+ * 资料台账预览的上半部分（原「概览」视图精简而来）：抬头、三格统计、四步进度、元信息摘要。
+ * 下半部分 `input/INDEX.md` 正文由阅读器接着渲染。「最近的产出」不再保留 —— 产出视图本身按时间排序。
+ * 预览窗口可能很窄：统计格按最小宽度自动换行，进度条是一行可换行的小标签，都不出横向滚动。
+ */
+export function LedgerOverview({
   scan,
-  onOpen,
-  onGoto,
+  onOpenPath,
 }: {
   scan: Scan;
-  onOpen: (item: FileItem) => void;
-  onGoto: (view: 'input' | 'output' | 'prototypes') => void;
+  /** 「看原文」打开 project.yaml；不给就不显示这个按钮 */
+  onOpenPath?: (path: string) => void;
 }) {
   const stages = inferStages(scan);
   const { meta } = scan;
-  // 输入/产出页顶部的统计卡并到这里：待转换、存疑、原件动过都是要人处理的
+  const title = meta.data?.identity?.项目名称 || meta.data?.workspace?.name || scan.project.name;
+  const stage = meta.data?.workspace?.stage;
+  // 待转换、存疑、原件动过都是要人处理的
   const stale = scan.input.stats.stale ?? 0;
   const archived = scan.output.stats.archived;
   // 旧服务进程没有 archived：当 0，提示不出现
@@ -59,15 +66,18 @@ export function OverviewPanel({
   if (stale) todoParts.push(`${stale} 份原件动过`);
   const todoHint = todoParts.length ? todoParts.join(' · ') : '资料侧没有待处理项';
 
-  // 标题 + 工作空间路径已经常驻在 App 的看板抬头里，这里不再重复一遍
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h2 className="font-display text-xl leading-tight">{title}</h2>
+        {stage ? <Badge variant="outline">{stage}</Badge> : null}
+      </div>
+
       {meta.error ? (
         <div className="rounded-lg border border-destructive/40 px-4 py-3 text-sm text-destructive">{meta.error}</div>
       ) : null}
 
-      {/* 固定 3 列 + 固定间距：预览开合时高度稳定 */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(11rem,1fr))] gap-2">
         {meta.stats ? (
           <Completeness meta={meta} />
         ) : (
@@ -92,48 +102,34 @@ export function OverviewPanel({
               : formatWords(scan.output.stats.words))
           }
         />
-        <Stat
-          label="待办信号"
-          value={todoCount}
-          hint={todoHint}
-          tone={todoCount ? 'attention' : 'default'}
-        />
+        <Stat label="待办信号" value={todoCount} hint={todoHint} tone={todoCount ? 'attention' : 'default'} />
       </div>
 
-      <section className="flex flex-col gap-3">
+      <section className="flex flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
-          <SectionTitle>工作空间进度</SectionTitle>
+          <SectionTitle>进度</SectionTitle>
           <Badge variant="outline" className="text-muted-foreground">
             推断
           </Badge>
-          <span className="text-xs text-muted-foreground">
-            按目录里有没有产物判断的，不是项目实际阶段
-            {meta.data?.workspace?.stage ? `（项目阶段：${meta.data.workspace.stage}）` : ''}
-          </span>
+          <span className="text-xs text-muted-foreground">按目录里有没有产物判断，不是项目实际阶段</span>
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {stages.map((stage) => (
-            <div
-              key={stage.key}
-              className={
-                stage.current
-                  ? 'flex flex-col gap-1 rounded-lg border border-foreground/40 bg-muted px-4 py-3'
-                  : 'flex flex-col gap-1 rounded-lg border border-border bg-card px-4 py-3'
-              }
-            >
-              <div className="flex items-center gap-2">
-                <CircleDot
-                  className={stage.done ? 'size-3.5 text-foreground' : 'size-3.5 text-muted-foreground/50'}
-                />
-                <span className="text-sm">{stage.title}</span>
-              </div>
-              <span className="font-mono text-[11px] text-muted-foreground">{stage.hint}</span>
-              <span className="text-xs text-muted-foreground">
-                {stage.done ? '已有产物' : stage.current ? '进行中' : '未开始'}
+        <ol className="flex flex-wrap items-center gap-x-1.5 gap-y-1.5 text-sm">
+          {stages.map((s, index) => (
+            <li key={s.key} className="flex items-center gap-1.5" title={`${s.hint} · ${s.done ? '已有产物' : s.current ? '进行中' : '未开始'}`}>
+              {index ? <span className="text-muted-foreground/50">→</span> : null}
+              <span
+                className={cn(
+                  'flex items-center gap-1.5 rounded-md border px-2 py-1',
+                  s.current ? 'border-foreground/40 bg-muted' : 'border-border',
+                  !s.done && !s.current && 'text-muted-foreground',
+                )}
+              >
+                <CircleDot className={s.done ? 'size-3.5 text-foreground' : 'size-3.5 text-muted-foreground/50'} />
+                {s.title}
               </span>
-            </div>
+            </li>
           ))}
-        </div>
+        </ol>
       </section>
 
       <section className="flex flex-col gap-3">
@@ -141,26 +137,13 @@ export function OverviewPanel({
           <SectionTitle>项目元信息</SectionTitle>
           {meta.exists ? (
             <>
-              <Badge variant="muted" className="font-mono">
-                {meta.path}
-              </Badge>
               <span className="text-xs text-muted-foreground">更新于 {formatRelative(meta.mtime)}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  onOpen({
-                    path: meta.path,
-                    name: meta.path,
-                    reader: 'text',
-                    size: 0,
-                    mtime: meta.mtime || '',
-                  })
-                }
-              >
-                <FileCode className="size-3.5" />
-                看原文
-              </Button>
+              {onOpenPath ? (
+                <Button variant="ghost" size="sm" onClick={() => onOpenPath(meta.path)}>
+                  <FileCode className="size-3.5" />
+                  看原文
+                </Button>
+              ) : null}
             </>
           ) : null}
         </div>
@@ -168,45 +151,15 @@ export function OverviewPanel({
         {meta.exists && meta.data ? (
           <MetaView meta={meta} />
         ) : (
-          <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border px-5 py-6">
+          <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border px-4 py-4">
             <p className="text-sm">
               工作空间里还没有 <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs">project.yaml</code>
-              ，上面的阶段判断是看板按目录状态推断的，不是项目事实。
+              ，上面的进度是看板按目录状态推断的，不是项目事实。
             </p>
             <p className="text-xs text-muted-foreground">
               把合同 / 招标技术文件 / 立项文件放进 input/raw/ 转换入库，再让 AI 走 pm-project-meta
               技能提取，这里就会显示项目背景、目标、干系人、里程碑和还缺什么。
             </p>
-          </div>
-        )}
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <SectionTitle>最近的产出</SectionTitle>
-        {scan.output.stats.total ? (
-          <div className="overflow-hidden rounded-lg border border-border">
-            {[...scan.output.analysis, ...scan.output.docs, ...scan.output.decisions]
-              .filter((file) => !file.archived)
-              .sort((a, b) => b.mtime.localeCompare(a.mtime))
-              .slice(0, 5)
-              .map((file) => (
-                <button
-                  key={file.path}
-                  type="button"
-                  onClick={() => onOpen(file)}
-                  className="flex w-full items-center gap-3 border-b border-border px-4 py-2.5 text-left last:border-b-0 hover:bg-accent"
-                >
-                  <span className="min-w-0 flex-1 truncate text-sm">{file.title || file.name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">{formatRelative(file.mtime)}</span>
-                </button>
-              ))}
-          </div>
-        ) : (
-          <div className="flex items-center justify-between rounded-lg border border-dashed border-border px-5 py-6">
-            <p className="text-sm text-muted-foreground">还没有任何产出文档。</p>
-            <Button variant="outline" size="sm" onClick={() => onGoto('input')}>
-              先看资料
-            </Button>
           </div>
         )}
       </section>

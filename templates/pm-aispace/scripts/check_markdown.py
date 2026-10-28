@@ -9,7 +9,7 @@
 写法规范是约定，不是强制 —— agent 直接改文件，谁也拦不住它写 `tags: [a, b]`
 或连着放两个 H1。这个脚本的作用不是阻止违约，是**让违约可见**，不要静默生效。
 
-它**不管** `input/converted/`（转换脚本的产物，重跑即覆盖）和 `input/raw/`（原件，不碰）。
+它**不管** `output/converted/`（转换脚本的产物，重跑即覆盖；旧布局 `input/converted/` 同样跳过）和 `input/raw/`（原件，不碰）。
 `output/questions/` 的字段契约仍由 `check_questions.py` 负责；对那个目录本脚本只查写法子集
 （扁平 front-matter、标题层级），不重复检查问题字段。
 wikilink、callout、行首标签、`%%注释%%`、段尾 `^id`、数学公式看板已经能渲染，这里不再报。
@@ -53,7 +53,7 @@ DEFAULT_DIR = WS / "output"
 SHOW_FILES = 6
 
 # 这些路径即使被扫到也跳过：转换产物与原件不在本规范范围内。
-SKIP_PARTS = {"input/converted", "input/raw"}
+SKIP_PARTS = {"output/converted", "input/converted", "input/raw"}
 
 # ── 产出物记录（output/records/）─────────────────────────────────────────────
 # 契约事实源：output/records/README.md。**那份变了这里要跟着变。**
@@ -62,7 +62,7 @@ RECORD_DIR = "records"
 RECORD_FILE_RE = re.compile(r"^I\d{4}\.md$")
 RECORD_REQUIRED = ("id", "kind", "title", "target", "status", "created")
 
-# kind → 合法状态值。三类不共用一套：分析中间产物不存在「发给对方」，
+# kind → 合法状态值。三类不共用一套：分析产物不存在「发给对方」，
 # 决策不存在「待修订」—— 硬套一套会让每类都带着两三个永远用不上的状态。
 RECORD_STATUS = {
     "analysis": ("drafting", "absorbed", "stale"),
@@ -630,6 +630,15 @@ def main() -> int:
     output_root = directory if directory.name == "output" else directory
     for path in files:
         check_file(path, output_root, report)
+    # 转换产物已搬到 output/converted/。旧位置还有东西 = 没迁移，或有脚本 / AI 还在往旧目录写
+    legacy = WS / "input" / "converted"
+    if legacy.is_dir() and any(not p.name.startswith(".") for p in legacy.iterdir()):
+        report.warn(
+            "旧产物目录",
+            "input/converted/",
+            "转换产物该在 output/converted/。没迁移就跑 scripts/migrate_converted_to_output.py；"
+            "已迁移还冒出来，说明有人按旧约定写了这里",
+        )
 
     if args.json:
         print(

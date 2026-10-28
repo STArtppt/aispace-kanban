@@ -8,7 +8,12 @@ export type ReaderKind =
   | 'html'
   | 'external'
   /** 一摞图片（input/assets/ 下的一个图库），预览区排缩略图，不是单个文件 */
-  | 'gallery';
+  | 'gallery'
+  /**
+   * 资料台账：精简概览 + `input/INDEX.md` 正文。**纯前端**，服务端从不下发这个值，
+   * 由 `ledgerItem()` 合成，不影响契约兼容。
+   */
+  | 'ledger';
 
 /**
  * 产出正文里的标注计数（约定见 templates/pm-aispace 的 pm-project-handover 技能）：
@@ -35,6 +40,14 @@ export interface FileItem {
   date?: string;
   /** 按 input/.ingestignore 命中被忽略：不算待转换。旧服务进程没有这个字段。 */
   ignored?: boolean;
+  /**
+   * 只在 `input.raw` 条目上：`converted` 有对应产物 / `pending` 待转 / `ignored` 命中忽略规则。
+   * 判定在服务端（与 `pending`、`ignored` 同一口径），前端不拿 raw 与 pending 求差。
+   * 可选：旧服务进程没有，缺了「原始资料」退回只列待转、不显示标签（改动前的行为）。
+   */
+  state?: 'converted' | 'pending' | 'ignored';
+  /** 只在 `input.raw` 条目上：有产物，但原件在转换后改过（同产物的 sourceState === 'stale'） */
+  stale?: boolean;
   /** 一条标注都没有时服务端不返回；旧服务进程也没有。缺了就什么都不显示。 */
   annotations?: Annotations;
   /**
@@ -53,8 +66,9 @@ export interface FileItem {
   /** 在组内子目录里（不在 一次归档/ 下）。本轮只能归档组根目录下的文件，这类要置灰说明 */
   nested?: boolean;
   /**
-   * 不透明键：产出三组里的 `.md`、`input/raw/` 里的 `.docx` 才有。「转成 Word」「提炼模板」只拿它指定来源，
-   * 不传路径（AGENTS.md 不变量 1 第九条）。可选：旧服务进程没有，缺了入口置灰、提示重启。
+   * 不透明键：产出三组里的 `.md`、`input/raw/` 里的 `.docx`、转换产物根下的单文件 `.md` 才有。
+   * 「转成 Word」「提炼模板」只拿它指定来源，不传路径（AGENTS.md 不变量 1 第九条）。
+   * 可选：旧服务进程没有。产出列表缺了就置灰；输入转换产物缺了就不出现交付稿栏。
    */
   docKey?: string;
   /**
@@ -90,7 +104,7 @@ export interface ArchiveResult {
 export interface ConvertedItem extends FileItem {
   isDir: boolean;
   /**
-   * 产物在目录树里的位置，相对 input/converted/。新布局下 converted/ 与 raw/ 同构，
+   * 产物在目录树里的位置，相对转换产物根。converted/ 与 raw/ 同构，
    * 树就是资料自己的整理方式。可选：旧服务进程不返回它，缺了就退回按原件目录建树。
    */
   treePath?: string;
@@ -128,7 +142,7 @@ export interface ConvertedItem extends FileItem {
 }
 
 /**
- * 一个数据源在 input/converted/_sources/<源名>/ 下的一份产物。
+ * 一个数据源在转换产物根 `_sources/<源名>/` 下的一份产物。
  * 形状与转换产物同构（服务端复用的就是同一个 describeConverted），多两种正文形态：
  *
  *  - 查询产物：结果 csv 挂在 `sheets` 上（一份产物一行，不拆成「摘要 + 结果」两行）；
@@ -176,7 +190,7 @@ export interface DatabaseSource {
   schemas?: string[];
   /** 配置文件的工作空间内相对路径。orphan 的源没有配置文件，所以可选 */
   configPath?: string;
-  /** 产物目录 input/converted/_sources/<源名>。还没采过就缺省 */
+  /** 产物目录 `<转换产物根>/_sources/<源名>`。还没采过就缺省 */
   productDir?: string;
   /** schema 快照采于何时（快照 frontmatter 里的 converted_at）。没采过就缺省 */
   snapshotAt?: string;
@@ -414,7 +428,21 @@ export interface Scan {
   meta: ProjectMeta;
   input: {
     raw: FileItem[];
+    /**
+     * 转换产物。根目录随布局：新布局 `output/converted/`，旧布局 `input/converted/`（见 `layout`）。
+     * 数据仍挂在 `input` 下（契约不搬家），前端在「产出文档 → 转换产物」渲染；它不属于产出三组，
+     * 不计入 `output.stats`。
+     */
     converted: ConvertedItem[];
+    /**
+     * 转换产物根在哪种布局：`output` 新布局，`input` 旧布局（待迁移），`none` 还没有产物（按新布局）。
+     * 可选：旧服务进程不给，缺了不显示迁移提示。
+     */
+    layout?: 'output' | 'input' | 'none';
+    /** 转换产物根的相对路径（`output/converted` / `input/converted`）。可选，旧服务不给 */
+    convertedRoot?: string;
+    /** 新旧两处都有东西：用的是 `output/converted/`，`input/converted/` 是残留，待人工确认 */
+    convertedLeftover?: boolean;
     assets: FileItem[];
     /**
      * assets 按图库分好的样子。可选：旧服务进程不返回它，
@@ -429,13 +457,13 @@ export interface Scan {
      */
     canIngest?: boolean;
     /**
-     * input/sources/*.yaml 配的数据库源，每个源挂着它在 input/converted/_sources/ 下的产物。
+     * input/sources/*.yaml 配的数据库源，每个源挂着它在转换产物根 `_sources/` 下的产物。
      *
      * **可选，而且这个可选就是「数据库源」tab 的唯一判据**：
      * 空数组是合法状态（有 `input/sources/` 目录但还没配源），前端要渲染空态和添加入口；
      * 字段缺省才是「跟数据库无关 / 旧服务进程」，不渲染那个 tab。
      *
-     * 注意 `input/converted/_sources/` 下的产物**不在** `converted` 里，
+     * 注意 `_sources/` 下的产物**不在** `converted` 里，
      * `stats.converted` 也不含它们：数据库和文件是两条来源，混在一个清单里会让
      * 「已转换」的语义糊掉。
      */
@@ -1376,11 +1404,11 @@ export interface DeliveryVersion {
   directlyEdited: boolean;
   /** 这一版上还有几条待处理批注。可选：旧服务不给 */
   pendingNotes?: number;
-  /** 同目录同名的 .docx；null = 没有。可选：旧服务不给（当成没有） */
+  /** 这一版的 .docx；null = 没有。可选：旧服务不给（当成没有） */
   docx?: DeliveryDocx | null;
 }
 
-/** 「转成 Word」的成品：与 .md 同目录同名 */
+/** 「转成 Word」的成品 */
 export interface DeliveryDocx {
   path: string;
   size: number;
@@ -1389,14 +1417,22 @@ export interface DeliveryDocx {
   generated: boolean;
 }
 
-/** GET delivery?docKey=：某份原稿的交付稿 */
+/** GET delivery?docKey=：某份原稿的交付稿，或某份输入转换产物的 Word 成品 */
 export interface DeliveryList {
   source: string;
   dir?: string;
   versions: DeliveryVersion[];
-  /** 原稿的记录编号；没有记录时缺省（交付稿上的批注会退回看板缓存） */
+  /**
+   * `input`：来源是输入转换产物，只有 Word，没有版本和定稿。
+   * `output` 或缺省：产出原稿。旧服务不给这个字段，按产出原稿显示。
+   */
+  sourceKind?: 'output' | 'input';
+  /** 原稿的记录编号；没有记录时缺省（交付稿上的批注会退回看板缓存）。输入来源不给 */
   recordId?: string;
-  /** 原稿同目录同名的 .docx；null = 没有。可选：旧服务不给（当成没有） */
+  /**
+   * 已转出的 .docx。镜像目录优先，原稿旁边的旧成品兜底；没有为 null。
+   * 可选：旧服务不给（当成没有，按钮保持「转成 Word」）。
+   */
   sourceDocx?: DeliveryDocx | null;
   /** 镜像目录下的 `定稿.md`。可选：旧服务、还没定稿都没有（版本条不出现「定稿」） */
   final?: DeliveryFinal;
@@ -1644,7 +1680,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
   /**
-   * 「转成 Word」：服务端 spawn 工作空间的 md2docx.py（第九条例外），成品落在 .md 同目录同名。
+   * 「转成 Word」：服务端 spawn 工作空间的 md2docx.py（第九条例外）。
+   * 成品落在按来源算出的镜像目录（产出原稿、输入转换产物）或交付稿同目录，结果里的 `target` 是实际路径。
    * 同名文件没有生成标记 409（kind `not-generated`）、带标记但没勾覆盖 409（`exists`）、缺 pandoc 400（`no-pandoc`）。
    */
   docxConvert: (id: string, body: DocxConvertRequest) =>
@@ -1830,7 +1867,8 @@ export const api = {
   deaiRuleVersion: (id: string, version: number) =>
     request<DeaiRuleVersion>(`/api/projects/${id}/deai/rules/versions/${encodeURIComponent(String(version))}`),
   /**
-   * 某份原稿的交付稿版本（只读）。只收原稿的 docKey。
+   * 某份原稿或输入转换产物的交付稿列表（只读）。只收 docKey。
+   * 输入来源返回 `sourceKind: 'input'` 且 `versions` 为空；旧服务对这种键 400，阅读器不显示栏、不报错。
    * **旧服务进程 404 时阅读器不显示版本条、不报错**（`isUnsupported`）。
    */
   deliveryVersions: (id: string, docKey: string) =>

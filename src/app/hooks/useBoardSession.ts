@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FileItem, Scan } from '@/lib/api';
 import { CODE_LANG_BY_EXT } from '../../shared/codeLang.mjs';
 
-export type View = 'overview' | 'input' | 'output' | 'prototypes';
+export type View = 'input' | 'output' | 'prototypes';
 
-const VIEWS: readonly View[] = ['overview', 'input', 'output', 'prototypes'];
+/** 旧版本还有 `overview`（概览视图已并进资料台账）：读到它和其他不认识的值一样退回「输入资料」 */
+const VIEWS: readonly View[] = ['input', 'output', 'prototypes'];
 const VIEW_KEY = 'aispace-kanban:last-view';
 const PREVIEW_KEY = 'aispace-kanban:last-preview';
 
@@ -15,9 +16,9 @@ function isView(value: string): value is View {
 function readView(): View {
   try {
     const raw = localStorage.getItem(VIEW_KEY) || '';
-    return isView(raw) ? raw : 'overview';
+    return isView(raw) ? raw : 'input';
   } catch {
-    return 'overview';
+    return 'input';
   }
 }
 
@@ -138,16 +139,35 @@ function findFileInScan(scan: Scan, path: string): FileItem | null {
       mtime: scan.meta.mtime || '',
     };
   }
-  if (scan.input.indexPath === path) {
-    return {
-      path: scan.input.indexPath,
-      name: 'INDEX.md',
-      reader: 'markdown',
-      size: 0,
-      mtime: '',
-    };
-  }
+  // INDEX.md 一律以台账打开：文档里链到它、刷新后恢复，都是同一个入口
+  if (path === ledgerItem(scan).path) return ledgerItem(scan);
   return null;
+}
+
+/** 没有 INDEX.md 时台账也要有个稳定路径：记住的预览与列表高亮靠它对上 */
+const LEDGER_FALLBACK_PATH = 'input/INDEX.md';
+
+/**
+ * 「原始资料」顶部「资料台账」行打开的条目。`ledger` 是前端专用的阅读器类型，
+ * 阅读器据它在 INDEX.md 正文上方加精简概览；没有 INDEX.md 时只有概览。
+ */
+export function ledgerItem(scan: Scan): FileItem {
+  return {
+    path: scan.input.indexPath || LEDGER_FALLBACK_PATH,
+    name: '资料台账',
+    title: '资料台账',
+    reader: 'ledger',
+    size: 0,
+    // 扫描不给 INDEX.md 的 mtime；用最近一次入库的时间，重新入库后正文才会重读
+    mtime: lastIngestAt(scan),
+  };
+}
+
+/** 最近一份转换产物的 mtime（扫描结果不按时间排序，要自己取最大） */
+export function lastIngestAt(scan: Scan): string {
+  let latest = '';
+  for (const item of scan.input.converted) if (item.mtime > latest) latest = item.mtime;
+  return latest;
 }
 
 /**
@@ -177,7 +197,7 @@ export function useBoardSession(activeId: string, scan: Scan | null) {
     [activeId],
   );
 
-  /** 清单、概览、搜索等链接以外的入口，以及关闭预览：都从头开始，后退链清空 */
+  /** 清单、台账、搜索等链接以外的入口，以及关闭预览：都从头开始，后退链清空 */
   const selectFile = useCallback(
     (item: FileItem | null) => {
       setBackStack([]);

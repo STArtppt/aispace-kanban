@@ -49,7 +49,7 @@
 
 测点字典
 --------
-实测数据里只有 senid，没有中文名。脚本会自动到 `input/converted/` 找已转换的**测点字典**
+实测数据里只有 senid，没有中文名。脚本会自动到 `output/converted/` 找已转换的**测点字典**
 （标准化测点表 `测点表point_info.csv` / `point-info`，兜底用「ID + 名称」两列的测点清单），
 按 code_sd / code_jk / point_code 多键匹配，把流域、场站、测点名称、单位补齐，
 并在 `字典来源` 列里记下这条信息是从哪份字典来的（溯源要求）。
@@ -61,12 +61,12 @@
 （不同系统、不同测点集），合成一个库反而混。目录结构镜像 `input/raw/`，见 `scripts/layout.py`：
 
     input/raw/现场数据/wds_real_data.csv          ← 测点时序
-      → input/converted/现场数据/_manifest_wds_real_data.md
-      → input/converted/现场数据/SplittingObject/wds_real_data/实测数据.sqlite …
+      → output/converted/现场数据/_manifest_wds_real_data.md
+      → output/converted/现场数据/SplittingObject/wds_real_data/实测数据.sqlite …
 
     input/raw/现场数据/t02_product_day.csv        ← 日指标
-      → input/converted/现场数据/_manifest_t02_product_day.md
-      → input/converted/现场数据/SplittingObject/t02_product_day/日指标.sqlite
+      → output/converted/现场数据/_manifest_t02_product_day.md
+      → output/converted/现场数据/SplittingObject/t02_product_day/日指标.sqlite
             覆盖清单.csv         一行一个（组织 × 机组 × 指标）
             未匹配组织.csv / 未匹配指标.csv   字典里查不到的（有才生成）
 
@@ -101,11 +101,11 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from layout import md_link, rel_path, split_paths  # noqa: E402  产物落点规则，三个脚本共用
+from layout import ensure_layout, md_link, rel_path, split_paths  # noqa: E402  产物落点规则，三个脚本共用
 
 REPO = Path(__file__).resolve().parent.parent
 RAW = REPO / "input" / "raw"
-CONVERTED = REPO / "input" / "converted"
+CONVERTED = REPO / "output" / "converted"
 
 # 现场导出常见的载体。xlsx 不在此列：几十万行的时序数据没人用 xlsx 导，
 # 真遇到了先让用户另存为 csv，比在这里塞一个 OOXML 流式解析器划算。
@@ -381,7 +381,7 @@ def _stations_of(dir_: Path) -> dict[str, str]:
 
 
 def load_point_dict() -> tuple[dict[str, dict], list[str]]:
-    """扫 input/converted/ 建测点字典索引：多个编码键都指向同一条测点记录。
+    """扫 output/converted/ 建测点字典索引：多个编码键都指向同一条测点记录。
 
     优先用标准化测点表（字段最全）；再用「ID + 名称」形态的测点清单兜底，
     只补标准化表没覆盖到的编码。每条都带 `字典来源`，任何一条翻译都能追回出处。
@@ -1000,7 +1000,7 @@ def write_manifest(manifest_path: Path, out_dir: Path, name: str, src: Path, dig
         "- 先看 `间隔规律性%` 再看 `完整率%`：规律性低于 60% 的测点（雨量站、变化上传的量）"
         "本来就不定时上传，**脚本不给它们算完整率**（`期望条数`/`缺测条数`/`完整率%` 留空），"
         "要判断它们有没有数据问题只能结合业务含义人工看。",
-        "- 测点中文名、场站、单位来自 `input/converted/` 里的测点字典（见上表 `字典来源`），"
+        "- 测点中文名、场站、单位来自 `output/converted/` 里的测点字典（见上表 `字典来源`），"
         "**字典本身的准确性未经现场确认**；引用到正式文档前需要核对。",
         "- 状态码 / 质量位的**取值含义资料里没有说明**，脚本原样保留、不做解释。"
         "把它当筛选条件之前，先向现场确认每个取值的含义（落一条未决问题，见 pm-open-questions 技能）。",
@@ -2141,6 +2141,7 @@ def main() -> int:
     ap.add_argument("--no-sqlite", action="store_true", help="不产出 sqlite，只出 csv 和台账")
     ap.add_argument("--time-format", help='时间格式覆盖，如 "%%m/%%d/%%Y %%H:%%M:%%S"')
     args = ap.parse_args()
+    ensure_layout()
 
     if args.paths:
         targets: list[Path] = []

@@ -91,11 +91,13 @@ const actionClass = 'h-7 px-2 text-xs';
 /**
  * 阅读器顶部的版本条：「原稿 · v001 · v002 …」切换阅读。产出三组的 .md 一律常驻，没有交付稿时只有「原稿」。
  * 选中原稿给「去 AI 味… / Word」，选中某一版给「对比 / Word」。批注统一走阅读器顶栏的铅笔。
- * Word 按钮看同目录同名的 .docx：没有是「转成 Word」，有了变成「预览 Word」（在阅读器里就地切换）+「重新转换」
- * （上一份由脚本改名保留，不覆盖）。
+ * Word 按钮看当前这份的成品：没有是「转成 Word」，有了变成「预览 Word」（在阅读器里就地切换）+「重新转换」
+ * （上一份由脚本改名保留，不覆盖）。落点由调用方按 docxTargetOf 算好后传进来。
  * orange 只给「被直接改过」：版本上是有人绕过批注改了这一版，原稿上是原稿在最新一版之后又改过；待处理批注是中性灰。
  * 有 `定稿.md` 时最末多一个「定稿」（选中值 `final`）：只给「预览 Word」（最近一次定稿那份）和对比，
  * 不给去 AI 味 / 转 Word —— 定稿是交出去的事实记录。没有 `final`（旧服务、未定稿）时与改动前一致。
+ * 选中某一版或定稿时另给「复制路径」：复制这份 .md 在工作空间内的相对路径。
+ * `wordOnly`：输入转换产物。没有版本、去 AI 味、对比、定稿、复制路径，说明行写成品目录。
  */
 export function DeliveryBar({
   versions,
@@ -109,6 +111,8 @@ export function DeliveryBar({
   onDocxPreview,
   onConvert,
   final,
+  wordOnly = false,
+  docxDir,
 }: {
   versions: DeliveryVersion[];
   /** `source` = 原稿，`final` = 定稿 */
@@ -118,17 +122,23 @@ export function DeliveryBar({
   onCompare: (mode: CompareMode | null) => void;
   /** 原稿的「去 AI 味…」 */
   onDeai: () => void;
-  /** 当前选中这一份的同名 .docx；null = 还没转过 */
+  /** 当前选中这一份的 .docx；null = 还没转过。原稿可能是镜像目录，也可能是旁边的旧成品 */
   docx: DeliveryDocx | null;
   docxPreview: boolean;
   onDocxPreview: (on: boolean) => void;
   onConvert: () => void;
   final?: DeliveryFinal;
+  /** 输入转换产物：只留 Word 按钮 */
+  wordOnly?: boolean;
+  /** `wordOnly` 时成品所在目录（工作空间相对路径） */
+  docxDir?: string;
 }) {
   const current = versions.find((v) => v.version === selected);
   const onFinal = selected === 'final' && Boolean(final);
   // 各版的 source_sha 照抄底版，最新一版代表交付稿目前跟到哪
   const sourceEdited = Boolean(versions[versions.length - 1]?.sourceChanged);
+  // 交付稿各版与定稿给「复制路径」（工作空间内相对路径）；原稿的路径在顶栏已有
+  const copyPath = onFinal ? final?.path : current?.path;
   const chip = (key: string, label: string, v?: DeliveryVersion) => (
     <button
       key={key}
@@ -166,13 +176,17 @@ export function DeliveryBar({
   );
   return (
     <div className="flex shrink-0 flex-col gap-1.5 border-b border-border px-3 py-2 sm:px-4">
-      <div className="flex flex-wrap items-center gap-1">
-        {chip('source', '原稿')}
-        {versions.map((v) => chip(v.version, v.version, v))}
-        {final ? chip('final', '定稿') : null}
-      </div>
+      {wordOnly ? null : (
+        <div className="flex flex-wrap items-center gap-1">
+          {chip('source', '原稿')}
+          {versions.map((v) => chip(v.version, v.version, v))}
+          {final ? chip('final', '定稿') : null}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        {onFinal && final ? (
+        {wordOnly ? (
+          <span className="min-w-0 flex-1 truncate" title={docxDir}>成品放在 {docxDir}</span>
+        ) : onFinal && final ? (
           <span className="truncate" title={final.history.join('\n')}>
             {`第 ${final.count} 次定稿 · ${shortTime(final.finalizedAt)} · ${final.sourceName}`}
             {final.originalName ? `（原名 ${final.originalName}）` : ''}
@@ -191,7 +205,24 @@ export function DeliveryBar({
           <span>若要作为交付稿，可以点右侧「去 AI 味」复制提示词，发给 AI 执行，以融入个人的写作风格。</span>
         )}
         <span className="ml-auto flex flex-wrap gap-1">
-          {onFinal ? (
+          {!wordOnly && copyPath ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className={actionClass}
+              title={copyPath}
+              onClick={() => {
+                void writeClipboard(copyPath).then((ok) => {
+                  if (ok) toast.success('已复制路径');
+                  else toast.error('复制失败：浏览器没给剪贴板权限');
+                });
+              }}
+            >
+              <Copy className="size-3.5" />
+              复制路径
+            </Button>
+          ) : null}
+          {wordOnly ? null : onFinal ? (
             compareButton('final', versions.length ? '与最新一版对比' : '与原稿对比')
           ) : current ? (
             <>

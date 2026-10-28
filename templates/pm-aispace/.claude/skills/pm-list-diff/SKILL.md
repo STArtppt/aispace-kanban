@@ -25,8 +25,8 @@ PM 接手项目时反复会遇到同一件事：**甲方给一份清单，我方
 
 ```bash
 # 转换产物已入库的情况：直接看 git 有没有实质 diff
-git diff --stat input/converted/<产物路径>
-git diff input/converted/<产物路径>          # 逐行看
+git diff --stat output/converted/<产物路径>
+git diff output/converted/<产物路径>          # 逐行看
 ```
 
 这一步经常有惊喜：文件指纹变了、`converted_at` 变了，但**内容一个字没改**——
@@ -108,7 +108,7 @@ print(pos)   # {(4,): 53} → 编码稳定在第 5 列，不是你以为的第 4
 如果项目里已经有现场实测数据（`pm-field-data` 建的库），把「实际有数的键」导出来当旁证：
 
 ```bash
-sqlite3 -csv input/converted/现场数据/SplittingObject/<数据集>/实测数据.sqlite \
+sqlite3 -csv output/converted/现场数据/SplittingObject/<数据集>/实测数据.sqlite \
   "SELECT 测点ID AS 键, '有' AS 旁证, '实时库' AS 旁证明细 FROM 测点;" > /tmp/旁证.csv
 ```
 

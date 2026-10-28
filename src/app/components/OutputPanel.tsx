@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Image,
   ListChecks,
+  ListFilter,
   MonitorPlay,
   MoreHorizontal,
   Star,
@@ -19,6 +20,15 @@ import {
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  CONVERTED_FILTERS,
+  ConvertedLayoutNotice,
+  ConvertedList,
+  convertedFilterOptions,
+  hasAnyOutput,
+  matchConverted,
+  type ConvertedFilter,
+} from '@/components/ConvertedList';
 import { DocxExportDialog } from '@/components/DocxExportDialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -47,6 +57,7 @@ import { EmptyState, HeaderIconButton, HeaderTooltip, PanelTitle, Row, RowAction
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
 import { codePreviewLanguage } from '@/components/CodeFileView';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
+import { type IngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
 import { api, type FileItem, type Scan } from '@/lib/api';
 import { absolutePath, datePrefix, formatRelative, markdownLink } from '@/lib/format';
@@ -55,7 +66,7 @@ import { cn } from '@/lib/utils';
 const GROUPS = [
   {
     key: 'analysis' as const,
-    title: '分析中间产物',
+    title: '分析产物',
     // 三栏是流水线位置，不是岗位：调研笔记、口径、大纲和需求拆解都算「想清楚」
     hint: '给自己和 AI 看的中间产物，还不对外发。摸底、拆解、待确认问题、口径、大纲都放这里。',
   },
@@ -66,12 +77,21 @@ const GROUPS = [
   },
   {
     key: 'docs' as const,
-    title: '对外交付文档',
+    title: '交付文档',
     hint: '交出去的成稿。报告、方案、PRD、稿件、演示材料都放这里。',
   },
 ];
 
 type GroupKey = (typeof GROUPS)[number]['key'];
+
+/**
+ * 页签 = 产出三组 + 「转换产物」。转换产物排在三组之后、**不是产出组**：
+ * 不建记录、不能归档、不计入完整度与产出总数（数据仍在 scan.input.converted）。
+ */
+type OutputTab = GroupKey | 'converted';
+
+const CONVERTED_HINT =
+  '脚本从 input/raw/ 转出来的 markdown 与表格，给 AI 读的资料。不算产出：不建记录、不能归档、不计入产出总数。';
 
 const SORTS = {
   name: '按名称',
@@ -82,7 +102,7 @@ const SORTS = {
 type SortKey = keyof typeof SORTS;
 
 const OUTPUT_SORT_KEY = 'aispace-kanban:output-sort';
-/** 当前停在哪一组：产出多了以后不想每次进来都从头翻 */
+/** 当前停在哪一组（含「转换产物」）：产出多了以后不想每次进来都从头翻 */
 const OUTPUT_TAB_KEY = 'aispace-kanban:output-tab';
 /** 列表 / 树形是整个「产出文档」视图共用的偏好，三组一起切 */
 const OUTPUT_VIEW_KEY = 'aispace-kanban:output-view';
@@ -92,9 +112,13 @@ function readOutputSort(): SortKey {
   return raw === 'name' || raw === 'mtimeAsc' || raw === 'mtimeDesc' ? raw : 'name';
 }
 
-function readOutputTab(): GroupKey | null {
+function isOutputTab(value: unknown): value is OutputTab {
+  return value === 'converted' || GROUPS.some((group) => group.key === value);
+}
+
+function readOutputTab(): OutputTab | null {
   const raw = localStorage.getItem(OUTPUT_TAB_KEY);
-  return GROUPS.some((group) => group.key === raw) ? (raw as GroupKey) : null;
+  return isOutputTab(raw) ? raw : null;
 }
 
 /** 图标选择器：正方形触发器，藏掉默认文案和下拉箭头 */
@@ -452,12 +476,15 @@ export function OutputPanel({
   openPath,
   onOpen,
   onOpenTemplateRefine,
+  ingest,
 }: {
   scan: Scan;
   openPath: string;
   onOpen: (item: FileItem) => void;
   /** 「转成 Word」弹窗里的「在模版洗炼里查看」：打开工作台的模版洗炼页，可带模板名 */
   onOpenTemplateRefine?: (name?: string) => void;
+  /** 与「原始资料」共用的转换任务：转换产物行的「重新转换」用它 */
+  ingest: IngestControl;
 }) {
   const { output } = scan;
   const projectId = scan.project.id;
@@ -483,15 +510,28 @@ export function OutputPanel({
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(OUTPUT_VIEW_KEY));
   const [query, setQuery] = useState('');
   // 没存过偏好时停在第一组有东西的，省得一进来就看空态
-  const [tab, setTab] = useState<GroupKey>(
+  const [tab, setTab] = useState<OutputTab>(
     () => readOutputTab() || GROUPS.find(({ key }) => output[key].some((f) => !f.archived))?.key || 'analysis',
   );
+  const onConverted = tab === 'converted';
+  const [convertedFilter, setConvertedFilter] = useState<ConvertedFilter>('all');
+  const converted = scan.input.converted;
+  const hasOutputs = hasAnyOutput(scan);
+  const convertedFilters = convertedFilterOptions(converted, hasOutputs);
+  const activeConvertedFilter = convertedFilters.includes(convertedFilter) ? convertedFilter : 'all';
+  // 旧服务进程没有 canIngest：不给「重新转换」
+  const canIngest = Boolean(scan.input.canIngest);
 
   // 批量模式：null = 没开；开了就是已勾选的路径集合。只在当前标签里选，切标签清空
   const [selected, setSelected] = useState<Set<string> | null>(null);
   useEffect(() => {
-    setSelected((current) => (current ? new Set() : current));
+    // 转换产物不能批量收藏 / 归档：切过去就退出批量
+    setSelected((current) => (tab === 'converted' ? null : current ? new Set() : current));
   }, [tab, projectId]);
+
+  useEffect(() => {
+    setConvertedFilter('all');
+  }, [projectId]);
 
   useEffect(() => {
     localStorage.setItem(OUTPUT_SORT_KEY, sortKey);
@@ -653,6 +693,34 @@ export function OutputPanel({
                 <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
               </SelectContent>
             </Select>
+            {onConverted && convertedFilters.length > 1 ? (
+              <Select
+                value={activeConvertedFilter}
+                onValueChange={(value) => {
+                  if (convertedFilters.includes(value as ConvertedFilter)) {
+                    setConvertedFilter(value as ConvertedFilter);
+                  }
+                }}
+              >
+                <HeaderTooltip label="筛选">
+                  <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="筛选转换产物">
+                    <ListFilter
+                      className={cn(
+                        'size-3.5',
+                        activeConvertedFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
+                      )}
+                    />
+                  </SelectTrigger>
+                </HeaderTooltip>
+                <SelectContent align="end" className="min-w-36 w-max">
+                  {convertedFilters.map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {CONVERTED_FILTERS[option]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : null}
             <ExpandableSearch
               key={projectId}
               value={query}
@@ -660,7 +728,7 @@ export function OutputPanel({
               expandedClassName="w-[10rem] sm:w-[12rem]"
               aria-label="搜索产出文档"
             />
-            {selected ? (
+            {onConverted ? null : selected ? (
               <DropdownMenu>
                 <HeaderTooltip label="批量操作">
                   <DropdownMenuTrigger
@@ -719,7 +787,7 @@ export function OutputPanel({
         <Tabs
           value={tab}
           onValueChange={(value) => {
-            if (GROUPS.some((group) => group.key === value)) setTab(value as GroupKey);
+            if (isOutputTab(value)) setTab(value);
           }}
           className="gap-4"
         >
@@ -733,6 +801,12 @@ export function OutputPanel({
                 </span>
               </TabsTrigger>
             ))}
+            <TabsTrigger value="converted" className="px-2">
+              <span className="truncate">转换产物</span>
+              <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                {searching ? converted.filter((item) => matchConverted(item, query)).length : converted.length}
+              </span>
+            </TabsTrigger>
           </TabsList>
 
           {groups.map(({ key, title, hint, files, total, archivedFiles, archivedTotal }) => (
@@ -765,6 +839,27 @@ export function OutputPanel({
               />
             </TabsContent>
           ))}
+
+          <TabsContent value="converted" className="flex min-w-0 flex-col gap-2">
+            <TruncatedHint text={CONVERTED_HINT}>{CONVERTED_HINT}</TruncatedHint>
+            <ConvertedLayoutNotice scan={scan} />
+            <ConvertedList
+              items={converted}
+              hasOutputs={hasOutputs}
+              viewMode={viewMode}
+              query={query}
+              activeFilter={activeConvertedFilter}
+              sortKey={sortKey}
+              projectId={projectId}
+              absPath={absPath}
+              openPath={openPath}
+              onOpen={onOpen}
+              canIngest={canIngest}
+              ingestRunning={ingest.running}
+              ingestingPath={ingest.job?.path || ''}
+              onIngest={(filePath) => void ingest.start(filePath)}
+            />
+          </TabsContent>
         </Tabs>
       </section>
 

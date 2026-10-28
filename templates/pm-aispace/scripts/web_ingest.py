@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把网页转成 Markdown，落进 `input/converted/`。
+"""把网页转成 Markdown，落进 `output/converted/`。
 
 正文提取调 `defuddle` CLI，**输入是本地 HTML 文件**而不是 URL ——
 defuddle 自己去抓只能拿到初始 HTML，SPA 站点会变成空壳。
@@ -20,7 +20,7 @@ defuddle 自己去抓只能拿到初始 HTML，SPA 站点会变成空壳。
 `single-file` 是 AGPL-3.0，只 spawn、永不 import（理由见看板仓 `src/server/capture.mjs` 开头）。
 
 落点、`_manifest_` 命名、忽略清单解析全部复用 [`layout.py`](layout.py)，不另起一套。
-网页是一源一产物，所以走 `single_target`：`input/converted/web/<host>/<标题>.md`。
+网页是一源一产物，所以走 `single_target`：`output/converted/web/<host>/<标题>.md`。
 虚拟的 `input/raw/web/...` 路径只用来算落点，**不会往 raw/ 写任何东西**。
 没有 URL 时 host 用 `dropped`，标题用参考 slug。
 
@@ -67,6 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from layout import (  # noqa: E402
     RAW,
     add_ignore_flags,
+    ensure_layout,
     ignore_patterns,
     is_ignored,
     md_link,
@@ -80,7 +81,7 @@ from questions_fm import parse_frontmatter  # noqa: E402
 HERE = Path(__file__).resolve().parent
 WS = HERE.parent
 REF_ROOT = WS / "visualization" / "references"
-CONVERTED = WS / "input" / "converted"
+CONVERTED = WS / "output" / "converted"
 ASSETS = WS / "input" / "assets"
 
 EXT_BY_MIME = {
@@ -913,13 +914,14 @@ def run_url(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="把网页转成 Markdown 落进 input/converted/")
+    ap = argparse.ArgumentParser(description="把网页转成 Markdown 落进 output/converted/")
     ap.add_argument("url", nargs="?", help="要转换的网页 URL（与 --inbox 互斥）")
     ap.add_argument("--inbox", action="store_true", help="扫描 visualization/references/ 根上的散装页面并抽出正文")
     ap.add_argument("--overwrite", action="store_true", help="正文已变时覆盖旧产物")
     ap.add_argument("--as-new", action="store_true", help="正文已变时另存一份，不覆盖旧产物")
     add_ignore_flags(ap)
     args = ap.parse_args()
+    ensure_layout()
 
     if args.inbox and args.url:
         return die("`--inbox` 和 URL 不能一起用。收件箱自己扫根目录，不接受地址。", 2)

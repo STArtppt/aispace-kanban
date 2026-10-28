@@ -6,6 +6,8 @@
  * 那边改了参数这里要跟着改。
  */
 
+import { docxTargetOf } from '@/lib/deaiPrompt';
+
 export const BASE_TEMPLATE = '@base';
 
 /** 旧工作空间没有工具链时，先让 AI 把脚本补齐。看板不替用户复制脚本（那等于看板在写工作空间）。 */
@@ -30,7 +32,7 @@ export function convertPrompt({
   template: string;
   scriptsMissing?: boolean;
 }): string {
-  const target = mdPath.replace(/\.md$/i, '.docx');
+  const target = docxTargetOf(mdPath);
   const spec = template === BASE_TEMPLATE
     ? '通用规范的样式清单在 `scripts/docxkit/base-spec.json`'
     : `这个模板的写作规定在 \`output/docx-template/${template}/spec.md\`，转换前先对照它检查 md 的写法`;
@@ -49,8 +51,10 @@ export function convertPrompt({
     `python3 scripts/md2docx.py "${mdPath}" --template ${template}`,
     '```',
     '',
-    `3. 成品是同目录的 \`${target}\`。同名文件已存在时：`,
-    '   - 它是上次转换生成的（带生成标记）→ 加 `--archive` 重跑：上一份改名为「基名-上次转换时间.docx」留在原处，新的仍用原名；',
+    `3. 成品落在 \`${target}\`。脚本按来源位置自己算落点，不要加输出路径参数。`,
+    '   实际写出的文件不在这个路径（写到了来源旁边）→ 工作空间脚本是旧版，停下，先走 pm-template-update 更新模板，不要改 `input/`。',
+    '   同名文件已存在时：',
+    '   - 它是上次转换生成的（带生成标记）→ 加 `--archive` 重跑：上一份改名为「基名-上次转换时间.docx」留在同一目录，新的仍用原名；',
     '     脚本说不认识 `--archive`（工作空间脚本是旧版）就停下告诉我，先走 pm-template-update 更新模板，不要改用 `--overwrite`；',
     '   - 它不是本工具生成的（人手改过另存的、客户给的原件）→ 脚本会拒绝，**不要删它**，先问我怎么处理。',
     '4. 转换后检查：标题编号连续、没有双重编号；表格有边框、表头加粗、表题在表格上方；图片都在、图题在图下方；',

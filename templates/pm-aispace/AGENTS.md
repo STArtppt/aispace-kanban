@@ -17,22 +17,22 @@ input/  →  （分析）  →  output/  →  visualization/
 | --- | --- | --- |
 | `project.yaml` | 项目元信息：背景目标、干系人、里程碑、成果要求、约束 | 由 `pm-project-meta` 增量维护 |
 | `input/raw/` | 人类给的原始资料 | **只读**，永不改动删除，是溯源的终点。**默认不读**（见「不要做的事」） |
-| `input/converted/` | 转换后的 `.md` / `.csv`，**目录结构镜像 `input/raw/`** | 脚本生成，**不要手改**（重跑会覆盖） |
 | `input/assets/` | 图片：`<文档名>/` 是抽出的图，`未分类/` 是直接放进 raw/ 的单图 | 脚本生成。看图直接读图片文件 |
-| `input/INDEX.md` | 资料台账 | 表格由脚本生成；人工判断写「人工批注」区 |
-| `output/analysis/` | 分析中间产物（现状基线、需求拆解） | 自由写 |
-| `output/docs/` | 对外交付文档（PRD、需求规格、评审材料），含演示用 HTML | 自由写 |
+| `input/INDEX.md` | 资料台账（产物列链到 `../output/converted/…`） | 表格由脚本生成；人工判断写「人工批注」区 |
+| `output/converted/` | 转换后的 `.md` / `.csv`，**目录结构镜像 `input/raw/`**；正文里的图片跨目录指回 `input/assets/`。不属于下面的产出三组（不建记录、不归档） | 脚本生成，**不要手改**（重跑会覆盖） |
+| `output/analysis/` | 分析产物（现状基线、需求拆解） | 自由写 |
+| `output/docs/` | 交付文档（PRD、需求规格、评审材料），含演示用 HTML | 自由写 |
 | `output/decisions/` | 决策记录，一个决策一个文件 | 只追加，不改历史决策 |
 | `output/<组>/一次归档/` | 不再作数、从主列表移开的产出物；看板照样能搜能预览 | 看板调 `scripts/archive_output.py` 移入，**只移动不删除**；二次归档走 `pm-output-archive`，**不写「无需再读」清单** |
 | `output/questions/` | 未决问题，一问一文件 `Q<四位编号>.md`；不进文件列表，在看板 ⌘K 工作台「问题单」处理 | 走 `pm-open-questions`；字段见该目录 `README.md` |
 | `output/records/` | 产出物记录，一份产出物一个 `I<四位编号>.md`；在工作台「记录单」处理 | 走 `pm-output-record`；字段见该目录 `README.md` |
 | `output/feedback/` | 交给看板维护者的缺陷单与贡献单 `F<四位编号>.md`；在工作台「反馈单」看和发送 | 字段见该目录 `README.md`；见「看板显示不对时」「贡献改进」 |
-| `output/delivery/` | 去 AI 味后的交付稿：镜像原稿路径，`v<三位序号>.md` 逐版保存；只从原稿阅读器的版本条进入。同目录的 `定稿.md` 记「最后交出去的是哪份 Word」 | `v*.md` 只由 `pm-deai-writing` 写，**每版写出后不再改动**；`定稿.md` / `定稿.assets/` 只由看板「定稿」（`scripts/finalize_delivery.py`）写，**不要手改**；见「交付前去 AI 味」 |
+| `output/delivery/` | 去 AI 味后的交付稿：镜像原稿路径，`v<三位序号>.md` 逐版保存；同目录还有原稿的 `<基名>.docx`、各版的 `v<序号>.docx`。`converted/` 子目录是 `output/converted/` 单文件转出的 Word。只从阅读器进入。同目录的 `定稿.md` 记「最后交出去的是哪份 Word」 | `v*.md` 只由 `pm-deai-writing` 写，**每版写出后不再改动**；`.docx` 只由 `scripts/md2docx.py` 写；`定稿.md` / `定稿.assets/` 只由看板「定稿」（`scripts/finalize_delivery.py`）写，**不要手改**；见「交付前去 AI 味」 |
 | `output/docx-template/` | Word 模板，一个模板一个子目录；在工作台「模版洗炼」页看和提炼 | 只由 `scripts/docx_template.py` 写，见「Word 模板与转 Word」 |
 | `visualization/references/` | 收下来的**别人的**页面：竞品、友商后台、公开文档站 | 一份一个目录，入口叫 `index.html`；保持原样 |
 | `visualization/prototypes/` | 可预览原型库 | 一个东西一个子目录，入口叫 `index.html`，见「阶段四」 |
 
-## 产物落点：`input/converted/` 镜像 `input/raw/`
+## 产物落点：`output/converted/` 镜像 `input/raw/`
 
 转换产物**不平铺**，目录结构与 `input/raw/` 一一对齐 —— 删 `converted/某批/` 就删掉那批资料的全部产物。
 规则实现在 [`scripts/layout.py`](scripts/layout.py)（各转换脚本共用，忽略清单解析也在这里）：
@@ -45,21 +45,27 @@ input/  →  （分析）  →  output/  →  visualization/
 
 ```
 input/raw/站点数据/0_公共/7大库闸门底坎库容.xlsx
-  → input/converted/站点数据/0_公共/_manifest_7大库闸门底坎库容.md          ← 看板预览点这个
-  → input/converted/站点数据/0_公共/SplittingObject/7大库闸门底坎库容/Sheet1.csv
+  → output/converted/站点数据/0_公共/_manifest_7大库闸门底坎库容.md          ← 看板预览点这个
+  → output/converted/站点数据/0_公共/SplittingObject/7大库闸门底坎库容/Sheet1.csv
 ```
 
 产物名尽量保留原文件名，只压掉路径分隔符这类会出事的字符。
 
-**旧工作空间**（产物平铺在 `converted/` 根下）用 `scripts/migrate_converted.py` 搬：只搬不重转，
-顺带改写 `output/` 里的溯源引用。先 `--dry-run` 看计划，搬完重跑转换脚本，再跑一次 `--citations-only`。
+**产物还在 `input/converted/` 的工作空间**（旧约定）用 `scripts/migrate_converted_to_output.py` 整体搬到
+`output/converted/`：先 `--dry-run` 看计划，确认后执行；它改写产物里的相对链接和 `input/INDEX.md`，
+**不碰** `output/analysis|docs|decisions`（那里写着 `input/converted/…` 的旧引用不用改，看板认）。
+目标已有内容时它会拒绝，交给人判断；`--reverse` 可以搬回去。没迁移之前转换脚本会拒绝写产物。
+
+**更早的工作空间**（产物平铺在 `input/converted/` 根下）先用 `scripts/migrate_converted.py` 在原地搬成镜像
+（只搬不重转，顺带改写溯源引用，先 `--dry-run`），再走上面的迁移，然后重跑转换脚本、再跑一次它的 `--citations-only`。
 认不出主人的产物原地保留并列出，交给人判断。
 
 ## 溯源是硬要求
 
 PM 接手项目最大的风险是**把自己的推断当成项目事实**写进 PRD。所以：
 
-- 陈述项目现状的每条结论都要能指回来源：`（来源：input/converted/需求规格.md，"3.2 计费规则"）`。
+- 陈述项目现状的每条结论都要能指回来源：`（来源：output/converted/需求规格.md，"3.2 计费规则"）`。
+  迁移前写下的 `input/converted/…` 引用不用改，看板把它当成同一份。
 - 你自己的推断显式标 `[推断]`，会议口述标 `[口述待确认]`。
 - 资料里没有答案的不要猜，落成一条未决问题（走 [`skills/pm-open-questions`](skills/pm-open-questions/SKILL.md)）——
   **没有答案本身就是重要产出**。
@@ -68,7 +74,7 @@ PM 接手项目最大的风险是**把自己的推断当成项目事实**写进 
 ## 项目元信息 project.yaml
 
 `project.yaml` 是工作空间的身份证。**新建时几乎是空的**（合同、招标文件多是后补的），
-等资料进了 `input/converted/` 再用 `pm-project-meta` 增量补全。三条规则：
+等资料进了 `output/converted/` 再用 `pm-project-meta` 增量补全。三条规则：
 
 - **`null` 有意义**：「该有但资料里还没有」。不要用「暂无」「待定」占位，也不要为了看着完整而填。
 - **每个非 null 字段都要在 `provenance` 里有来源**（点号路径 → 文件和小节）。
@@ -158,7 +164,7 @@ python3 scripts/ingest.py --force              # 全部重转
 | 脚本 | 做什么 | 写到哪 |
 | --- | --- | --- |
 | `scripts/docx_template.py` | 从客户旧 Word 提炼模板：`collect` 采集，`build` 按决定生成 | 只写 `output/docx-template/<模板名>/` |
-| `scripts/md2docx.py` | 按模板把 `.md` 转成 `.docx`（需 pandoc 3） | 只写 `.md` 同目录同名的 `.docx`；`--archive` 时把上一份改名为 `<基名>-<上次转换时间>.docx` |
+| `scripts/md2docx.py` | 按模板把 `.md` 转成 `.docx`（需 pandoc 3） | 产出原稿写 `output/delivery/<组>/<子路径>/<基名>.docx`；交付稿写同目录 `v<序号>.docx`；`output/converted/` 单文件写 `output/delivery/converted/<子路径>/<基名>.docx`（不写进 `output/converted/`）；其它位置仍写旁边。`--archive` 时把落点上的上一份改名为 `<基名>-<上次转换时间>.docx` |
 
 看板「模版洗炼」「转成 Word」跑的是同一份脚本；用户粘来提示词就照做。
 操作步骤见 [`output/docx-template/README.md`](output/docx-template/README.md)「给 AI 的步骤」。必守的几条：
@@ -229,7 +235,7 @@ Axhub Make 服务端在本项目之外常驻，**不要在这里跑 `npx @axhub/
 | `output/delivery/` | **管**；front-matter **必填且扁平**，字段以该目录 README 为准 | 看板靠 `source_sha` / `body_sha` 判断原稿是否更新、是否被直接改过 |
 | `output/docx-template/` | `spec.md` 语法管、front-matter 不强制 | 其余是 json / docx |
 | 各目录下的 `README.md` | 语法管、front-matter **不强制** | 目录说明 |
-| `input/converted/` | **不管** | 脚本生成；要改形态就改脚本 |
+| `output/converted/` | **不管**（`check_markdown.py` 跳过它） | 脚本生成；要改形态就改脚本 |
 | `input/raw/` | **不碰** | 原件只读 |
 
 ### 现在可用
@@ -279,7 +285,7 @@ updated: 2026-07-30
 
 | 想查什么 | 路径 |
 | --- | --- |
-| 概览页怎么显示 `project.yaml` | `src/app/components/MetaView.tsx`、`src/server/meta.mjs` |
+| 资料台账（输入资料 → 原始资料顶部）怎么显示 `project.yaml` | `src/app/components/MetaView.tsx`、`src/server/meta.mjs` |
 | front-matter 解析 | `src/server/frontmatter.mjs` |
 | Markdown 渲染 | `src/app/components/Markdown.tsx`、`src/app/lib/markdownSyntax.ts` |
 | 文档内链接与图片地址 | `src/app/lib/markdownUrls.ts` |
@@ -304,8 +310,8 @@ GitHub 的 `main` 可能与用户本机版本有出入，对不上时如实说�
 
 ## 不要做的事
 
-- **不要主动读 `input/raw/`**（除非用户明确说「打开原件」「对照原始 PDF」）。一律优先 `input/converted/` 和 `input/INDEX.md`。
-- 不要修改或删除 `input/raw/` 里的任何文件；不要手改 `input/converted/` 的产物或在里面手建目录。
+- **不要主动读 `input/raw/`**（除非用户明确说「打开原件」「对照原始 PDF」）。一律优先 `output/converted/` 和 `input/INDEX.md`。
+- 不要修改或删除 `input/raw/` 里的任何文件；不要手改 `output/converted/` 的产物或在里面手建目录。
 - **不要把大表整个读进上下文**（现场数据 csv / sqlite 事实表、`测点主表.csv`），走 SQL。
 - 不要把散装 `.html` 扔在 `visualization/prototypes/` 或 `references/` 根上，不要动 Axhub Make 生成的目录。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。

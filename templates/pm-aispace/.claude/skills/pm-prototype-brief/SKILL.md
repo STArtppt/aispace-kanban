@@ -20,7 +20,7 @@ description: 把 PRD 和需求拆解收敛成一份原型输入说明（页面�
 PM 之间有时会互传 **单个 `.html` 可点击稿**（评审前草稿、场景演示）。这类文件：
 
 - 放进 `input/raw/`，由 `pm-doc-ingest` / `scripts/ingest.py` 入库：保留 HTML 供预览，
-  并生成 `input/converted/<raw 相对目录>/_manifest_<名>.md`（校验 + 摘要），
+  并生成 `output/converted/<raw 相对目录>/_manifest_<名>.md`（校验 + 摘要），
   HTML 原件在同级 `SplittingObject/<名>/` 下。
 - **不要**放进 `visualization/prototypes/`。别人给的 HTML 是**输入资料**，要留溯源；
   `visualization/prototypes/` 装的是本工作空间自己产出的成品页。

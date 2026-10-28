@@ -39,30 +39,38 @@ visualization/prototypes/**/.cache/
 # skill-creator 跑评测产生的工作区
 *-workspace/
 
-# 如果原始资料涉密、体积大或不该入库，取消下面这行的注释
-# input/raw/
-
-# ---- 大体积二进制 / 表格产物：input/ 与 visualization/ 下一律不入库 ----
-# input/converted/ 与 input/assets/ 都是脚本产物，重跑 ingest.py / realdata.py / pointtable.py 即可重建；
-# _manifest_*.md 摘要仍入库（看板和 AI 靠它了解全局）。
-# output/ 下的交底包 xlsx / SQL 配置件 / 核对件 csv 是手工交付物，**继续入库**保留版本历史。
-# visualization/ 只入库 html / meta.json；原型 zip 和参考页截图留本地（覆盖上文「参考页默认入库」的截图部分）。
-input/**/*.csv
-input/**/*.sqlite
-input/**/*.sqlite-*
-input/**/*.db
-input/**/*.sql
-input/**/*.docx
-input/**/*.doc
-input/**/*.pptx
-input/**/*.ppt
-input/**/*.xlsx
-input/**/*.xlsm
-input/**/*.xls
-input/**/*.pdf
-input/**/*.zip
+# ---- input/：原件、图片、数据源配置整目录不入库 ----
+# 原件常常涉密、体积大；图片由转换脚本从原件抽出，重跑即可重建；
+# input/sources/*.yaml 是数据源连接形状，跟着本机环境走。只留占位和两份说明。
+# input/INDEX.md、input/README.md、input/.ingestignore 继续入库（不在下面三个目录里）。
+input/raw/*
+!input/raw/.gitkeep
 input/assets/*
 !input/assets/.gitkeep
+input/sources/*
+!input/sources/README.md
+!input/sources/example.yaml.txt
+
+# ---- 大体积二进制 / 表格产物：output/converted/ 与 visualization/ 下一律不入库 ----
+# output/converted/ 是脚本产物（拆表 csv、点表 / 现场数据 sqlite），重跑 ingest.py / realdata.py / pointtable.py 即可重建；
+# 普通 .md 产物与 _manifest_*.md 摘要仍入库（看板和 AI 靠它了解全局）。
+# output/ 其余目录下的交底包 xlsx / SQL 配置件 / 核对件 csv 是手工交付物，**继续入库**保留版本历史。
+# visualization/ 只入库 html / meta.json；原型 zip 和参考页截图留本地（覆盖上文「参考页默认入库」的截图部分）。
+output/converted/**/*.csv
+output/converted/**/*.tsv
+output/converted/**/*.sqlite
+output/converted/**/*.sqlite-*
+output/converted/**/*.db
+output/converted/**/*.sql
+output/converted/**/*.docx
+output/converted/**/*.doc
+output/converted/**/*.pptx
+output/converted/**/*.ppt
+output/converted/**/*.xlsx
+output/converted/**/*.xlsm
+output/converted/**/*.xls
+output/converted/**/*.pdf
+output/converted/**/*.zip
 visualization/**/*.zip
 visualization/**/*.png
 visualization/**/*.jpg

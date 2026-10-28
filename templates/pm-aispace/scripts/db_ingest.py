@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
-"""把数据库当**按需查询的远端资料源**接进来，产物仍然是 input/converted/ 下的文件。
+"""把数据库当**按需查询的远端资料源**接进来，产物仍然是 output/converted/ 下的文件。
 
 与 ingest.py 的关系
 -------------------
-`ingest.py` 读本地文件、写 `input/converted/`；本脚本读远端库、写
-`input/converted/_sources/<源名>/`。两者产物形态同构（都带可溯源的 frontmatter），
+`ingest.py` 读本地文件、写 `output/converted/`；本脚本读远端库、写
+`output/converted/_sources/<源名>/`。两者产物形态同构（都带可溯源的 frontmatter），
 只是生产者不同。看板照样只 `spawn` 本脚本、读 stdout，写盘的是脚本自己。
 
 两层产物
 --------
 L1 schema 快照（低频采一次，KB 级，这是默认进 AI 上下文的唯一一份）::
 
-    input/converted/_sources/<源名>/_manifest_<源名>.md
+    output/converted/_sources/<源名>/_manifest_<源名>.md
 
     表清单、每表列名/类型/注释、主外键、行数**量级**。表多到一份装不下时退化成
     「表清单 + 一句话用途」，单表明细拆进 SplittingObject/<表>.md（沿用 layout.py 的约定）。
 
 L2 查询产物（AI 想问什么才跑）::
 
-    input/converted/_sources/<源名>/<查询名>.csv
-    input/converted/_sources/<源名>/_manifest_<查询名>.md   ← SQL 原文 / 行数 / sha256
+    output/converted/_sources/<源名>/<查询名>.csv
+    output/converted/_sources/<源名>/_manifest_<查询名>.md   ← SQL 原文 / 行数 / sha256
 
 护栏：写操作由数据库自己拒绝
 ----------------------------
@@ -69,7 +69,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from envfile import load_dotenv  # noqa: E402
-from layout import CONVERTED, REPO, repo_rel, safe_component  # noqa: E402
+from layout import CONVERTED, REPO, ensure_layout, repo_rel, safe_component  # noqa: E402
 
 # 源配置的落点：一个源一份 yaml，只写连接的形状，凭据在 .env 里
 SOURCES_DIR = REPO / "input" / "sources"
@@ -1080,6 +1080,7 @@ def main() -> int:
     p_query.set_defaults(func=cmd_query)
 
     args = ap.parse_args()
+    ensure_layout()
     try:
         return args.func(args)
     except (ConfigError, GuardError) as err:

@@ -14,9 +14,9 @@
 
 所以这里走第三条路:**库是远端资料源，只按需取，取到的东西落成文件**。
 
-- **L1 schema 快照**（低频采一次）：`input/converted/_sources/<源名>/_manifest_<源名>.md` —
+- **L1 schema 快照**（低频采一次）：`output/converted/_sources/<源名>/_manifest_<源名>.md` —
   表清单、列名类型注释、主外键、行数量级。KB 级，这是默认进 AI 上下文的唯一一份。
-- **L2 查询产物**（AI 想问什么才跑）：`input/converted/_sources/<源名>/<查询名>.csv`
+- **L2 查询产物**（AI 想问什么才跑）：`output/converted/_sources/<源名>/<查询名>.csv`
   加一份 `_manifest_<查询名>.md` 记 SQL 原文、执行时间、行数、sha256。
   上下文里只留路径和摘要，正文按需读。
 

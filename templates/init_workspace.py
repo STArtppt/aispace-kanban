@@ -47,9 +47,8 @@ COPY_ENTRIES = ["AGENTS.md", "CLAUDE.md", "README.md", ".gitignore", ".env.examp
 # 它和 input/ output/ 的差别在于这边是给人看、能点开的页面，不是要转换的文档。
 BASE_DIRS = [
     "input/raw",
-    "input/converted",
     "input/assets",
-    "output",
+    "output/converted",
     "visualization/references",
     "visualization/prototypes",
     "scripts",

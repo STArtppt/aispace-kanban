@@ -4,7 +4,6 @@ import {
   CircleHelp,
   FolderInput,
   FolderOutput,
-  LayoutDashboard,
   MonitorPlay,
   Moon,
   PanelLeftClose,
@@ -20,7 +19,6 @@ import { HeaderIconButton } from '@/components/Primitives';
 import { HelpPanel } from '@/components/HelpPanel';
 import { InputPanel } from '@/components/InputPanel';
 import { OutputPanel } from '@/components/OutputPanel';
-import { OverviewPanel } from '@/components/OverviewPanel';
 import { QuestionsFab, countPending } from '@/components/QuestionsDialog';
 import { Workbench, type WorkbenchPage } from '@/components/Workbench';
 import { Reader } from '@/components/Reader';
@@ -97,11 +95,10 @@ function useIsWide() {
   return wide;
 }
 
-const NAV: { key: View; label: string; icon: typeof LayoutDashboard }[] = [
-  { key: 'overview', label: '概览', icon: LayoutDashboard },
+const NAV: { key: View; label: string; icon: typeof FolderInput }[] = [
   { key: 'input', label: '输入资料', icon: FolderInput },
   { key: 'output', label: '产出文档', icon: FolderOutput },
-  // 路由键保持 'prototypes'：这是 UI 状态不是目录名，改了每个人的「上次视图」都会掉回概览
+  // 路由键保持 'prototypes'：这是 UI 状态不是目录名，改了每个人的「上次视图」都会掉回输入资料
   { key: 'prototypes', label: '视觉呈现', icon: MonitorPlay },
 ];
 
@@ -380,6 +377,10 @@ export default function App() {
   const isWide = useIsWide();
   // 布局侧：真正打开中（含离场动画期）
   const previewActive = Boolean(mountedPreview);
+  // 切换项目的第一帧 scan 仍是上一个工作空间。这时不能让阅读器拿着旧文档去请求新项目的交付稿接口。
+  const readerWorkspaceAvailable = Boolean(
+    scan && scan.project.id === activeId && scan.available !== false,
+  );
 
   useEffect(() => {
     setPreviewExpanded(false);
@@ -514,9 +515,6 @@ export default function App() {
 
       {scan && scan.available !== false ? (
         <>
-          {view === 'overview' ? (
-            <OverviewPanel scan={scan} onOpen={selectFileAndCloseHelp} onGoto={setView} />
-          ) : null}
           {view === 'input' ? (
             <InputPanel
               scan={scan}
@@ -532,6 +530,7 @@ export default function App() {
               openPath={openFile?.path || mountedFile?.path || ''}
               onOpen={selectFileAndCloseHelp}
               onOpenTemplateRefine={openTemplateRefine}
+              ingest={ingest}
             />
           ) : null}
           {view === 'prototypes' ? (
@@ -722,10 +721,11 @@ export default function App() {
                   pathSet={pathSet}
                   onOpenPath={openLinkedPath}
                   onBack={canGoBack ? goBack : undefined}
-                  workspaceAvailable={scan?.available !== false}
+                  workspaceAvailable={readerWorkspaceAvailable}
                   refreshToken={changeToken}
                   deliveryFocus={deliveryFocus}
                   onOpenDeaiRule={openDeaiRule}
+                  scan={scan}
                 />
               )}
             </section>

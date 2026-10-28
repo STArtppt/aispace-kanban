@@ -78,6 +78,12 @@ print(json.dumps({'warnings': w, 'marker': marker_of(Path(sys.argv[1])),
 
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex');
 
+/** 产出原稿的成品落点：output/docs/<名>.md → <ws>/output/delivery/docs/<名>/<名>.docx（与 md2docx.placement_target 同一规则） */
+function mirrorOf(name) {
+  const stem = name.replace(/\.docx$/i, '').replace(/\.md$/i, '');
+  return path.join(ws, 'output', 'delivery', 'docs', stem, `${stem}.docx`);
+}
+
 /** 读 docx 里的一个部件（node 没有标准库 zip，借 Python 的 zipfile）。 */
 function zipText(docx, part = 'word/document.xml') {
   return execFileSync(PY, [...PY_PRE, '-c',
@@ -189,53 +195,100 @@ try {
     && (r.result.warnings || []).some((w) => w.includes('跳过样张')), '缺 pandoc 时照常生成模板，只跳过样张并说明');
 
   console.log('转换');
+  const placementCode = `
+import json, sys
+sys.path.insert(0, ${JSON.stringify(path.join(ws, 'scripts'))})
+from md2docx import placement_target
+from docxkit import ToolError
+out = []
+for rel in json.loads(sys.argv[1]):
+    try:
+        out.append({"rel": rel, "target": placement_target(rel)})
+    except ToolError as e:
+        out.append({"rel": rel, "code": e.code, "kind": e.kind})
+print(json.dumps(out, ensure_ascii=False))
+`;
+  const placement = JSON.parse(execFileSync(PY, [...PY_PRE, '-c', placementCode, JSON.stringify([
+    'output/docs/方案/总体设计.md',
+    'output/delivery/docs/方案/总体设计/v002.md',
+    'input/converted/需求调研/调研结果交付件/实施方案.md',
+    'output/converted/需求调研/调研结果交付件/实施方案.md',
+    'notes/草稿.md',
+    'input/converted/../raw/x.md',
+    'output/converted/../analysis/x.md',
+  ])], { encoding: 'utf8' }).trim().split('\n').pop());
+  const byRel = Object.fromEntries(placement.map((x) => [x.rel, x]));
+  check(byRel['output/docs/方案/总体设计.md']?.target === 'output/delivery/docs/方案/总体设计/总体设计.docx',
+    '落点：原稿 → 镜像', JSON.stringify(byRel['output/docs/方案/总体设计.md']));
+  check(byRel['output/delivery/docs/方案/总体设计/v002.md']?.target === 'output/delivery/docs/方案/总体设计/v002.docx',
+    '落点：交付稿 → 同目录');
+  check(byRel['input/converted/需求调研/调研结果交付件/实施方案.md']?.target
+    === 'output/delivery/converted/需求调研/调研结果交付件/实施方案/实施方案.docx',
+    '落点：输入（旧布局 input/converted/）→ output/delivery/converted/');
+  check(byRel['output/converted/需求调研/调研结果交付件/实施方案.md']?.target
+    === 'output/delivery/converted/需求调研/调研结果交付件/实施方案/实施方案.docx',
+    '落点：转换产物（新布局 output/converted/）→ 与旧布局同一个镜像目录');
+  check(byRel['output/converted/../analysis/x.md']?.code === 2,
+    '落点：output/converted/ 夹着 .. 时同样退出 2');
+  check(byRel['notes/草稿.md']?.target === 'notes/草稿.docx', '落点：其他位置 → 旁边');
+  check(byRel['input/converted/../raw/x.md']?.code === 2 && byRel['input/converted/../raw/x.md']?.kind === 'bad-target',
+    '落点：输入来源不在 converted 镜像下时退出 2');
+  mkdirSync(path.join(ws, 'input/raw'), { recursive: true });
+  writeFileSync(path.join(ws, 'input/raw/x.md'), '# 合成\n\n正文。\n');
+  r = run('md2docx.py', ['input/converted/../raw/x.md', '--template', '@base']);
+  check(r.code === 2 && r.result?.kind === 'bad-target' && !existsSync(path.join(ws, 'input/raw/x.docx')),
+    '输入来源路径夹着 .. 时退出 2，不写进 input/', JSON.stringify(r.result));
+
   const docs = path.join(ws, 'output', 'docs');
   cpSync(path.join(SCRIPTS, 'docxkit', 'sample.md'), path.join(docs, 'a.md'));
   cpSync(path.join(SCRIPTS, 'docxkit', 'diagram.png'), path.join(docs, 'diagram.png'));
   writeFileSync(path.join(docs, 'hand.md'), '# 合成\n\n正文。\n');
-  cpSync(src, path.join(docs, 'hand.docx'));
-  const handHash = sha(path.join(docs, 'hand.docx'));
+  mkdirSync(path.dirname(mirrorOf('hand.md')), { recursive: true });
+  cpSync(src, mirrorOf('hand.md'));
+  const handHash = sha(mirrorOf('hand.md'));
   r = run('md2docx.py', ['output/docs/hand.md', '--template', '回归', '--overwrite']);
-  check(r.code === 3 && r.result?.kind === 'not-generated' && sha(path.join(docs, 'hand.docx')) === handHash,
+  check(r.code === 3 && r.result?.kind === 'not-generated' && sha(mirrorOf('hand.md')) === handHash,
     '没有生成标记的同名文件：加 --overwrite 也拒绝，原文件不变');
   r = run('md2docx.py', ['output/docs/hand.md', '--template', '回归', '--archive']);
-  check(r.code === 3 && r.result?.kind === 'not-generated' && sha(path.join(docs, 'hand.docx')) === handHash,
+  check(r.code === 3 && r.result?.kind === 'not-generated' && sha(mirrorOf('hand.md')) === handHash,
     '没有生成标记的同名文件：加 --archive 也拒绝，不改名');
 
   r = run('md2docx.py', ['output/docs/a.md', '--template', '@base'], { env: noPandoc });
-  check(r.code === 4 && r.result?.kind === 'no-pandoc' && !existsSync(path.join(docs, 'a.docx')),
+  check(r.code === 4 && r.result?.kind === 'no-pandoc' && !existsSync(mirrorOf('a.md')),
     '缺 pandoc：退出码 4，不生成半成品');
 
   if (hasPandoc) {
     r = run('md2docx.py', ['output/docs/a.md', '--template', '回归']);
     check(r.code === 0 && r.result?.ok, '按客户模板转换成功', JSON.stringify(r.result));
-    const out = inspect(path.join(docs, 'a.docx'), profilePath);
+    check(r.result?.target === 'output/delivery/docs/a/a.docx' && !existsSync(path.join(docs, 'a.docx')),
+      '原稿成品在镜像目录，原稿旁边没有新文件', r.result?.target);
+    const out = inspect(mirrorOf('a.md'), profilePath);
     check(out.marker, '成品带生成标记');
     check(out.warnings.length === 0, '成品各角色格式与规范一致', out.warnings.join('；'));
     r = run('md2docx.py', ['output/docs/a.md', '--template', '回归']);
     check(r.code === 3 && r.result?.kind === 'exists', '成品已存在、不带 --overwrite 时拒绝');
     r = run('md2docx.py', ['output/docs/a.md', '--template', '@base', '--overwrite']);
     check(r.code === 0 && r.result?.overwritten, '带生成标记的成品可以覆盖');
-    const base = inspect(path.join(docs, 'a.docx'), null);
+    const base = inspect(mirrorOf('a.md'), null);
     check(base.warnings.length === 0, '通用规范成品各角色格式与规范一致', base.warnings.join('；'));
     check(base.eff.BodyText.size === 12, '通用规范正文 12pt');
 
     console.log('重新转换时归档上一份');
-    const prevHash = sha(path.join(docs, 'a.docx'));
-    const stamp = zipText(path.join(docs, 'a.docx'), 'docProps/custom.xml').match(/name="aispace-docx-converted"[^>]*>\s*<vt:lpwstr>([^<]*)</);
+    const prevHash = sha(mirrorOf('a.md'));
+    const stamp = zipText(mirrorOf('a.md'), 'docProps/custom.xml').match(/name="aispace-docx-converted"[^>]*>\s*<vt:lpwstr>([^<]*)</);
     check(Boolean(stamp), '成品记下转换时间');
     const want = stamp ? (() => {
       const d = new Date(stamp[1]);
       const p2 = (n) => String(n).padStart(2, '0');
-      return `output/docs/a-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}.docx`;
+      return `output/delivery/docs/a/a-${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}${p2(d.getHours())}${p2(d.getMinutes())}.docx`;
     })() : '';
     r = run('md2docx.py', ['output/docs/a.md', '--template', '@base', '--archive']);
     check(r.code === 0 && r.result?.archived === want && !r.result?.overwritten,
       '--archive：上一份按它记的转换时间改名', JSON.stringify(r.result?.archived));
-    check(existsSync(path.join(ws, want)) && sha(path.join(ws, want)) === prevHash && existsSync(path.join(docs, 'a.docx')),
+    check(existsSync(path.join(ws, want)) && sha(path.join(ws, want)) === prevHash && existsSync(mirrorOf('a.md')),
       '归档件原样保留，新成品仍叫 a.docx');
     r = run('md2docx.py', ['output/docs/a.md', '--template', '@base', '--archive']);
-    check(r.code === 0 && /^output\/docs\/a-\d{12}(-2)?\.docx$/.test(r.result?.archived || '') && r.result.archived !== want,
+    check(r.code === 0 && /^output\/delivery\/docs\/a\/a-\d{12}(-2)?\.docx$/.test(r.result?.archived || '') && r.result.archived !== want,
       '同一分钟再转：归档名追加序号，不覆盖已有归档', r.result?.archived);
     rmSync(path.join(ws, want), { force: true });
     if (r.result?.archived) rmSync(path.join(ws, r.result.archived), { force: true });
@@ -244,11 +297,31 @@ try {
     const log = r.result.log || [];
     check(log.some((l) => l.includes('标题上移一级')) && log.some((l) => /剥离手写编号 6 处/.test(l)),
       '开头唯一的 # 取作文档标题、剥离手写编号', log.join('；'));
-    check(log.some((l) => /批注块：4 个/.test(l)) && !zipText(path.join(docs, 'a.docx')).includes('[!'),
+    check(log.some((l) => /批注块：4 个/.test(l)) && !zipText(mirrorOf('a.md')).includes('[!'),
       '四种批注块转成提示框，成品里搜不到 [!类型]');
     check(log.some((l) => /解除段中加粗 1 处/.test(l)), '只解除句中加粗，段首标签与列表标签保留', log.join('；'));
     r = run('md2docx.py', ['output/docs/a.md', '--template', '@base', '--overwrite', '--keep-bold']);
     check(r.code === 0 && !(r.result.log || []).some((l) => l.includes('解除段中加粗')), '--keep-bold 时不解除加粗');
+
+    mkdirSync(path.join(ws, 'output/delivery/docs/a'), { recursive: true });
+    writeFileSync(path.join(ws, 'output/delivery/docs/a/v002.md'), '# 合成\n\n正文。\n');
+    r = run('md2docx.py', ['output/delivery/docs/a/v002.md', '--template', '@base']);
+    check(r.code === 0 && r.result?.target === 'output/delivery/docs/a/v002.docx'
+      && existsSync(path.join(ws, 'output/delivery/docs/a/v002.docx')),
+      '交付稿成品写在同目录', r.result?.target);
+    mkdirSync(path.join(ws, 'input/converted/需求调研/调研结果交付件'), { recursive: true });
+    writeFileSync(path.join(ws, 'input/converted/需求调研/调研结果交付件/实施方案.md'), '# 合成\n\n正文。\n');
+    r = run('md2docx.py', ['input/converted/需求调研/调研结果交付件/实施方案.md', '--template', '@base']);
+    check(r.code === 0
+      && r.result?.target === 'output/delivery/converted/需求调研/调研结果交付件/实施方案/实施方案.docx'
+      && existsSync(path.join(ws, r.result?.target || 'missing'))
+      && !existsSync(path.join(ws, 'input/converted/需求调研/调研结果交付件/实施方案.docx')),
+      '输入转换产物落在 output/delivery/converted/，input/ 没有新文件', r.result?.target);
+    mkdirSync(path.join(ws, 'notes'), { recursive: true });
+    writeFileSync(path.join(ws, 'notes/草稿.md'), '# 合成\n\n正文。\n');
+    r = run('md2docx.py', ['notes/草稿.md', '--template', '@base']);
+    check(r.code === 0 && r.result?.target === 'notes/草稿.docx' && existsSync(path.join(ws, 'notes/草稿.docx')),
+      '其他位置的 .md 仍落在旁边', r.result?.target);
     writeFileSync(path.join(docs, 'multi.md'), '# 一\n\n正文。\n\n# 二\n\n# 三\n');
     r = run('md2docx.py', ['output/docs/multi.md', '--template', '@base']);
     check(r.code === 0 && (r.result.warnings || []).some((w) => w.includes('有 3 个一级标题')), '多个 # 时不平移并提醒');
@@ -263,8 +336,8 @@ try {
     check(r.code === 0 && (r.result.warnings || []).length === 0, 'Compact 带正文格式时样张反查仍无 warnings',
       JSON.stringify(r.result?.warnings));
     r = run('md2docx.py', ['output/docs/a.md', '--template', '紧凑', '--overwrite']);
-    const cxml = zipText(path.join(docs, 'a.docx'));
-    const cstyles = zipText(path.join(docs, 'a.docx'), 'word/styles.xml');
+    const cxml = zipText(mirrorOf('a.md'));
+    const cstyles = zipText(mirrorOf('a.md'), 'word/styles.xml');
     const styleOf = (name) => (cstyles.match(new RegExp(`<w:style\\b[^>]*>\\s*<w:name w:val="${name}"\\s*/>.*?</w:style>`, 's')) || [''])[0];
     const tt = styleOf('Table Text');
     const ttId = (tt.match(/w:styleId="([^"]+)"/) || [])[1];
@@ -274,7 +347,7 @@ try {
     check(/<w:sz w:val="21"/.test(tt) && /<w:jc w:val="center"/.test(tt) && /w:firstLineChars="0"/.test(tt),
       'Table Text 五号、居中、无首行缩进', tt);
     check((r.result.log || []).some((l) => l.startsWith('表格文字：')), 'log 写明表格文字替换数');
-    const cnum = zipText(path.join(docs, 'a.docx'), 'word/numbering.xml');
+    const cnum = zipText(mirrorOf('a.md'), 'word/numbering.xml');
     const listAbs = [...cnum.matchAll(/<w:abstractNum\b.*?<\/w:abstractNum>/gs)].map((m) => m[0]).filter((b) => !b.includes('<w:pStyle'));
     check(listAbs.length > 0 && listAbs.every((b) => !/w:hanging="[1-9]/.test(b) && b.includes('w:firstLineChars="200"')
       && b.includes('<w:suff w:val="space"/>')), '列表编号没有悬挂缩进：首行缩进、编号后接空格');
@@ -356,33 +429,33 @@ try {
     cpSync(path.join(SCRIPTS, 'docxkit', 'sample.md'), path.join(docs, 'b.md'));
     r = run('md2docx.py', ['output/docs/b.md', '--template', '前置']);
     check(r.code === 0 && r.result?.ok, '按带前置区的模板转换成功', JSON.stringify(r.result));
-    const out = zipText(path.join(docs, 'b.docx'));
+    const out = zipText(mirrorOf('b.md'));
     check(sectCount(out) === fr.sections.length + 1, '成品分节数 = 前置区分节数 + 1', String(sectCount(out)));
     check(!out.includes('{{') && out.includes('样张：示例系统需求说明') && out.includes('合成甲方单位'),
       '封面字段已替换（标题取文档标题，客户单位取 project.yaml）');
     check(sizeBefore(out, '样张：示例系统需求说明') === sizeBefore(fdoc, '{{title}}') && sizeBefore(fdoc, '{{title}}') === '44',
       '封面标题替换后字号不变（22pt）');
-    check(!flat(path.join(docs, 'b.docx')).some((t) => t.includes(FRONT_SENTINEL)) && out.includes('TOC \\o'),
+    check(!flat(mirrorOf('b.md')).some((t) => t.includes(FRONT_SENTINEL)) && out.includes('TOC \\o'),
       '成品（含页眉页脚，按段拼接 run）里没有模板样例原文，目录保留为域');
-    check(headerParas(path.join(docs, 'b.docx')).includes('合成单位页眉　【待填：文档类型】'), '正文页眉的文档类型取不到值时同样写「待填」');
+    check(headerParas(mirrorOf('b.md')).includes('合成单位页眉　【待填：文档类型】'), '正文页眉的文档类型取不到值时同样写「待填」');
     check((r.result.log || []).some((l) => l.includes('project.yaml')), 'log 注明字段取值来源', (r.result.log || []).join('；'));
     check((r.result.warnings || []).some((w) => w.includes('【待填：编制单位】')), '取不到值的字段写「待填」并给 warning');
-    check(zipText(path.join(docs, 'b.docx'), 'word/settings.xml').includes('<w:updateFields w:val="true"/>'), '成品打开时提示更新域');
+    check(zipText(mirrorOf('b.md'), 'word/settings.xml').includes('<w:updateFields w:val="true"/>'), '成品打开时提示更新域');
 
     writeFileSync(path.join(docs, 'c.md'), '---\nclient: 前置覆盖单位\n---\n\n# 合成标题\n\n## 章节\n\n正文。\n');
     r = run('md2docx.py', ['output/docs/c.md', '--template', '前置']);
-    const outC = zipText(path.join(docs, 'c.docx'));
+    const outC = zipText(mirrorOf('c.md'));
     check(r.code === 0 && outC.includes('前置覆盖单位') && !outC.includes('合成甲方单位'), 'md front-matter 优先于 project.yaml');
     writeFileSync(path.join(docs, 'e.md'), '# 合成项目 · 需求调研实施方案\n\n## 章节\n\n正文。\n');
     r = run('md2docx.py', ['output/docs/e.md', '--template', '前置']);
-    const eflat = flat(path.join(docs, 'e.docx'));
-    check(r.code === 0 && eflat.includes('合成项目') && headerParas(path.join(docs, 'e.docx')).includes('合成单位页眉　需求调研实施方案')
+    const eflat = flat(mirrorOf('e.md'));
+    check(r.code === 0 && eflat.includes('合成项目') && headerParas(mirrorOf('e.md')).includes('合成单位页眉　需求调研实施方案')
       && eflat.includes('需求调研实施方案') && (r.result.log || []).some((l) => l.includes('文档类型 ← 文档标题后缀（正文页眉页脚 1 处同步替换）'))
       && !(r.result.warnings || []).some((w) => w.includes('文档类型')),
     '`# X · 类型`：拆成标题与文档类型，正文页眉同步替换，没有「待填」', (r.result.log || []).join('；'));
     writeFileSync(path.join(docs, 'f.md'), '---\ntitle: 合成覆盖标题\n---\n\n# 合成项目 · 需求调研实施方案\n\n## 章节\n\n正文。\n');
     r = run('md2docx.py', ['output/docs/f.md', '--template', '前置']);
-    check(r.code === 0 && flat(path.join(docs, 'f.docx')).includes('合成覆盖标题')
+    check(r.code === 0 && flat(mirrorOf('f.md')).includes('合成覆盖标题')
       && (r.result.warnings || []).some((w) => w.includes('文档类型')), 'front-matter 写了 title 时标题不拆');
     rmSync(path.join(ws, 'project.yaml'));
     writeFileSync(path.join(docs, 'd.md'), '# 合成标题\n\n## 章节\n\n正文。\n');
@@ -408,7 +481,7 @@ try {
     r = run('md2docx.py', ['output/docs/g.md', '--template', '表格封面']);
     const now = new Date();
     const want = `${now.getFullYear()}年${String(now.getMonth() + 1).padStart(2, '0')}月`;
-    check(r.code === 0 && flat(path.join(docs, 'g.docx')).includes(want), `日期按模板写法写成「${want}」`);
+    check(r.code === 0 && flat(mirrorOf('g.md')).includes(want), `日期按模板写法写成「${want}」`);
   }
 
   r = run('docx_template.py', ['build', '--name', '前置', '--source', 'input/raw/带封面.docx', '--decisions', '-', '--regenerate'],

@@ -15,14 +15,14 @@ html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（�
 
 产物落点：镜像 input/raw/ 的目录结构
 --------------------------------------
-`input/converted/` 的目录结构与 `input/raw/` **一一对齐**，好让资料多了以后还能按批次删除：
+`output/converted/` 的目录结构与 `input/raw/` **一一对齐**，好让资料多了以后还能按批次删除：
 
     input/raw/站点数据/0_公共/六大库汛限（正常高）水位.docx
-      → input/converted/站点数据/0_公共/六大库汛限(正常高)水位.md          单产物直接落在镜像目录
+      → output/converted/站点数据/0_公共/六大库汛限(正常高)水位.md          单产物直接落在镜像目录
 
     input/raw/站点数据/0_公共/7大库闸门底坎库容.xlsx
-      → input/converted/站点数据/0_公共/_manifest_7大库闸门底坎库容.md      摘要在镜像目录
-      → input/converted/站点数据/0_公共/SplittingObject/7大库闸门底坎库容/*.csv   正文套一层
+      → output/converted/站点数据/0_公共/_manifest_7大库闸门底坎库容.md      摘要在镜像目录
+      → output/converted/站点数据/0_公共/SplittingObject/7大库闸门底坎库容/*.csv   正文套一层
 
 一份源文件拆出多个产物时，正文收进 `SplittingObject/<文件名>/`，摘要 `_manifest_<文件名>.md`
 留在镜像目录里（看板预览点它）。整个目录合并成一份产物的（点表、现场数据）由
@@ -73,18 +73,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import anydoc  # noqa: E402  与本脚本同目录
 import mineru  # noqa: E402  与本脚本同目录
 from layout import (  # noqa: E402  input/ 的共用约定，三个转换脚本共用一份
-    add_ignore_flags, ignore_patterns, is_ignored, md_link, merge_paths,
+    add_ignore_flags, ensure_layout, ignore_patterns, is_ignored, md_link, merge_paths,
     rel_path, safe_component, single_target, split_paths,
 )
 from xls_reader import XlsError, read_xls  # noqa: E402  与本脚本同目录
 
 REPO = Path(__file__).resolve().parent.parent
 RAW = REPO / "input" / "raw"
-CONVERTED = REPO / "input" / "converted"
+CONVERTED = REPO / "output" / "converted"
 ASSETS = REPO / "input" / "assets"
 # 直接放在 input/raw/ 里的图片没有「所属文档」，统一归到这一堆，看板里就是「未分类」图库
 UNSORTED = ASSETS / "未分类"
 INDEX = REPO / "input" / "INDEX.md"
+
+
+def index_target(p: Path) -> str:
+    """台账「产物」列的路径：相对 INDEX.md 所在目录（产物在 output/converted/，写出来是 `../output/converted/…`）。"""
+    return rel_path(p, INDEX.parent)
+
+
+def index_link(target: str) -> str:
+    # 旧布局读回来的行是 `converted/…`（相对 input/），补 `./`；新布局本来就以 `../` 开头
+    return md_link(target if target.startswith("../") else "./" + target)
 
 
 # 直接原样拷贝的格式：已经是 AI 可读的文本
@@ -1101,7 +1111,7 @@ def write_index(records: list[dict], ignored: list[Path] | None = None) -> None:
             del merged[source]
             continue
         target = row.get("target") or ""
-        if target and not (CONVERTED.parent / target).exists():
+        if target and not (INDEX.parent / target).exists():
             del merged[source]
     records = list(merged.values())
     lines = [
@@ -1114,7 +1124,7 @@ def write_index(records: list[dict], ignored: list[Path] | None = None) -> None:
         "| --- | --- | --- | --- |",
     ]
     for r in sorted(records, key=lambda x: x["source"]):
-        target = f"[`{r['target']}`]({md_link('./' + r['target'])})" if r["target"] else "—"
+        target = f"[`{r['target']}`]({index_link(r['target'])})" if r["target"] else "—"
         lines.append(f"| `{r['source']}` | {r['kind']} | {target} | {r['status']} |")
     if ignored:
         # 忽略的资料不逐份列（可能上千份），按顶层目录汇总一行，让人知道它们还在
@@ -1159,6 +1169,7 @@ def main() -> int:
     ap.add_argument("--mineru-timeout", type=int, default=mineru.POLL_TIMEOUT,
                     help=f"MinerU 单批轮询上限秒数，默认 {mineru.POLL_TIMEOUT}")
     args = ap.parse_args()
+    ensure_layout()
 
     CONVERTED.mkdir(parents=True, exist_ok=True)
     ASSETS.mkdir(parents=True, exist_ok=True)
@@ -1233,7 +1244,7 @@ def main() -> int:
                 and read_recorded_digest(target) == digest and product_intact(target)):
             log(f"= 未变化 {rel}")
             records.append({"source": str(rel), "kind": how,
-                            "target": target.relative_to(CONVERTED.parent).as_posix(), "status": "✓ 已转换"})
+                            "target": index_target(target), "status": "✓ 已转换"})
             continue
 
         if how == "mineru":
@@ -1281,7 +1292,7 @@ def main() -> int:
 
         log(f"✓ {rel}  →  {out.relative_to(REPO)}")
         records.append({"source": str(rel), "kind": how,
-                        "target": out.relative_to(CONVERTED.parent).as_posix(), "status": "✓ 已转换"})
+                        "target": index_target(out), "status": "✓ 已转换"})
 
     if args.ocr:
         deferred.extend(ocr_deferred)
@@ -1322,7 +1333,7 @@ def main() -> int:
             img = f"，{len(res.images)} 张图" if res.images else ""
             log(f"✓ {rel}  →  {out.relative_to(REPO)}{img}")
             records.append({"source": str(rel), "kind": "mineru",
-                            "target": out.relative_to(CONVERTED.parent).as_posix(), "status": "✓ 已转换"})
+                            "target": index_target(out), "status": "✓ 已转换"})
 
     flush_mineru(deferred, is_ocr=args.ocr)
     flush_mineru(ocr_deferred, is_ocr=True)
@@ -1334,7 +1345,7 @@ def main() -> int:
             + ("" if done else "（尚未处理，请运行 python3 scripts/pointtable.py）"))
         records.append({
             "source": f"input/raw/{name}/", "kind": f"点表 ×{count}",
-            "target": manifest.relative_to(CONVERTED.parent).as_posix() if done else "",
+            "target": index_target(manifest) if done else "",
             "status": "✓ 已汇总为测点主表" if done else "⚠ 待运行 pointtable.py",
         })
 
@@ -1358,7 +1369,7 @@ def main() -> int:
             + ("" if done else "（尚未处理，请运行 python3 scripts/realdata.py）"))
         records.append({
             "source": rel.as_posix(), "kind": kind,
-            "target": manifest.relative_to(CONVERTED.parent).as_posix() if done else "",
+            "target": index_target(manifest) if done else "",
             "status": status,
         })
 

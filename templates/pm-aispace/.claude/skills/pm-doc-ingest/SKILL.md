@@ -1,6 +1,6 @@
 ---
 name: pm-doc-ingest
-description: 把人类可读的项目资料（docx / PDF / xlsx / pptx / html 单文件原型 / 图片 / 网页 URL）批量转换成 AI 和 IDE 可读的 Markdown、CSV 或可预览 HTML 包，建立带溯源信息的资料台账，并对资料本身做一次可信度与缺口体检。只要用户说「把这些资料导进来」「我收到一批文档」「转换这个 docx / PDF / Excel」「整理项目资料」「资料都在 input 里了」「入库这个 HTML 原型」「把这个网页转成资料」「抓这个 URL 进 converted」，或者你发现 input/raw/ 下有文件还没转换、input/converted/ 是空的、用户丢来一个政策/标准/文档站链接要进分析链路，就使用这个技能。用户刚接手项目、刚拿到交接资料时，这是第一步。
+description: 把人类可读的项目资料（docx / PDF / xlsx / pptx / html 单文件原型 / 图片 / 网页 URL）批量转换成 AI 和 IDE 可读的 Markdown、CSV 或可预览 HTML 包，建立带溯源信息的资料台账，并对资料本身做一次可信度与缺口体检。只要用户说「把这些资料导进来」「我收到一批文档」「转换这个 docx / PDF / Excel」「整理项目资料」「资料都在 input 里了」「入库这个 HTML 原型」「把这个网页转成资料」「抓这个 URL 进 converted」，或者你发现 input/raw/ 下有文件还没转换、output/converted/ 是空的、用户丢来一个政策/标准/文档站链接要进分析链路，就使用这个技能。用户刚接手项目、刚拿到交接资料时，这是第一步。
 ---
 
 # 资料入库
@@ -30,7 +30,7 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 | md / txt 等纯文本 | 拷贝（txt→md） | — |
 | 图片 | `input/assets/` | — |
 
-产物写入 `input/converted/`，台账写入 `input/INDEX.md`。网页 URL 没有 raw 原件，走下面「网页资料」那一节，不经 `ingest.py`。
+产物写入 `output/converted/`，台账写入 `input/INDEX.md`。网页 URL 没有 raw 原件，走下面「网页资料」那一节，不经 `ingest.py`。
 
 **产物落点镜像 `input/raw/`**（规则见 `AGENTS.md` 的「产物落点」一节、实现见 `scripts/layout.py`）：
 一源一产物直接落在镜像目录，一源多产物的正文收进 `SplittingObject/<文件名>/`、
@@ -42,9 +42,9 @@ python3 scripts/ingest.py             # 实际转换（幂等，只处理有变�
 
 - **不要**期望转换脚本把页面交互转成可读需求正文；交互以 HTML 预览为准。
 - 转换结果是「摘要 + 正文目录」，例如 `input/raw/SC-02_发电计划原型.html` →
-  - `input/converted/_manifest_SC-02_发电计划原型.md` — 溯源 frontmatter + 体积/编码 +
+  - `output/converted/_manifest_SC-02_发电计划原型.md` — 溯源 frontmatter + 体积/编码 +
     **可访问性与安全校验表** + 标题结构线索
-  - `input/converted/SplittingObject/SC-02_发电计划原型/*.html` — 可直接预览
+  - `output/converted/SplittingObject/SC-02_发电计划原型/*.html` — 可直接预览
     （看板输入区按网页打开；本地也可双击）
 - AI 默认读 `_manifest_<名>.md` 做台账与摘要；需要点评交互时再结合预览，**不要把整页 HTML 当 PRD 正文抄进去**。
 - 正式、可维护的多页原型仍走阶段四 `visualization/prototypes/`（Axhub Make）；raw 里的 HTML 只是输入资料。
@@ -62,7 +62,7 @@ python3 scripts/web_ingest.py --inbox   # 丢进 visualization/references/ 根�
 - **公开 URL** 走 URL 模式：已有参考就复用那份 `index.html`，没有就临时抓一次、用完即弃。这条路径**不往 `visualization/` 写任何文件**。
 - **浏览器另存 / 剪藏 / SingleFile 丢进来的散装 `.html`** 走 `--inbox`：先收成标准参考目录，再抽出 Markdown。看板参考 tab 的刷新按钮调的就是这一条；不要把这类文件丢进 `scripts/ingest.py`（那条路把 HTML 当原型包，不抽正文）。
 
-产物落 `input/converted/web/<host>/`，落点规则与 docx / PDF 相同（`scripts/layout.py`），
+产物落 `output/converted/web/<host>/`，落点规则与 docx / PDF 相同（`scripts/layout.py`），
 front-matter 用 URL（或读不到地址时用参考路径）充当 `source`、用抽出正文的摘要充当 `source_sha256`。
 页面里的图（SingleFile 常内联成 `data:image/...;base64`）抽到 `input/assets/<标题>/`，
 markdown 改成相对产物目录的 `![](...)`，和 docx 抽图同一套规矩。旧产物还内联着 data URI 时，
@@ -72,7 +72,7 @@ markdown 改成相对产物目录的 `![](...)`，和 docx 抽图同一套规矩
 
 | | `web_ingest.py` | 看板采集为参考 |
 | --- | --- | --- |
-| 产物 | `input/converted/` 下的 Markdown | `visualization/references/<slug>/index.html` |
+| 产物 | `output/converted/` 下的 Markdown | `visualization/references/<slug>/index.html` |
 | 用途 | 给 AI 分析、被溯源引用的**可分析文本** | 给人看的**页面快照** |
 | HTML 从哪来 | URL 模式：已有参考就复用；没有就临时抓。收件箱模式：工作空间里已经存在的本地 HTML | 看板 spawn `single-file` 写入参考目录 |
 

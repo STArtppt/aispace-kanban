@@ -26,6 +26,10 @@ MinerU 转出来的 PDF 要花在线额度，重转一遍不划算。
     python3 scripts/migrate_converted.py              # 执行
 
 搬完按提示依次跑 ingest.py / pointtable.py / realdata.py 补齐目录型产物。
+
+**它只在旧根 `input/converted/` 里面动**（平铺 → 镜像，行为与当初一样）。产物后来又整体搬到了
+`output/converted/`：本脚本跑完，先跑 `scripts/migrate_converted_to_output.py` 搬过去，再跑上面那几个脚本
+（转换脚本在产物还留在旧位置时会拒绝写，免得新旧各一半）。
 """
 
 from __future__ import annotations
@@ -43,7 +47,8 @@ import layout  # noqa: E402
 
 REPO = layout.REPO
 RAW = layout.RAW
-CONVERTED = layout.CONVERTED
+# 旧根：平铺产物在这里，镜像也先搬在这里，之后由 migrate_converted_to_output.py 整体搬去 output/
+CONVERTED = layout.LEGACY_CONVERTED
 ASSETS = REPO / "input" / "assets"
 UNSORTED = ASSETS / "未分类"
 
@@ -84,17 +89,22 @@ def old_target(src: Path) -> tuple[Path, str] | None:
     return None
 
 
+def in_legacy(path: Path) -> Path:
+    """layout 算出的落点在 output/converted/ 下；本脚本只在旧根里做镜像，换回旧根。"""
+    return CONVERTED / path.relative_to(layout.CONVERTED)
+
+
 def new_target(src: Path) -> tuple[Path, str]:
-    """这份原始资料在新布局下的落点 + 形态。"""
+    """这份原始资料在镜像布局下的落点 + 形态（仍在旧根 input/converted/ 里）。"""
     ext = src.suffix.lower()
     if (ext in ingest.SPREADSHEET or ext in ingest.LEGACY_SPREADSHEET
             or ext in ingest.HTML_PROTOTYPE):
-        return layout.split_paths(src)[0], "dir"
+        return in_legacy(layout.split_paths(src)[0]), "dir"
     if ext in ingest.PANDOC or ext in ingest.MINERU or ext in ingest.MARKITDOWN:
-        return layout.single_target(src, ".md"), "file"
+        return in_legacy(layout.single_target(src, ".md")), "file"
     if ext in ingest.PASSTHROUGH:
         suffix = ".md" if ext in {".md", ".markdown", ".txt"} else ext
-        return layout.single_target(src, suffix), "file"
+        return in_legacy(layout.single_target(src, suffix)), "file"
     return UNSORTED / f"{layout.safe_component(src.stem)}{ext}", "image"
 
 
@@ -314,7 +324,7 @@ def main() -> int:
             continue
         old_path, old_kind = old
         # 目录型产物引用的是正文所在目录，单文件产物引用的就是那个文件
-        new_path = (layout.split_paths(src)[1] if old_kind == "dir" else new_target(src)[0])
+        new_path = (in_legacy(layout.split_paths(src)[1]) if old_kind == "dir" else new_target(src)[0])
         if old_kind == "dir":
             citations.update(payload_citations(old_path, new_path))
         if old_path != new_path:
@@ -326,18 +336,18 @@ def main() -> int:
         # （搬迁那一步已经把它删了，重复跑时读不到）
         legacy = CONVERTED / old_slugify(child.name)
         if child.name in pt_dirs:
-            payload = layout.merge_paths(child)[1]
+            payload = in_legacy(layout.merge_paths(child)[1])
             citations.update(payload_citations(legacy, payload))
             citations[repo_rel(legacy)] = repo_rel(payload)
         # 旧版整目录一个库，新版一份导出文件一个库。只有一份文件时能一一对上，
         # 多份就说不清引用指的是哪个库了——不猜，留给人改
         data = rd_files.get(child.name, [])
         if len(data) == 1:
-            payload = layout.split_paths(data[0])[1]
+            payload = in_legacy(layout.split_paths(data[0])[1])
             citations.update(payload_citations(legacy, payload))
             citations[repo_rel(legacy)] = repo_rel(payload)
             # 旧版摘要在产物目录里，新版提到镜像目录并改了名
-            citations[f"{repo_rel(legacy)}/_manifest.md"] = repo_rel(layout.split_paths(data[0])[0])
+            citations[f"{repo_rel(legacy)}/_manifest.md"] = repo_rel(in_legacy(layout.split_paths(data[0])[0]))
 
     # 认不出主人的：原件删了，或者旧版遗留。不动它们，只报出来。
     # 搬完的新结构不算——镜像目录（raw/ 下有同名目录）和正文容器都是本脚本自己造的，
@@ -428,6 +438,7 @@ def main() -> int:
             p.rmdir()
 
     log(f"\n搬迁完成{'（有 %d 处冲突已跳过）' % conflicts if conflicts else ''}。接下来跑：")
+    log("  python3 scripts/migrate_converted_to_output.py   # 先把产物整体搬到 output/converted/（可先 --dry-run）")
     if "ingest" in todo_scripts:
         log("  python3 scripts/ingest.py          # 重建 xlsx / html 的目录型产物，刷新台账")
     if "pointtable" in todo_scripts:

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, AppWindow, ArrowUpDown, ChevronDown, ChevronRight, CodeXml, Copy, Database, EyeOff, FileOutput, FileText, FolderOpen, Image, Key, ListFilter, Loader2, RefreshCw, Star, StarOff, Table, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, BookOpen, ChevronDown, ChevronRight, Copy, Database, EyeOff, FileOutput, FolderOpen, Key, ListFilter, Loader2, RefreshCw, Star, StarOff, X } from 'lucide-react';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -27,7 +28,8 @@ import {
 } from '@/components/Primitives';
 import { ApiKeyDialog, DatabaseSourceDialog, type EnvConfigKind } from '@/components/EnvConfigDialog';
 import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
-import { codePreviewLanguage } from '@/components/CodeFileView';
+import { KindIcon, LIST_PAGE_SIZE, useListPage } from '@/components/ConvertedList';
+import { lastIngestAt, ledgerItem } from '@/hooks/useBoardSession';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
 import { useSourceIngestJob, type IngestControl, type SourceIngestControl } from '@/hooks/useIngestJob';
 import { usePins } from '@/hooks/usePins';
@@ -43,32 +45,24 @@ import {
 import { absolutePath, formatBytes, formatRelative, markdownLink } from '@/lib/format';
 import { cn } from '@/lib/utils';
 
-/** 待转换 / 转换产物列表一页条数 */
-const LIST_PAGE_SIZE = 12;
-
-function KindIcon({ item }: { item: { reader: string; isDir?: boolean; ext?: string; path?: string } }) {
-  if (item.reader === 'html') return <AppWindow className="size-4 text-muted-foreground" />;
-  if (item.isDir || item.reader === 'table') return <Table className="size-4 text-muted-foreground" />;
-  if (item.reader === 'image') return <Image className="size-4 text-muted-foreground" />;
-  if (codePreviewLanguage(item.ext || item.path || '')) {
-    return <CodeXml className="size-4 text-muted-foreground" />;
-  }
-  return <FileText className="size-4 text-muted-foreground" />;
-}
-
-/** 待转换区说明的纯文本，给 tooltip 用；可见行是同一套句子，路径还带 code 标记 */
-function pendingIntroText(pending: number, ignored: number, canIngest: boolean): string {
-  let text = pending
-    ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
-    : '原始资料放进 input/raw/ 后会出现在这里。';
+/**
+ * 原始资料区说明的纯文本，给 tooltip 用；可见行是同一套句子，路径还带 code 标记。
+ * withState = 服务端给了 raw 的状态（全量列出）；旧服务进程只列待转。
+ */
+function rawIntroText(pending: number, ignored: number, canIngest: boolean, withState: boolean): string {
+  let text = withState
+    ? 'input/raw/ 下的全部原件，行尾标签是处理状态：「待转」的 AI 还读不到。'
+    : pending
+      ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
+      : '原始资料放进 input/raw/ 后会出现在这里。';
   if (ignored) {
-    text += `另有 ${ignored} 份按 input/.ingestignore 忽略，不算待转换。`;
+    text += `其中 ${ignored} 份按 input/.ingestignore 忽略，不算待转换。`;
   }
   if (pending) {
     text += '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在。';
   }
   text += canIngest
-    ? '点「开始转换」会一次处理全部；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
+    ? '点「开始转换」会一次处理全部待转的与原件已改的（与筛选无关）；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
     : '在工作空间里跑一次 python3 scripts/ingest.py 即可。';
   return text;
 }
@@ -83,18 +77,7 @@ function pendingLabel(item: FileItem): string {
   return item.name;
 }
 
-/** 名称模糊：空格分词，每段都要在标题/文件名/来源/路径里出现（大小写不敏感） */
-function matchConverted(item: ConvertedItem, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  const hay = [item.title, item.name, item.source, item.path, item.convertedBy]
-    .filter(Boolean)
-    .join('\n')
-    .toLowerCase();
-  return q.split(/\s+/).every((part) => hay.includes(part));
-}
-
-/** 待转换区搜索：文件名 / 相对 raw/ 的路径 */
+/** 原始资料区搜索：文件名 / 相对 raw/ 的路径 */
 function matchPending(item: FileItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
@@ -102,150 +85,62 @@ function matchPending(item: FileItem, query: string): boolean {
   return q.split(/\s+/).every((part) => hay.includes(part));
 }
 
-/**
- * 「有几篇产出提到过它」。
- * hasOutputs 为 false 时一律不显示：一份产出都还没写的工作空间里，所有资料当然都是
- * 零引用，那时候提示只是噪音。referencedBy 缺失说明服务进程比前端旧，同样不显示。
- */
-function referenceLabel(item: ConvertedItem, hasOutputs: boolean): string {
-  if (!hasOutputs || !item.referencedBy) return '';
-  return item.referencedBy.length ? ` · 被 ${item.referencedBy.length} 篇产出引用` : ' · 还没有产出引用它';
+/** 原始资料的状态筛选。默认「全部」；「开始转换」的范围不随它变 */
+const RAW_FILTERS = {
+  all: '全部',
+  pending: '待转',
+  converted: '已转',
+  ignored: '忽略',
+  stale: '原件已改',
+} as const;
+
+type RawFilter = keyof typeof RAW_FILTERS;
+
+const RAW_FILTER_KEY = 'aispace-kanban:raw-filter';
+
+function isRawFilter(value: string): value is RawFilter {
+  return value in RAW_FILTERS;
 }
 
-/** 没记来源的产物在树里的落脚处 */
-const UNKNOWN_SOURCE = '未知来源';
-
-/**
- * 产物在树里的位置。
- *
- * 服务端给了 treePath 就用它：新布局下 input/converted/ 与 input/raw/ 同构，产物自己的
- * 路径就是资料的整理方式，最准。旧布局（产物平铺在 converted/ 根下）没有这层结构，
- * 按产物自己的路径建树等于没建，退回跟着**原件**在 input/raw/ 下的目录走。
- * 两条路都认不出来时整棵树平铺，不平白多出一层「未知来源」。
- */
-function convertedTreePath(item: ConvertedItem, hasAnySource: boolean): string {
-  if (item.treePath && item.treePath.includes('/')) return item.treePath;
-  const prefix = 'input/raw/';
-  const source = item.source || '';
-  // 来源不在 input/raw/ 下（理论上不该有）一并算「未知来源」：目录行的动作要按
-  // input/raw/<树内路径> 反推真实目录，认不回去的就别给动作，免得指到不存在的路径
-  if (!source.startsWith(prefix)) {
-    return item.treePath || (hasAnySource ? `${UNKNOWN_SOURCE}/${item.name}` : item.name);
+function readRawFilter(): RawFilter {
+  try {
+    const raw = localStorage.getItem(RAW_FILTER_KEY) || '';
+    return isRawFilter(raw) ? raw : 'all';
+  } catch {
+    return 'all';
   }
-  const rel = source.slice(prefix.length);
-  const cut = rel.lastIndexOf('/');
-  return cut > 0 ? `${rel.slice(0, cut)}/${item.name}` : item.treePath || item.name;
 }
 
-function ConvertedRow({
-  item,
-  indent,
-  hasOutputs,
-  pinned,
-  absPath,
-  onTogglePin,
-  openPath,
-  onOpen,
-  canIngest,
-  ingestRunning,
-  ingestingPath,
-  onIngest,
-}: {
-  item: ConvertedItem;
-  /** 树形视图里的层级；列表视图不传 */
-  indent?: number;
-  hasOutputs: boolean;
-  pinned: boolean;
-  /** 拼好的取绝对路径函数，「复制绝对路径」用 */
-  absPath: (relPath: string) => string;
-  onTogglePin: (path: string) => void;
-  openPath: string;
-  onOpen: (item: FileItem) => void;
-  canIngest: boolean;
-  ingestRunning: boolean;
-  ingestingPath: string;
-  onIngest: (filePath: string) => void;
-}) {
-  // 原件动过才给「重新转换」：原件已不在（missing）重转不了，没动过也没必要重跑一遍。
-  // ingest.py 按 sha256 幂等，对着原件再跑一次就会重出这份产物。
-  const canReconvert = canIngest && item.sourceState === 'stale' && Boolean(item.source);
+function matchRawFilter(item: FileItem, filter: RawFilter): boolean {
+  if (filter === 'all') return true;
+  if (filter === 'stale') return Boolean(item.stale);
+  return item.state === filter;
+}
+
+/** 行内标签。原件已改是唯一要人处理的，走 orange；其余中性灰 */
+function RawStateTag({ item }: { item: FileItem }) {
+  if (!item.state) return null;
+  if (item.stale) {
+    return (
+      <Badge variant="outline" className="shrink-0 border-destructive/40 text-destructive" title="原件在转换后改过，产物可能已经不对">
+        原件已改
+      </Badge>
+    );
+  }
+  const label = item.state === 'converted' ? '已转' : item.state === 'ignored' ? '忽略' : '待转';
   return (
-    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
-      <KindIcon item={item} />
-      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm">{item.title || item.name}</span>
-          {pinned ? (
-            <Star className="size-3.5 shrink-0 fill-current text-muted-foreground" />
-          ) : null}
-        </div>
-        {/* 产物自身的相对路径：单文件产物到文件，目录型产物到目录 */}
-        <span className="truncate text-xs text-muted-foreground" title={item.path}>
-          {item.path}
-          {item.reader === 'html' ? ' · HTML 原型' : ''}
-          {item.sheets?.length ? ` · ${item.sheets.length} 张表` : ''}
-          {item.sqlitePath ? ' · 可 SQL 检索' : ''}
-          {item.extractedImages ? ` · ${item.extractedImages} 张图` : ''}
-          {/* 转完删原件是正当用法，所以只如实标一句，不上 orange、不催人处理 */}
-          {item.sourceState === 'missing' ? ' · 原件已不在' : ''}
-          {/* 原件动过则产物可能已经不对，这是真要人重转一次的 —— 唯一上 orange 的一处 */}
-          {item.sourceState === 'stale' ? (
-            <span className="text-destructive"> · 原件转换后动过</span>
-          ) : null}
-          {referenceLabel(item, hasOutputs)}
-        </span>
-      </div>
-      <RowActions
-        busy={ingestRunning && ingestingPath === item.source}
-        actions={[
-          {
-            label: pinned ? '取消收藏' : '收藏置顶',
-            icon: pinned ? StarOff : Star,
-            onSelect: () => onTogglePin(item.path),
-          },
-          ...(canReconvert
-            ? [
-                {
-                  label: '重新转换',
-                  icon: RefreshCw,
-                  disabled: ingestRunning,
-                  onSelect: () => onIngest(item.source || ''),
-                },
-              ]
-            : []),
-          {
-            label: '复制路径',
-            icon: Copy,
-            onSelect: () => {
-              void writeClipboard(markdownLink(item.title || item.name, item.path));
-            },
-          },
-          {
-            label: '复制绝对路径',
-            icon: Copy,
-            onSelect: () => {
-              void writeClipboard(absPath(item.path));
-            },
-          },
-        ]}
-      />
-    </Row>
+    <Badge
+      variant="outline"
+      className="shrink-0 text-muted-foreground"
+      title={
+        item.state === 'ignored'
+          ? '命中 input/.ingestignore。看板不提供取消忽略：要恢复，在 input/.ingestignore 里删掉对应那一行'
+          : undefined
+      }
+    >
+      {label}
+    </Badge>
   );
-}
-
-function useListPage(total: number, pageSize: number, resetKey: string) {
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const [page, setPage] = useState(0);
-
-  useEffect(() => {
-    setPage(0);
-  }, [resetKey]);
-
-  useEffect(() => {
-    setPage((p) => Math.min(p, totalPages - 1));
-  }, [totalPages]);
-
-  return { page, setPage, totalPages };
 }
 
 function PendingRow({
@@ -258,6 +153,7 @@ function PendingRow({
   onTogglePin,
   openPath,
   onOpen,
+  product,
   canIngest,
   ingestRunning,
   ingestingPath,
@@ -276,6 +172,8 @@ function PendingRow({
   onTogglePin: (path: string) => void;
   openPath: string;
   onOpen: (item: FileItem) => void;
+  /** 已转的原件对应的那份产物（按产物的 source 反查；目录型 / 图片覆盖的找不到就不给「打开产物」） */
+  product?: ConvertedItem;
   canIngest: boolean;
   ingestRunning: boolean;
   ingestingPath: string;
@@ -286,71 +184,128 @@ function PendingRow({
   const thisRowRunning = (ingestRunning && ingestingPath === item.path) || ignoring;
   // 树里目录已经画在上一层了，行内只留文件名；列表里仍显示相对 raw/ 的路径
   const label = indent === undefined ? pendingLabel(item) : item.name;
+  // 旧服务进程没有 state：列表里只有待转的，动作照改动前给
+  const state = item.state ?? 'pending';
+  const reveal: RowAction = {
+    label: `在${fileManager}中显示`,
+    icon: FolderOpen,
+    onSelect: () => {
+      void api.reveal(projectId, item.path);
+    },
+  };
+  const copies: RowAction[] = [
+    {
+      label: '复制路径',
+      icon: Copy,
+      onSelect: () => {
+        void writeClipboard(markdownLink(pendingLabel(item), item.path));
+      },
+    },
+    {
+      label: '复制绝对路径',
+      icon: Copy,
+      onSelect: () => {
+        void writeClipboard(absPath(item.path));
+      },
+    },
+  ];
+  const pin: RowAction = {
+    label: pinned ? '取消收藏' : '收藏置顶',
+    icon: pinned ? StarOff : Star,
+    onSelect: () => onTogglePin(item.path),
+  };
+  // 忽略的只给「在访达中显示」：取消忽略要删 .ingestignore 的行，不在看板的写入例外里
+  const actions: RowAction[] =
+    state === 'ignored'
+      ? [reveal]
+      : state === 'converted'
+        ? [
+            pin,
+            ...(product
+              ? [{ label: '打开产物', icon: FileOutput, onSelect: () => onOpen(product) }]
+              : []),
+            // 没改过的重跑一遍 ingest.py 也是「未变化」跳过，所以只在原件已改时给
+            ...(canIngest && item.stale
+              ? [
+                  {
+                    label: '重新转换',
+                    icon: RefreshCw,
+                    disabled: ingestRunning,
+                    onSelect: () => onIngest(item.path),
+                  },
+                ]
+              : []),
+            ...copies,
+            reveal,
+          ]
+        : [
+            pin,
+            ...(canIngest
+              ? [
+                  {
+                    label: '转成AI易读',
+                    icon: FileOutput,
+                    disabled: ingestRunning,
+                    onSelect: () => onIngest(item.path),
+                  },
+                ]
+              : []),
+            {
+              label: '忽略此文件',
+              icon: EyeOff,
+              disabled: ignoring,
+              onSelect: () => onIgnore(item.path),
+            },
+            ...copies,
+            reveal,
+          ];
   return (
     <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
       <KindIcon item={item} />
       <span className="flex min-w-0 flex-1 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-sm" title={item.path}>
+        <span
+          className={cn('min-w-0 truncate text-sm', state === 'ignored' && 'text-muted-foreground')}
+          title={item.path}
+        >
           {label}
         </span>
+        <RawStateTag item={item} />
         {pinned ? (
           <Star className="size-3.5 shrink-0 fill-current text-muted-foreground" />
         ) : null}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
-      <RowActions
-        busy={thisRowRunning}
-        actions={[
-          {
-            label: pinned ? '取消收藏' : '收藏置顶',
-            icon: pinned ? StarOff : Star,
-            onSelect: () => onTogglePin(item.path),
-          },
-          ...(canIngest
-            ? [
-                {
-                  label: '转成AI易读',
-                  icon: FileOutput,
-                  disabled: ingestRunning,
-                  onSelect: () => onIngest(item.path),
-                },
-              ]
-            : []),
-          {
-            label: '忽略此文件',
-            icon: EyeOff,
-            disabled: ignoring,
-            onSelect: () => onIgnore(item.path),
-          },
-          {
-            label: '复制路径',
-            icon: Copy,
-            onSelect: () => {
-              void writeClipboard(markdownLink(pendingLabel(item), item.path));
-            },
-          },
-          {
-            label: '复制绝对路径',
-            icon: Copy,
-            onSelect: () => {
-              void writeClipboard(absPath(item.path));
-            },
-          },
-          {
-            label: `在${fileManager}中显示`,
-            icon: FolderOpen,
-            onSelect: () => {
-              void api.reveal(projectId, item.path);
-            },
-          },
-        ]}
-      />
+      <RowActions busy={thisRowRunning} actions={actions} />
     </Row>
+  );
+}
+
+/**
+ * 「原始资料」顶部固定的「资料台账」行：不参与搜索、筛选，不随分页移动。
+ * 点开是台账预览（精简概览 + INDEX.md 正文）。
+ */
+function LedgerRow({ scan, openPath, onOpen }: { scan: Scan; openPath: string; onOpen: (item: FileItem) => void }) {
+  const item = ledgerItem(scan);
+  const last = lastIngestAt(scan);
+  const hint = scan.input.indexPath
+    ? `INDEX.md${last ? ` · 资料最后入库 ${formatRelative(last)}` : ''}`
+    : '项目概览';
+  return (
+    <div className="overflow-hidden rounded-lg border border-border">
+      <Row onClick={() => onOpen(item)} active={openPath === item.path}>
+        <BookOpen className="size-4 text-muted-foreground" />
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-sm">资料台账</span>
+          <span className="truncate text-xs text-muted-foreground">{hint}</span>
+        </span>
+      </Row>
+    </div>
   );
 }
 
 function PendingList({
   items,
+  converted,
   viewMode,
   query,
   sortKey,
@@ -366,6 +321,8 @@ function PendingList({
   onIgnore,
 }: {
   items: FileItem[];
+  /** 转换产物，给已转的原件反查「打开产物」 */
+  converted: ConvertedItem[];
   viewMode: ViewMode;
   query: string;
   sortKey: SortKey;
@@ -382,6 +339,11 @@ function PendingList({
   onIgnore: (targetPath: string) => void;
 }) {
   const { pins, togglePin } = usePins(projectId);
+  const productBySource = useMemo(() => {
+    const map = new Map<string, ConvertedItem>();
+    for (const item of converted) if (item.source && !map.has(item.source)) map.set(item.source, item);
+    return map;
+  }, [converted]);
   const ordered = useMemo(() => {
     const list = items.filter((item) => matchPending(item, query));
     return list.sort((a, b) => {
@@ -443,6 +405,7 @@ function PendingList({
               indent={indent}
               pinned={pins.has(item.path)}
               ignoring={ignoringPath === item.path}
+              product={productBySource.get(item.path)}
               {...rowProps}
             />
           )}
@@ -492,6 +455,7 @@ function PendingList({
             item={item}
             pinned={pins.has(item.path)}
             ignoring={ignoringPath === item.path}
+            product={productBySource.get(item.path)}
             {...rowProps}
           />
         ))}
@@ -501,14 +465,6 @@ function PendingList({
   );
 }
 
-const CONVERTED_FILTERS = {
-  all: '全部',
-  unreferenced: '未被引用',
-  stale: '原件动过',
-} as const;
-
-type ConvertedFilter = keyof typeof CONVERTED_FILTERS;
-
 const SORTS = {
   name: '按名称',
   mtimeAsc: '按时间正序',
@@ -517,17 +473,20 @@ const SORTS = {
 
 type SortKey = keyof typeof SORTS;
 
-const CONVERTED_SORT_KEY = 'aispace-kanban:converted-sort';
-/** 列表 / 树形是整个「输入资料」视图共用的偏好，待转换和转换产物一起切 */
+/** 键名沿用转换产物还在这里时的那个，已存的排序偏好不丢 */
+const INPUT_SORT_KEY = 'aispace-kanban:converted-sort';
+/** 列表 / 树形是整个「输入资料」视图共用的偏好 */
 const INPUT_VIEW_KEY = 'aispace-kanban:input-view';
-/** 当前停在哪一类资料：默认转换产物，资料多了以后不想每次进来都先滚过待转换 */
+/**
+ * 当前停在哪一类资料。转换产物已挪到「产出文档」：记着的是 `converted` 时认不出来，
+ * 退回「原始资料」（台账也在那里）。
+ */
 const INPUT_TAB_KEY = 'aispace-kanban:input-tab';
 
 const INPUT_TABS = [
   { key: 'pending' as const, title: '原始资料' },
-  { key: 'converted' as const, title: '转换产物' },
   { key: 'assets' as const, title: '图片资料' },
-  // 数据库源排在三个已有 tab **之后**，有 input/sources/ 目录才出现（见 showSources）
+  // 数据库源排在已有 tab **之后**，有 input/sources/ 目录才出现（见 showSources）
   { key: 'sources' as const, title: '数据库源' },
 ];
 
@@ -552,14 +511,14 @@ function snapshotIsStale(iso?: string): boolean {
   return Date.now() - at > SNAPSHOT_STALE_DAYS * 24 * 60 * 60 * 1000;
 }
 
-function readConvertedSort(): SortKey {
-  const raw = localStorage.getItem(CONVERTED_SORT_KEY);
+function readInputSort(): SortKey {
+  const raw = localStorage.getItem(INPUT_SORT_KEY);
   return raw === 'name' || raw === 'mtimeAsc' || raw === 'mtimeDesc' ? raw : 'name';
 }
 
 function readInputTab(): InputTab {
   const raw = localStorage.getItem(INPUT_TAB_KEY) || '';
-  return isInputTab(raw) ? raw : 'converted';
+  return isInputTab(raw) ? raw : 'pending';
 }
 
 /** 图标选择器：正方形触发器，藏掉默认文案和下拉箭头 */
@@ -567,172 +526,6 @@ const ICON_SELECT_TRIGGER =
   'size-8 min-h-8 w-8 justify-center gap-0 px-0 py-0 [&_.lucide-chevron-down]:hidden';
 /** 标题栏描边方钮：与排序 / 筛选 SelectTrigger、搜索框同一套 size-8 + shadow-sm */
 const TOOLBAR_ICON_BUTTON = 'size-8 shadow-sm';
-
-function ConvertedList({
-  items,
-  hasOutputs,
-  viewMode,
-  query,
-  activeFilter,
-  sortKey,
-  projectId,
-  absPath,
-  openPath,
-  onOpen,
-  canIngest,
-  ingestRunning,
-  ingestingPath,
-  onIngest,
-}: {
-  items: ConvertedItem[];
-  hasOutputs: boolean;
-  viewMode: ViewMode;
-  query: string;
-  activeFilter: ConvertedFilter;
-  sortKey: SortKey;
-  projectId: string;
-  /** 拼好的取绝对路径函数，「复制绝对路径」用 */
-  absPath: (relPath: string) => string;
-  openPath: string;
-  onOpen: (item: FileItem) => void;
-  canIngest: boolean;
-  ingestRunning: boolean;
-  ingestingPath: string;
-  onIngest: (filePath: string) => void;
-}) {
-  const fileManager = useFileManagerName();
-  const { pins, togglePin } = usePins(projectId);
-  // 一份都没动过时不给这一档：清单里筛出来必然是空的
-  const staleCount = items.filter((item) => item.sourceState === 'stale').length;
-  const filtered = useMemo(() => {
-    const list = items.filter((item) => {
-      if (activeFilter === 'unreferenced' && item.referencedBy?.length !== 0) return false;
-      if (activeFilter === 'stale' && item.sourceState !== 'stale') return false;
-      return matchConverted(item, query);
-    });
-    return list.sort((a, b) => {
-      // 收藏的一律在前，名称 / 时间排序只在收藏内外各自生效
-      const pin = Number(pins.has(b.path)) - Number(pins.has(a.path));
-      if (pin) return pin;
-      if (sortKey === 'name') {
-        return (a.title || a.name).localeCompare(b.title || b.name, 'zh', { numeric: true });
-      }
-      const cmp = (a.mtime || '').localeCompare(b.mtime || '');
-      return sortKey === 'mtimeAsc' ? cmp : -cmp;
-    });
-  }, [items, query, activeFilter, sortKey, pins]);
-  const { page, setPage } = useListPage(
-    filtered.length,
-    LIST_PAGE_SIZE,
-    `${query}\0${activeFilter}\0${sortKey}\0${items.length}\0${[...pins].join('\0')}`,
-  );
-  const pageItems = filtered.slice(page * LIST_PAGE_SIZE, (page + 1) * LIST_PAGE_SIZE);
-  const searching = query.trim().length > 0;
-  const hasAnySource = useMemo(() => items.some((item) => item.source), [items]);
-  const treePathOf = useCallback(
-    (item: ConvertedItem) => convertedTreePath(item, hasAnySource),
-    [hasAnySource],
-  );
-
-  return (
-    <div className="flex flex-col gap-2">
-      {/* 原件动过的产物「已经转过」，所以不会回到待转换列表 —— 不说这句，人会在那边一直找不到它 */}
-      {staleCount ? (
-        <p className="text-xs text-muted-foreground">
-          有 <span className="text-destructive">{staleCount} 份原件在转换后动过</span>
-          ，产物可能已经不对。它们已经有产物，不会回到待转换列表；右上角筛选可以只看这些。
-          {canIngest
-            ? '行内「更多」点「重新转换」只重转那一份；「原始资料」里的「开始转换」会把动过的一起重跑。'
-            : '在工作空间里重跑一次 scripts/ingest.py 即可，只有动过的会重转。'}
-        </p>
-      ) : null}
-      {searching ? (
-        <p className="text-xs text-muted-foreground">
-          {filtered.length ? `匹配 ${filtered.length} 项` : '没有匹配的转换产物'}
-        </p>
-      ) : null}
-      {filtered.length && viewMode === 'tree' ? (
-        // 树形视图不分页：目录折起来就够收敛了，再切页反而找不到东西
-        <FileTree
-          items={filtered}
-          treePathOf={treePathOf}
-          keyOf={(item) => item.path}
-          expandAll={searching}
-          renderDirActions={(dirKey) =>
-            // 「未知来源」是前端为没记来源的产物造的一档，磁盘上没有这个目录，不给动作
-            dirKey === UNKNOWN_SOURCE ? null : (
-              <DirActions
-                projectId={projectId}
-                fileManager={fileManager}
-                dirPath={`input/raw/${dirKey}`}
-                absPath={absPath}
-              />
-            )
-          }
-          renderFile={(item, indent) => (
-            <ConvertedRow
-              item={item}
-              indent={indent}
-              hasOutputs={hasOutputs}
-              pinned={pins.has(item.path)}
-              absPath={absPath}
-              onTogglePin={togglePin}
-              openPath={openPath}
-              onOpen={onOpen}
-              canIngest={canIngest}
-              ingestRunning={ingestRunning}
-              ingestingPath={ingestingPath}
-              onIngest={onIngest}
-            />
-          )}
-        />
-      ) : filtered.length ? (
-        <div className="overflow-hidden rounded-lg border border-border">
-          {pageItems.map((item) => (
-            <ConvertedRow
-              key={item.path}
-              item={item}
-              hasOutputs={hasOutputs}
-              pinned={pins.has(item.path)}
-              absPath={absPath}
-              onTogglePin={togglePin}
-              openPath={openPath}
-              onOpen={onOpen}
-              canIngest={canIngest}
-              ingestRunning={ingestRunning}
-              ingestingPath={ingestingPath}
-              onIngest={onIngest}
-            />
-          ))}
-          <ListPager
-            page={page}
-            pageSize={LIST_PAGE_SIZE}
-            total={filtered.length}
-            onPageChange={setPage}
-          />
-        </div>
-      ) : searching ? (
-        <EmptyState title="没有匹配的转换产物" hint="试试更短的关键词，或清空搜索" />
-      ) : activeFilter === 'unreferenced' ? (
-        <EmptyState
-          title="没有未被引用的资料"
-          hint="产出正文里出现它的路径或文件名就算引用"
-        />
-      ) : activeFilter === 'stale' ? (
-        <EmptyState title="没有原件动过的产物" hint="每份产物都还对得上转换时的原件" />
-      ) : (
-        <EmptyState
-          title="还没有转换产物"
-          hint={
-            canIngest
-              ? '把资料放进 input/raw/，再到「原始资料」点「开始转换」'
-              : '把资料放进 input/raw/，然后在工作空间里跑 scripts/ingest.py'
-          }
-        />
-      )}
-    </div>
-  );
-}
 
 function IngestControls({
   job,
@@ -1135,12 +928,6 @@ export function InputPanel({
   ingest: IngestControl;
 }) {
   const { input } = scan;
-  // 归档项照样计入溯源反链，所以「有没有产出」也要算上它们（total 只数主列表）
-  const archivedOutputs = scan.output.stats.archived;
-  const hasOutputs =
-    scan.output.stats.total +
-      (archivedOutputs ? archivedOutputs.analysis + archivedOutputs.docs + archivedOutputs.decisions : 0) >
-    0;
   // 旧服务进程没有 canIngest：整块按钮不出现，只保留终端命令提示
   const canIngest = Boolean(input.canIngest);
   const [ignoringPath, setIgnoringPath] = useState('');
@@ -1158,8 +945,8 @@ export function InputPanel({
   const [viewMode, setViewMode] = useState<ViewMode>(() => readViewMode(INPUT_VIEW_KEY));
   const [tab, setTab] = useState<InputTab>(readInputTab);
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<ConvertedFilter>('all');
-  const [sortKey, setSortKey] = useState<SortKey>(readConvertedSort);
+  const [rawFilter, setRawFilter] = useState<RawFilter>(readRawFilter);
+  const [sortKey, setSortKey] = useState<SortKey>(readInputSort);
   // 「复制绝对路径」要工作空间在磁盘上的位置，scan.project.root 里带着；拿不到时 absolutePath 自己退回相对路径
   const sep = usePathSeparator();
   const absPath = useCallback(
@@ -1186,7 +973,6 @@ export function InputPanel({
     setIgnoreError('');
     setIgnoringPath('');
     setQuery('');
-    setFilter('all');
   }, [projectId]);
 
   useEffect(() => {
@@ -1198,22 +984,36 @@ export function InputPanel({
   }, [tab]);
 
   useEffect(() => {
-    localStorage.setItem(CONVERTED_SORT_KEY, sortKey);
+    localStorage.setItem(INPUT_SORT_KEY, sortKey);
   }, [sortKey]);
 
-  // 没产出、或旧服务没给 referencedBy：筛「未被引用」没意义，那一档就不出
-  const canFilterUnreferenced =
-    hasOutputs && input.converted.some((item) => Array.isArray(item.referencedBy));
-  const canFilterStale = input.converted.some((item) => item.sourceState === 'stale');
-  const filterOptions: ConvertedFilter[] = [
-    'all',
-    ...(canFilterUnreferenced ? (['unreferenced'] as const) : []),
-    ...(canFilterStale ? (['stale'] as const) : []),
-  ];
-  const activeFilter = filterOptions.includes(filter) ? filter : 'all';
+  useEffect(() => {
+    try {
+      localStorage.setItem(RAW_FILTER_KEY, rawFilter);
+    } catch {
+      // 存不下就只在本次生效
+    }
+  }, [rawFilter]);
+
+  /**
+   * 服务端给了状态才全量列出（转换过的、忽略的都不再消失）；
+   * 旧服务进程没有 state：退回只列待转、不出筛选（改动前的行为）。
+   */
+  // 原始资料为 0 时看不出条目上有没有 state：同一批新字段里的 layout 在，就当是新服务
+  const withState = input.raw.some((item) => item.state) || Boolean(input.layout);
+  const rawCounts: Record<RawFilter, number> = {
+    all: input.raw.length,
+    pending: input.raw.filter((item) => item.state === 'pending').length,
+    converted: input.raw.filter((item) => item.state === 'converted').length,
+    ignored: input.raw.filter((item) => item.state === 'ignored').length,
+    stale: input.raw.filter((item) => item.stale).length,
+  };
+  const activeRawFilter: RawFilter = withState ? rawFilter : 'all';
+  const rawItems = withState
+    ? input.raw.filter((item) => matchRawFilter(item, activeRawFilter))
+    : input.pending;
   const tabCounts: Record<InputTab, number> = {
-    pending: input.pending.length,
-    converted: input.converted.length,
+    pending: withState ? input.raw.length : input.pending.length,
     assets: input.assets.length,
     sources: sources.length,
   };
@@ -1223,7 +1023,7 @@ export function InputPanel({
    * （换了工作空间、或者源配置被删了）—— 那时退回默认 tab，不能渲染一个不存在的 tab。
    * 只改这里显示用的值，不动记着的偏好：源再配回来时还停在数据库源上。
    */
-  const activeTab: InputTab = tab === 'sources' && !showSources ? 'converted' : tab;
+  const activeTab: InputTab = tab === 'sources' && !showSources ? 'pending' : tab;
 
   return (
     <div className="flex min-w-0 flex-col gap-6">
@@ -1280,29 +1080,28 @@ export function InputPanel({
                   <SelectItem value="mtimeDesc">{SORTS.mtimeDesc}</SelectItem>
                 </SelectContent>
               </Select>
-              {activeTab === 'converted' && filterOptions.length > 1 ? (
+              {activeTab === 'pending' && withState ? (
                 <Select
-                  value={activeFilter}
+                  value={activeRawFilter}
                   onValueChange={(value) => {
-                    if (filterOptions.includes(value as ConvertedFilter)) {
-                      setFilter(value as ConvertedFilter);
-                    }
+                    if (typeof value === 'string' && isRawFilter(value)) setRawFilter(value);
                   }}
                 >
-                  <HeaderTooltip label="筛选">
-                    <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="筛选转换产物">
+                  <HeaderTooltip label="按状态筛选">
+                    <SelectTrigger className={ICON_SELECT_TRIGGER} aria-label="按状态筛选原始资料">
                       <ListFilter
                         className={cn(
                           'size-3.5',
-                          activeFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
+                          activeRawFilter === 'all' ? 'text-muted-foreground' : 'text-foreground',
                         )}
                       />
                     </SelectTrigger>
                   </HeaderTooltip>
                   <SelectContent align="end" className="min-w-36 w-max">
-                    {filterOptions.map((option) => (
+                    {(Object.keys(RAW_FILTERS) as RawFilter[]).map((option) => (
                       <SelectItem key={option} value={option}>
-                        {CONVERTED_FILTERS[option]}
+                        {RAW_FILTERS[option]}
+                        <span className="ml-2 text-xs text-muted-foreground">{rawCounts[option]}</span>
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1359,13 +1158,17 @@ export function InputPanel({
 
           <TabsContent value="pending" className="flex min-w-0 flex-col gap-2">
             {/* 看板变窄或预览展开时这行会顶破布局，所以单行截断，完整说明进 tooltip */}
-            <TruncatedHint text={pendingIntroText(input.pending.length, input.stats.ignored || 0, canIngest)}>
-              {input.pending.length
-                ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
-                : '原始资料放进 input/raw/ 后会出现在这里。'}
+            <TruncatedHint
+              text={rawIntroText(input.pending.length, input.stats.ignored || 0, canIngest, withState)}
+            >
+              {withState
+                ? 'input/raw/ 下的全部原件，行尾标签是处理状态：「待转」的 AI 还读不到。'
+                : input.pending.length
+                  ? '这些文件还没有对应的转换产物，AI 读不到它们的内容。'
+                  : '原始资料放进 input/raw/ 后会出现在这里。'}
               {input.stats.ignored ? (
                 <>
-                  另有 {input.stats.ignored} 份按
+                  其中 {input.stats.ignored} 份按
                   <code className="mx-1 rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
                     input/.ingestignore
                   </code>
@@ -1376,7 +1179,7 @@ export function InputPanel({
                 ? '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在。'
                 : null}
               {canIngest ? (
-                '点「开始转换」会一次处理全部；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
+                '点「开始转换」会一次处理全部待转的与原件已改的（与筛选无关）；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
               ) : (
                 <>
                   在工作空间里跑一次
@@ -1399,9 +1202,11 @@ export function InputPanel({
             {ignoreError ? (
               <p className="whitespace-pre-wrap text-xs text-destructive">{ignoreError}</p>
             ) : null}
-            {input.pending.length ? (
+            <LedgerRow scan={scan} openPath={openPath} onOpen={onOpen} />
+            {rawItems.length ? (
               <PendingList
-                items={input.pending}
+                items={rawItems}
+                converted={input.converted}
                 viewMode={viewMode}
                 query={query}
                 sortKey={sortKey}
@@ -1416,28 +1221,13 @@ export function InputPanel({
                 ignoringPath={ignoringPath}
                 onIgnore={(targetPath) => void ignore(targetPath)}
               />
+            ) : query.trim() ? (
+              <EmptyState title="没有匹配的原始资料" hint="试试更短的关键词，或清空搜索" />
+            ) : activeRawFilter !== 'all' ? (
+              <EmptyState title={`没有「${RAW_FILTERS[activeRawFilter]}」的原始资料`} hint="右上角筛选切回「全部」" />
             ) : (
-              <EmptyState title="暂无待转换文件" />
+              <EmptyState title={withState ? '还没有原始资料' : '暂无待转换文件'} />
             )}
-          </TabsContent>
-
-          <TabsContent value="converted">
-            <ConvertedList
-              items={input.converted}
-              hasOutputs={hasOutputs}
-              viewMode={viewMode}
-              query={query}
-              activeFilter={activeFilter}
-              sortKey={sortKey}
-              projectId={projectId}
-              absPath={absPath}
-              openPath={openPath}
-              onOpen={onOpen}
-              canIngest={canIngest}
-              ingestRunning={ingest.running}
-              ingestingPath={ingest.job?.path || ''}
-              onIngest={(filePath) => void ingest.start(filePath)}
-            />
           </TabsContent>
 
           <TabsContent value="assets" className="flex flex-col gap-3">
@@ -1492,32 +1282,6 @@ export function InputPanel({
         </Tabs>
       </section>
 
-      {input.indexPath ? (
-        <section className="flex items-center justify-between rounded-lg border border-border px-4 py-3">
-          <div className="flex flex-col">
-            <span className="text-sm">资料台账 INDEX.md</span>
-            <span className="text-xs text-muted-foreground">
-              脚本生成的表格 + 人工批注区
-              {input.converted[0]?.mtime ? ` · 资料最后入库 ${formatRelative(input.converted[0].mtime)}` : ''}
-            </span>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              onOpen({
-                path: input.indexPath,
-                name: 'INDEX.md',
-                reader: 'markdown',
-                size: 0,
-                mtime: '',
-              })
-            }
-          >
-            打开
-          </Button>
-        </section>
-      ) : null}
       <ApiKeyDialog
         open={envKind === 'api_key'}
         onOpenChange={(next) => {

@@ -51,7 +51,7 @@ output/docx-template/<模板名>/
 python3 scripts/md2docx.py output/docs/方案.md --template <模板名>
 ```
 
-成品是同目录、同名的 `.docx`。需要 pandoc 3。看板产出列表「更多 → 转成 Word」和阅读器版本条上的「转成 Word / 重新转换」调的是同一支脚本。
+成品落点由脚本按来源决定：产出原稿写到 `output/delivery/<组>/<子路径>/<基名>.docx`，交付稿写到同目录的 `v<序号>.docx`，`output/converted/` 下的单文件写到 `output/delivery/converted/<子路径>/<基名>.docx`（不写进 `output/converted/`），其它位置仍是旁边的同名 `.docx`。需要 pandoc 3。看板产出列表「更多 → 转成 Word」和阅读器里的「转成 Word / 重新转换」调的是同一支脚本。
 
 ## 给 AI 的步骤
 

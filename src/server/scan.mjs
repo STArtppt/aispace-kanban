@@ -28,7 +28,7 @@ const UNSORTED_ASSETS = '未分类';
  */
 const PAYLOAD_DIRS = new Set(['SplittingObject', 'MergedObject']);
 /**
- * 数据库产物的保留目录（相对 input/converted/）。工作空间的 scripts/db_ingest.py 往这儿写，
+ * 数据库产物的保留目录（相对转换产物根，见 convertedRootOf）。工作空间的 scripts/db_ingest.py 往这儿写，
  * 扫描按这个**路径前缀**分流：它下面的东西不进「已转换」清单，改挂到对应的数据源下。
  * 数据库和文件是两条来源，混在一个清单里会让「已转换」的语义糊掉。
  * 改这个名字要同步 templates/pm-aispace/scripts/db_ingest.py 的 SOURCES_OUT。
@@ -82,8 +82,10 @@ export function outputPlacement(relPath) {
 
 /**
  * 可转换条目的不透明键：相对路径（`/` 分隔）的 SHA-256 前 16 位十六进制。
- * 只下发给三类条目：产出三组里的 `.md`（转成 Word 的来源）、`input/raw/` 里的 `.docx`（提炼模板的来源）、
- * 交付稿 `output/delivery/<组>/…/v<三位序号>.md`（去 AI 味后的版本，也能转成 Word；由 deai.mjs 的交付稿接口下发）。
+ * 只下发给四类条目：产出三组里的 `.md`（转成 Word 的来源）、`input/raw/` 里的 `.docx`（提炼模板的来源）、
+ * 交付稿 `output/delivery/<组>/…/v<三位序号>.md`（去 AI 味后的版本，也能转成 Word；由 deai.mjs 的交付稿接口下发）、
+ * 转换产物根（`output/converted/`，旧布局 `input/converted/`）下的单文件 `.md`
+ * （转成 Word，成品进 `output/delivery/converted/`；摘要入口和目录型产物没有）。
  *
  * 写接口只收这个键、**不收路径**（AGENTS.md 不变量 1 第九条第 ④ 款）：
  * 服务端重新走一遍对应目录、在同一类条目里反查出路径，查不到就 400。
@@ -127,7 +129,34 @@ export function deliveryDirOf(originalRel) {
   return `${DELIVERY_DIR}/${originalRel.slice('output/'.length).replace(/\.md$/i, '')}`;
 }
 
-/** docKey 的三类来源。反查只在对应的那一类里找，产出的键换不来原件的路径，反之亦然。 */
+/**
+ * 转 Word 的落点。与 templates/pm-aispace/scripts/md2docx.py 的 placement_target 同一规则。
+ * 原稿旁边的旧成品不在这里：那是阅读时的兜底，不是下一次转换要写的位置。
+ * @param {string} relPath
+ */
+export function docxTargetOf(relPath) {
+  const text = String(relPath || '').replace(/\\/g, '/');
+  const asDelivery = deliveryOf(text);
+  if (asDelivery?.version) return text.replace(/\.md$/i, '.docx');
+  const dir = deliveryDirOf(text);
+  if (dir) {
+    const base = text.split('/').pop().replace(/\.md$/i, '');
+    return `${dir}/${base}.docx`;
+  }
+  // 两种布局得到同一个镜像目录：搬家前后转出的 Word 落在同一处
+  const convertedPrefix = CONVERTED_ROOTS.find((prefix) => text.toLowerCase().startsWith(`${prefix}/`));
+  if (convertedPrefix && /\.md$/i.test(text)) {
+    const parts = text.split('/');
+    if (!parts.some((p) => !p || p === '.' || p === '..')) {
+      const rest = text.slice(convertedPrefix.length + 1).replace(/\.md$/i, '');
+      const base = rest.split('/').pop();
+      return `output/delivery/converted/${rest}/${base}.docx`;
+    }
+  }
+  return text.replace(/\.md$/i, '.docx');
+}
+
+/** docKey 的四类来源。反查只在对应的那一类里找，产出的键换不来原件、也换不来输入转换产物。 */
 const DOC_KEY_KINDS = {
   'output-md': (root) => OUTPUT_GROUPS.flatMap((g) => listFiles(path.join(root, 'output', g)))
     .filter((abs) => path.extname(abs).toLowerCase() === '.md'),
@@ -136,12 +165,14 @@ const DOC_KEY_KINDS = {
   // 只收三组镜像目录下的 v<序号>.md；组名不对的（output/delivery/misc/…）不算交付稿
   'delivery-md': (root) => OUTPUT_GROUPS.flatMap((g) => listFiles(path.join(root, DELIVERY_DIR, g)))
     .filter((abs) => DELIVERY_FILE_RE.test(path.basename(abs))),
+  // 与 describeConverted 给单文件 .md 挂 docKey 的范围一致：不要摘要、不要目录型产物、不要 _sources
+  'converted-md': (root) => listConvertedMd(root),
 };
 
 /**
  * 按 docKey 反查工作空间相对路径；查不到返回 null。
  * @param {string} root
- * @param {'output-md' | 'raw-docx' | 'delivery-md'} kind
+ * @param {'output-md' | 'raw-docx' | 'delivery-md' | 'converted-md'} kind
  * @param {string} key
  */
 export function findDocByKey(root, kind, key) {
@@ -155,6 +186,36 @@ export function findDocByKey(root, kind, key) {
 
 function rel(root, abs) {
   return path.relative(root, abs).split(path.sep).join('/');
+}
+
+/** 转换产物根的两种位置：新布局在前。docxTargetOf 与 citations 的旧前缀别名都按这份认 */
+export const CONVERTED_ROOTS = ['output/converted', 'input/converted'];
+
+function hasEntries(dir) {
+  try {
+    return fs.readdirSync(dir).some((name) => !name.startsWith('.'));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 转换产物根目录，过渡期两种布局都认（模板 scripts/migrate_converted_to_output.py 负责搬家）。
+ * 按「有没有非隐藏内容」判，不按目录在不在 —— 旧模板给 input/converted/ 放过 .gitkeep，
+ * 有人先建了个空的 output/converted/ 也不该把旧产物整栏藏掉：
+ * `output/converted/` 有内容 → 新布局（`input/converted/` 也有内容时标 leftover，待人工确认）；
+ * 否则 `input/converted/` 有内容 → 旧布局；都没有 → 新布局空态（`output/converted/` 在就是 output，否则 none）。
+ * 扫描、docKey 反查、溯源反链、frontmatter 不许指出去的范围校验都走这一处。
+ * @param {string} root
+ * @returns {{ dir: string, rel: string, layout: 'output' | 'input' | 'none', leftover: boolean }}
+ */
+export function convertedRootOf(root) {
+  const next = path.join(root, 'output', 'converted');
+  const old = path.join(root, 'input', 'converted');
+  const oldHas = hasEntries(old);
+  if (hasEntries(next)) return { dir: next, rel: CONVERTED_ROOTS[0], layout: 'output', leftover: oldHas };
+  if (oldHas) return { dir: old, rel: CONVERTED_ROOTS[1], layout: 'input', leftover: false };
+  return { dir: next, rel: CONVERTED_ROOTS[0], layout: fs.existsSync(next) ? 'output' : 'none', leftover: false };
 }
 
 /**
@@ -201,6 +262,42 @@ function makeIgnoreMatcher(patterns) {
   };
 }
 
+/**
+ * 转换产物根（convertedRootOf）下可转 Word 的单文件 `.md`。
+ * 不收 `_manifest_*.md` / `_manifest.md`、目录型产物内部、`SplittingObject/` `MergedObject/`、`_sources/`。
+ * 与 describeConverted 挂 `docKey` 的条件对齐，反查才找得回扫描下发的键。
+ */
+function listConvertedMd(root) {
+  const out = [];
+  const convertedRoot = convertedRootOf(root).dir;
+  const walk = (dir) => {
+    if (!fs.existsSync(dir)) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (SKIP.has(entry.name) || entry.name.startsWith('.')) continue;
+      const abs = path.join(dir, entry.name);
+      if (!entry.isDirectory()) {
+        if (entry.name.toLowerCase().endsWith('.md') && entry.name !== '_manifest.md' && !MANIFEST_RE.test(entry.name)) {
+          out.push(abs);
+        }
+        continue;
+      }
+      if (PAYLOAD_DIRS.has(entry.name)) continue;
+      if (dir === convertedRoot && entry.name === SOURCES_DIR_NAME) continue;
+      // 旧布局：目录里直接有 _manifest.md，整目录是一份产物，内部文件单独转会写错地方
+      if (fs.existsSync(path.join(abs, '_manifest.md'))) continue;
+      walk(abs);
+    }
+  };
+  walk(convertedRoot);
+  return out;
+}
+
 function listFiles(dir, { recursive = true } = {}) {
   const out = [];
   if (!fs.existsSync(dir)) return out;
@@ -241,7 +338,7 @@ function readTextSafe(abs, limit = 2 * 1024 * 1024) {
 }
 
 /**
- * input/converted 下的一份产物。三种形态：
+ * 转换产物根（convertedRootOf）下的一份产物。三种形态：
  *
  *  1. `_manifest_<名>.md` —— 新布局的产物入口。正文在 frontmatter `payload:` 指的同级容器目录里
  *     （SplittingObject/<名>/ 或 MergedObject/），摘要留在镜像目录，界面上按「一份产物」呈现。
@@ -251,8 +348,8 @@ function readTextSafe(abs, limit = 2 * 1024 * 1024) {
  * `path` 指的是产物的「包」（有正文目录就是正文目录，否则就是文件本身），`manifestPath` 单独给
  * 出摘要在哪 —— 新布局里摘要不在正文目录内，前端不能再按 `path + '/_manifest.md'` 拼。
  */
-function describeConverted(root, abs) {
-  const convertedDir = path.join(root, 'input', 'converted');
+function describeConverted(root, abs, converted = convertedRootOf(root)) {
+  const convertedDir = converted.dir;
   const isDirEntry = fs.statSync(abs).isDirectory();
   const nameHit = isDirEntry ? null : path.basename(abs).match(MANIFEST_RE);
 
@@ -285,7 +382,7 @@ function describeConverted(root, abs) {
     reader: isDir ? 'markdown' : readerKind(ext),
     title: label,
     /**
-     * 产物在目录树里的位置，相对 input/converted/。新布局下 converted/ 与 raw/ 同构，
+     * 产物在目录树里的位置，相对转换产物根。converted/ 与 raw/ 同构，
      * 所以这就是资料自己的整理方式；摘要文件在树里显示成产物名（去掉 `_manifest_` 前缀），
      * 不然树里全是 `_manifest_xxx.md`，正文却藏在 SplittingObject/ 下面看不见。
      */
@@ -293,6 +390,14 @@ function describeConverted(root, abs) {
     ...stat(hasManifest ? entry : abs),
   };
   if (hasManifest) item.manifestPath = rel(root, entry);
+  // 单文件 .md 才能「转成 Word」。摘要、目录型产物、数据库产物不给键（旧服务没有这个字段）
+  if (!isDir && ext === '.md' && !nameHit && path.basename(abs) !== '_manifest.md') {
+    const segs = item.path.split('/');
+    if (item.path.startsWith(`${converted.rel}/`) && !segs.includes(SOURCES_DIR_NAME)
+        && !segs.some((s) => PAYLOAD_DIRS.has(s))) {
+      item.docKey = docKeyOf(item.path);
+    }
+  }
 
   if (isDir) {
     // 顶层文件：html 原型只看一层；csv 递归（点表分册在 分册/*.csv）
@@ -364,17 +469,17 @@ function describeConverted(root, abs) {
 }
 
 /**
- * 递归走 input/converted/，把产物认出来。目录结构镜像 input/raw/，中间那些镜像目录
+ * 递归走转换产物根，把产物认出来。目录结构镜像 input/raw/，中间那些镜像目录
  * 本身不是产物，要走进去；SplittingObject/ MergedObject/ 是正文容器，跳过不进
  * （它们的内容已经挂在旁边那份 manifest 的 sheets 上了）。
  */
-function collectConverted(root, dir, out, convertedRoot = dir) {
+function collectConverted(root, dir, out, converted = convertedRootOf(root), convertedRoot = dir) {
   if (!fs.existsSync(dir)) return;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     if (SKIP.has(entry.name) || entry.name.startsWith('.')) continue;
     const abs = path.join(dir, entry.name);
     if (!entry.isDirectory()) {
-      out.push(describeConverted(root, abs));
+      out.push(describeConverted(root, abs, converted));
       continue;
     }
     if (PAYLOAD_DIRS.has(entry.name)) continue;
@@ -382,10 +487,10 @@ function collectConverted(root, dir, out, convertedRoot = dir) {
     if (dir === convertedRoot && entry.name === SOURCES_DIR_NAME) continue;
     // 旧布局的目录型产物：目录里直接躺着 _manifest.md，整个目录算一份产物
     if (fs.existsSync(path.join(abs, '_manifest.md'))) {
-      out.push(describeConverted(root, abs));
+      out.push(describeConverted(root, abs, converted));
       continue;
     }
-    collectConverted(root, abs, out, convertedRoot);
+    collectConverted(root, abs, out, converted, convertedRoot);
   }
 }
 
@@ -546,7 +651,7 @@ function convertedManifestAbs(root, relPath) {
   const nested = path.join(abs, '_manifest.md');
   if (fs.existsSync(nested)) return nested;
 
-  const convertedDir = path.join(root, 'input', 'converted');
+  const convertedDir = convertedRootOf(root).dir;
   if (abs !== convertedDir && !abs.startsWith(convertedDir + path.sep)) return '';
   // SplittingObject/<名>/ 的摘要在再上一层；MergedObject/ 的摘要就在父目录
   const parent = path.dirname(abs);
@@ -712,7 +817,7 @@ function readSourceConfig(abs) {
 }
 
 /**
- * input/sources/*.yaml → 数据源清单，每个源挂着它在 input/converted/_sources/ 下的产物。
+ * input/sources/*.yaml → 数据源清单，每个源挂着它在转换产物根 `_sources/` 下的产物。
  *
  * 返回 null = 「这个工作空间没有 `input/sources/` 目录」，调用方据此**不给** scan 里的这个字段。
  * 目录在、一份 yaml 都还没配 → 返回空数组，前端才能画出空态和「添加数据库源」按钮。
@@ -723,7 +828,7 @@ function readSourceConfig(abs) {
  */
 function scanSources(root) {
   const configDir = path.join(root, 'input', 'sources');
-  const outDir = path.join(root, 'input', 'converted', SOURCES_DIR_NAME);
+  const outDir = path.join(convertedRootOf(root).dir, SOURCES_DIR_NAME);
   const files = fs.existsSync(configDir)
     ? fs.readdirSync(configDir, { withFileTypes: true })
       .filter((e) => e.isFile() && e.name.toLowerCase().endsWith('.yaml') && !e.name.startsWith('.'))
@@ -816,9 +921,9 @@ function scanInput(root) {
     };
   });
 
-  const convertedDir = path.join(inputDir, 'converted');
+  const convertedRoot = convertedRootOf(root);
   const converted = [];
-  collectConverted(root, convertedDir, converted);
+  collectConverted(root, convertedRoot.dir, converted, convertedRoot);
   attachSourceState(root, converted);
 
   // 只收图片：assets/ 下还有 ingest.py 写的 _manifest.md，它不该出现在图库里
@@ -849,6 +954,14 @@ function scanInput(root) {
   // 忽略的不算缺口：它们是「看过、判定用不上」，跟「还没转」不是一回事
   const pending = raw.filter((r) => !r.ignored && !isCovered(r));
   const ignored = raw.filter((r) => r.ignored);
+  // 原件在转换后动过：从产物的 sourceState 反查回 raw（目录型 source 判不出改动，不会是 stale）
+  const staleSources = new Set(converted.filter((c) => c.sourceState === 'stale').map((c) => c.source));
+  // 可选字段，旧前端不认：原始资料据此全量列出、行内打标签，不再因转换或忽略从列表里消失。
+  // 判定与上面的 pending / ignored 同一口径，只是不再丢掉非待转的条目
+  for (const r of raw) {
+    r.state = r.ignored ? 'ignored' : isCovered(r) ? 'converted' : 'pending';
+    if (r.state === 'converted' && staleSources.has(r.path)) r.stale = true;
+  }
 
   const indexPath = path.join(inputDir, 'INDEX.md');
   // 模板工作空间才有 scripts/ingest.py；自己 mkdir 的只有目录约定，不能在看板里触发转换
@@ -862,6 +975,11 @@ function scanInput(root) {
     assetGroups,
     pending,
     indexPath: fs.existsSync(indexPath) ? rel(root, indexPath) : '',
+    // 可选：转换产物根在哪种布局（产物仍在 converted 里下发，只是前端挪到「产出文档」渲染）。
+    // 'input' = 旧布局待迁移；leftover = 新旧两处都有东西，input/converted/ 是残留
+    layout: convertedRoot.layout,
+    convertedRoot: convertedRoot.rel,
+    ...(convertedRoot.leftover ? { convertedLeftover: true } : {}),
     canIngest,
     ...(sources ? { sources } : {}),
     // 有 input/sources/ 目录才需要知道采集脚本在不在（空数组也要给，刷新按钮才能出现在空态旁）
@@ -913,7 +1031,7 @@ function scanOutput(root) {
       })
       .sort((a, b) => b.mtime.localeCompare(a.mtime));
   }
-  // 未决问题**不进任何分组** —— 两百多份问题文件会把「分析中间产物」那份清单整个淹掉，
+  // 未决问题**不进任何分组** —— 两百多份问题文件会把「分析产物」那份清单整个淹掉，
   // 它有自己的入口（⌘K 弹窗）。但正文照样喂给溯源反链：一份资料被某条问题引着，
   // 那就是「被产出引用」，不该在资料视图里显示成「还没有产出引用它」。
   //
@@ -936,7 +1054,7 @@ function scanOutput(root) {
   //
   // 产出物记录（`output/records/`）**两样都不进**：不进上面三个分组，也不喂溯源反链。
   //
-  // 不进分组的理由与问题清单同一条：三类合计的记录数会把「分析中间产物」那份清单整个淹掉，
+  // 不进分组的理由与问题清单同一条：三类合计的记录数会把「分析产物」那份清单整个淹掉，
   // 它有自己的入口（⌘K 工作台的「产出物」页）。这里不需要额外的排除逻辑 ——
   // 上面那轮只遍历三个组名，`records/` 天然不在其中。
   // `output/records/notes/` 在这个目录里面，同样进不了三组列表；

@@ -27,7 +27,7 @@ description: 在 aispace-kanban 里新建文件、不确定代码该放哪个平
 
 **前端(`src/app/`)**
 
-- 业务面板:`components/<视图名>Panel.tsx`(`OverviewPanel` / `InputPanel` / `OutputPanel` / `PrototypePanel`)
+- 业务面板:`components/<视图名>Panel.tsx`(`InputPanel` / `OutputPanel` / `VisualPanel`;资料台账里的概览是 `LedgerOverview`,不是独立视图)
 - 跨面板复用的小件:`components/Primitives.tsx`(`Stat` / `SectionTitle` / `EmptyState` / `Row`)
 - 独立功能组件:`components/<PascalCase>.tsx`,一个文件一个主组件,文件名与组件同名
 - registry 拉来的通用 UI:`components/ui/<kebab-case>.tsx` —— **由 `shadcn add` 生成,不手写**

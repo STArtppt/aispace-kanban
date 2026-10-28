@@ -10,7 +10,7 @@
 #
 # 新建的工作空间里这份文件几乎全是 null，这是设计如此 ——
 # 合同、招标技术文件、立项报告这些定义项目的资料，多数时候是后补进来的。
-# 等它们进了 input/converted/，让 AI 用 pm-project-meta 提取，增量补全。
+# 等它们进了 output/converted/，让 AI 用 pm-project-meta 提取，增量补全。
 
 schema: pmwork-project-meta/v1
 
@@ -61,7 +61,7 @@ acceptance:
   流程: []
   标准: []
 
-documents: [] # 形如 { path: input/converted/xxx.md, 角色: , 提取于: }：元信息提取自哪些资料
+documents: [] # 形如 { path: output/converted/xxx.md, 角色: , 提取于: }：元信息提取自哪些资料
 
 provenance: {} # 点号路径 → "文件 · 小节"。每个非 null 字段都要有一条
 

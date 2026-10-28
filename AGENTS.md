@@ -9,7 +9,7 @@
 ## 1. 项目是什么 + 最硬的不变量
 
 **aispace-kanban** 是**与 AI 反复对话完成知识工作**时用的**只读看板**:常驻本机的服务,
-指向若干工作空间目录,在浏览器里看概览 / 输入资料 / 产出文档 / 原型。
+指向若干工作空间目录,在浏览器里看输入资料(含资料台账与概览)/ 产出文档 / 原型。
 只认 `input/` + `output/` 的目录约定(判据见 `config.mjs` 的 `inspectWorkspace`),**不绑定行业或岗位**。
 
 工作空间**模板**([`templates/`](./templates))也在本仓维护,是**另一套语境**:本文件的编码规范
@@ -35,6 +35,8 @@
    - 新建工作空间:spawn `templates/init_workspace.py --from <模板目录>`(`http.mjs` 的 `runInit`)。
      骨架与 `.aispace/template.lock.json` 都由脚本写,看板不自己造目录
    - 资料转换:spawn 工作空间的 `scripts/ingest.py`(`http.mjs` 的 `startIngest`)。
+     脚本读 `input/raw/`,产物写 `output/converted/`(旧布局工作空间是 `input/converted/`,
+     产物还在旧位置时新脚本拒绝写,先由人跑模板的一次性迁移脚本;看板不 spawn 迁移,也不提供按钮)。
      `ANYDOC_BIN` 由看板注入本地 anydoc 路径,解析不到就不注入(脚本走 PATH)
    - 忽略待转换资料:追加 `input/.ingestignore`(`http.mjs` 的 `addIgnore`)。只追加一行模式,不改原件;
      这份文件是看板与 ingest.py 的共用约定,不经脚本
@@ -67,7 +69,7 @@
    ① 看板只 spawn; ② 用户在参考 tab 点「刷新」发起; ③ 环回且非跨站;
    ④ 请求**不带路径、文件名、URL**,脚本自己扫 `visualization/references/` 根上的散装 `.html` / `.htm`;
    ⑤ 脚本只把散装文件收成新目录 `visualization/references/<slug>/`(`index.html` + `meta.json`),
-      并把抽出的 Markdown 写进 `input/converted/`(落点复用 `layout.py`);已有参考目录只读。
+      并把抽出的 Markdown 写进转换产物根 `output/converted/`(旧布局 `input/converted/`;落点复用 `layout.py`);已有参考目录只读。
       URL 模式不写 `visualization/`,看板也不得 spawn 带 URL 的调用
 
    **第六条 · 产出物记录的状态变更**(写 `output/records/I<编号>.md`,`records.mjs` 的 `writeRecordStatus`,直写):
@@ -110,15 +112,26 @@
    **第九条 · 提炼 Word 模板 / 转 Word**(spawn `scripts/docx_template.py` / `scripts/md2docx.py`,
    `docxTools.mjs`,同步等退出、带超时):
    ① 看板只 spawn; ② 用户点「开始分析」「生成模板」「转换」发起,文件变化不自动重跑; ③ 环回且非跨站;
-   ④ **请求不带任何路径**:来源 `.docx` 与待转 `.md`(产出三组与交付稿 `output/delivery/**/v<序号>.md`)只用扫描下发的
-      不透明键 `docKey`(相对路径 SHA-256 前 16 位)指定,服务端重扫反查、查不到 400,再过 `resolveInside()`;
+   ④ **请求不带任何路径**:来源 `.docx` 与待转 `.md` 只用扫描下发的
+      不透明键 `docKey`(相对路径 SHA-256 前 16 位)指定,服务端重扫反查、查不到 400,再过 `resolveInside()`。
+      待转 `.md` 有三类,键互相换不来路径:产出三组、交付稿 `output/delivery/<组>/**/v<序号>.md`、
+      转换产物根(`output/converted/`,旧布局 `input/converted/`,见 `scan.mjs` 的 `convertedRootOf`)下的单文件 `.md`。`_manifest_*.md`(摘要入口)、目录型产物及其内部文件、`.csv` 不在范围内,也不给 `docKey`。
       不接受「带路径但会校验」,也不退回「组名 + 基名」(子目录里基名不唯一)。
       模板名只接受一层基名;提炼决定经 stdin 传 JSON,服务端限 256KB、拒路径类键名,脚本再校验;
    ⑤ `docx_template.py` 只写 `output/docx-template/<模板名>/`(`collect/` `profile.json` `reference.docx`
-      `front.docx` `spec.md` `sample.docx`);`md2docx.py` 只写来源 `.md` 同目录同基名的 `.docx`
-      (来源是交付稿时落在交付稿旁,原稿目录不动;中间文件放系统临时目录;`.md` 一个字节不改),
-      外加「重新转换」时把同名的上一份成品**改名**为 `<基名>-<上次转换时间>.docx`(同目录,不删不覆盖);
-      转换时间记在成品自己的 `docProps/custom.xml`(`aispace-docx-converted`),不写进 `.md`;
+      `front.docx` `spec.md` `sample.docx`);`md2docx.py` 只写按来源算出的落点
+      (与 `scan.mjs` 的 `docxTargetOf`、脚本 `placement_target` 同一规则,按需建目录;中间文件放系统临时目录;`.md` 一个字节不改):
+      产出三组原稿(含组内子目录与已归档项)→ `output/delivery/<组>/<子路径>/<基名>.docx`;
+      交付稿 → 同目录 `v<序号>.docx`(原稿目录不动);
+      `output/converted/<子路径>.md`(旧布局 `input/converted/<子路径>.md`,同一镜像)→ `output/delivery/converted/<子路径>/<基名>.docx`,
+      **转换产物目录一个字节都不写**,落点不在这个目录下时脚本退出 2、不写盘;
+      来源在 `output/converted/` 而工作空间的 `md2docx.py` 还不认它(没有 `converted-in-output` 标记)时服务端 400、不 spawn;
+      以上都不是(只有命令行会传)→ `.md` 同目录同基名。
+      「重新转换」把落点上的上一份成品**改名**为 `<基名>-<上次转换时间>.docx`(同目录,不删不覆盖);
+      原稿旁边改动前留下的旧 `.docx` 不搬、不删、不改名。
+      转换时间记在成品自己的 `docProps/custom.xml`(`aispace-docx-converted`),不写进 `.md`。
+      工作空间脚本不认识镜像落点(源码里没有 `delivery-mirror`)时,对**所有来源** 400(`old-script`),不得 spawn
+      —— 旧脚本会写到来源旁边,对输入转换产物就是写进 `input/`;
    ⑥ **不覆盖别人的文件**:同名 `.docx` 只有带生成标记(`docProps/custom.xml` 的 `aispace-docx-generator`)
       才归档改名(界面)或替换(`overwrite`,只留给旧前端与命令行),否则 409;脚本不支持归档时 400,看板不代为改名;
       模板名已存在要用户确认「重新生成」。服务端与脚本各校验一次;

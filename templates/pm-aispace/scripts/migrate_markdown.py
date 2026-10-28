@@ -14,7 +14,7 @@
 --------
 - **不改正文措辞** —— 那是人的事。
 - **不调标题层级** —— 多个 H1、跳级这些要人看过再改，脚本猜错比不做更糟。
-- **不碰** `input/converted/` 与 `input/raw/`。
+- **不碰** `output/converted/`（旧布局 `input/converted/`）与 `input/raw/`。
 - **不改** `output/questions/` 的字段（那是 `migrate_questions.py` / 字段契约的事）；
   那里的裸文件名引用仍会改。
 - **不给** `output/docs/` 和各目录 `README.md` 强加 front-matter
@@ -47,7 +47,7 @@ WS = HERE.parent
 DEFAULT_DIR = WS / "output"
 
 SKIP_DIRS = {".git", "node_modules", ".claude", ".agents", "__pycache__", "dist"}
-SKIP_PARTS = {"input/converted", "input/raw"}
+SKIP_PARTS = {"output/converted", "input/converted", "input/raw"}
 
 BARE_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^/#)\s]+\.md)\)")
 BARE_TICK_RE = re.compile(r"`([^`/#]+\.md)`")

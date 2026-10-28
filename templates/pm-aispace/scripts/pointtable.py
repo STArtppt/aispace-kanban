@@ -15,7 +15,7 @@
 - `scada_ini`  分段型：.txt，`[RTU]` / `[遥信]` / `[遥测]` / `[遥控]` 分段，
                逗号分隔数据行，编码 GBK 与 UTF-8 混杂。典型来源：风电 / 光伏集中监控。
 
-产物（写到 input/converted/<点表集名>/）
+产物（写到 output/converted/<点表集名>/）
 ---------------------------------------
     _manifest.md      轻量台账：规模、分布、字段说明、已知局限。**看板预览请点这个**
     测点主表.csv      全量测点，统一 18 列，含溯源列（源文件 + 源行号）
@@ -57,13 +57,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from layout import (  # noqa: E402  input/ 的共用约定，三个转换脚本共用一份
     MERGE_DIR, add_ignore_flags, ignore_patterns, is_ignored, md_link,
-    merge_paths, safe_component,
+    ensure_layout, merge_paths, safe_component,
 )
 from xls_reader import XlsError, read_xls  # noqa: E402  与本脚本同目录
 
 REPO = Path(__file__).resolve().parent.parent
 RAW = REPO / "input" / "raw"
-CONVERTED = REPO / "input" / "converted"
+CONVERTED = REPO / "output" / "converted"
 
 XLNS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 
@@ -563,6 +563,7 @@ def main() -> int:
     ap.add_argument("--no-sqlite", action="store_true", help="不产出 sqlite 索引")
     add_ignore_flags(ap)
     args = ap.parse_args()
+    ensure_layout()
     patterns = ignore_patterns(args)
 
     if args.paths:

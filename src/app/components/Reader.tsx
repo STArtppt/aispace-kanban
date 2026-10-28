@@ -38,6 +38,7 @@ import { DeliveryBar, DeliveryDiff, copyDeaiPrompt, useDeliveryVersions, type Co
 import { DocxExportDialog } from '@/components/DocxExportDialog';
 import { DocxView } from '@/components/DocxView';
 import { FinalizeDialog } from '@/components/FinalizeDialog';
+import { LedgerOverview } from '@/components/LedgerOverview';
 import {
   DocumentToc,
   Markdown,
@@ -64,13 +65,14 @@ import { collectBlocks, createSearchJumper, type SearchJumper } from '@/lib/bloc
 import { queryTokens, searchBlocks, toSnippetParts } from '@/lib/fuzzySearch';
 import { shouldPassthroughUrl } from '@/lib/markdownUrls';
 import { utf8Len } from '@/lib/sourceAnchor';
-import { deliveryDirOf, nextVersion } from '@/lib/deaiPrompt';
+import { deliveryDirOf, docxTargetOf, nextVersion } from '@/lib/deaiPrompt';
 import {
   api,
   ApiError,
   type AssetGroup,
   type ConvertedItem,
   type FileItem,
+  type Scan,
   type SourceVerification,
 } from '@/lib/api';
 import { formatBytes, formatRelative } from '@/lib/format';
@@ -992,6 +994,8 @@ interface ReaderBodyExtras {
   onOpenDeaiRule?: (rule: string) => void;
   /** 顶栏「在访达中显示」之后的额外按钮（原稿的「定稿」） */
   headerExtra?: ReactNode;
+  /** 正文上方的一段（资料台账的精简概览），与正文同在一个滚动区里 */
+  prelude?: ReactNode;
 }
 
 const FONT_LEVEL_KEY = 'aispace-kanban:reader-font-level';
@@ -1035,6 +1039,7 @@ function ReaderBody({
   delivery,
   onOpenDeaiRule,
   headerExtra,
+  prelude,
 }: ReaderProps & ReaderBodyExtras) {
   const fileManager = useFileManagerName();
   // 清单和预览共用一份收藏状态：点这里立刻反映到对应列表的置顶
@@ -1068,9 +1073,12 @@ function ReaderBody({
   const sourceState = isConverted(item) ? item.sourceState : undefined;
 
   // 目录里有 csv 就按表格包处理（含点表）；item.reader 也可能已是 table
+  // 台账在这里就是 INDEX.md 的 markdown 正文；概览由外层经 prelude 塞进来
   const mode: 'markdown' | 'table' | 'text' | 'image' | 'html' | 'external' | 'gallery' = multiSheet
     ? 'table'
-    : item.reader;
+    : item.reader === 'ledger'
+      ? 'markdown'
+      : item.reader;
 
   // PDF 仍是 external（不改扫描契约），但交给浏览器自带的 PDF 查看器内嵌预览：
   // 扫描件和文字件一样能看，不引依赖。目录型产物不走这条。
@@ -1441,6 +1449,9 @@ function ReaderBody({
                 'min-[900px]:pr-[calc(200px+0.75rem)] xl:pr-[calc(220px+0.75rem)]',
               )}
             >
+              {prelude ? (
+                <div className="mx-auto mb-6 w-full max-w-[76ch] border-b border-border pb-6">{prelude}</div>
+              ) : null}
               {loading ? <p className="text-sm text-muted-foreground">读取中…</p> : null}
               {error ? <p className="text-sm text-destructive">{error}</p> : null}
               {content && !error ? (
@@ -1800,19 +1811,24 @@ function ReaderBody({
 
 /** 产出三组里的 .md 才可能有交付稿（交付稿目录镜像原稿路径） */
 const DELIVERY_SOURCE_RE = /^output\/(analysis|docs|decisions)\/.+\.md$/i;
+/** 转换产物里的单文件 .md（新旧两种布局）。有没有 docKey 由扫描决定，这里只认路径形状 */
+const CONVERTED_MD_RE = /^(output|input)\/converted\/.+\.md$/i;
 
 /**
  * 预览区。外面这一层只管去 AI 味的交付稿：产出三组的 .md 在顶栏下常驻版本条（没有交付稿时只有「原稿」），
  * 切到某一版就把那一版当成一份 .md 交给 ReaderBody（批注、目录、搜索都照常），
- * 选了对比就用对比视图替换正文；「预览 Word」把同名 .docx 当成一份文件交给 ReaderBody 渲染。
+ * 选了对比就用对比视图替换正文；「预览 Word」把成品 .docx 当成一份文件交给 ReaderBody 渲染。
  * 工作空间目录丢失时没有版本条；旧服务进程（接口 404）只有「原稿」，Word 按钮始终是「转成 Word」。
+ * 输入转换产物带 docKey 时另给一条只有 Word 按钮的栏；接口 400（旧服务不认这个键）就不显示。
  * 顶栏「定稿」（第十条）作用于原稿，无论版本条选中哪一份；选中「定稿」时正文是 `定稿.md`，不能批注、不能转 Word。
+ * 资料台账（`ledger`）另走 LedgerReader，不经这一层。
  */
 export function Reader({
   workspaceAvailable = true,
   refreshToken,
   deliveryFocus,
   onOpenDeaiRule,
+  scan,
   ...props
 }: ReaderProps & {
   /** 工作空间目录丢失（`available === false`）时不请求交付稿接口 */
@@ -1822,16 +1838,69 @@ export function Reader({
   /** 从工作台跳进来：选中原稿 source 的某一版，并打开批注清单 */
   deliveryFocus?: { source: string; version: string; seq: number } | null;
   onOpenDeaiRule?: (rule: string) => void;
+  /** 资料台账的概览要用；不给（或目录丢失）时台账只剩 INDEX.md 正文 */
+  scan?: Scan | null;
+}) {
+  if (props.item.reader === 'ledger') {
+    return <LedgerReader {...props} scan={workspaceAvailable ? scan : null} />;
+  }
+  return (
+    <DeliveryReader
+      {...props}
+      workspaceAvailable={workspaceAvailable}
+      refreshToken={refreshToken}
+      deliveryFocus={deliveryFocus}
+      onOpenDeaiRule={onOpenDeaiRule}
+    />
+  );
+}
+
+/**
+ * 资料台账：上半是精简概览，下半是 `input/INDEX.md` 正文；没有 INDEX.md 时只有概览，
+ * 不显示「读取失败」之类的空态。它不是交付源，没有版本条。
+ */
+function LedgerReader({ scan, ...props }: ReaderProps & { scan?: Scan | null }) {
+  const { onOpenPath } = props;
+  const overview = scan && scan.available !== false ? (
+    <LedgerOverview scan={scan} onOpenPath={onOpenPath ? (path) => void onOpenPath(path) : undefined} />
+  ) : null;
+  if (scan && !scan.input.indexPath) {
+    return (
+      <ReaderBody
+        {...props}
+        annotateDisabledReason="还没有 input/INDEX.md，没有正文可批注"
+        replaceBody={overview ?? <p className="text-sm text-muted-foreground">工作空间里还没有 input/INDEX.md。</p>}
+      />
+    );
+  }
+  return <ReaderBody {...props} prelude={overview} />;
+}
+
+function DeliveryReader({
+  workspaceAvailable = true,
+  refreshToken,
+  deliveryFocus,
+  onOpenDeaiRule,
+  ...props
+}: ReaderProps & {
+  workspaceAvailable?: boolean;
+  refreshToken?: unknown;
+  deliveryFocus?: { source: string; version: string; seq: number } | null;
+  onOpenDeaiRule?: (rule: string) => void;
 }) {
   const { projectId, item } = props;
   const isSource = workspaceAvailable && DELIVERY_SOURCE_RE.test(item.path);
+  const isConvertedMd = workspaceAvailable && CONVERTED_MD_RE.test(item.path) && Boolean(item.docKey);
   const eligible = isSource && Boolean(item.docKey);
   // 定稿成功后自己再拉一次列表：不等 SSE（目录刚建出来时监听可能慢一拍）
   const [finalizedAt, setFinalizedAt] = useState(0);
   const listToken = useMemo(() => ({ refreshToken, finalizedAt }), [refreshToken, finalizedAt]);
-  const list = useDeliveryVersions(projectId, eligible ? item.docKey : undefined, listToken);
-  const versions = list?.source === item.path ? list.versions : [];
-  const final = list?.source === item.path ? list.final : undefined;
+  // 产出原稿与输入转换产物共用这一次请求。换文件时上一份列表先留着，对上 source 才用，避免串栏。
+  const list = useDeliveryVersions(projectId, eligible || isConvertedMd ? item.docKey : undefined, listToken);
+  const outputList = list?.source === item.path && list.sourceKind !== 'input' ? list : null;
+  const inputList = isConvertedMd && list?.source === item.path && list.sourceKind === 'input' ? list : null;
+  const versions = outputList?.versions ?? [];
+  const final = outputList?.final;
   const [finalizing, setFinalizing] = useState<{ docKey: string } | null>(null);
   /** 服务进程是旧的（定稿接口 404）：按钮置灰到下次换文档 */
   const [finalizeUnsupported, setFinalizeUnsupported] = useState(false);
@@ -1849,6 +1918,7 @@ export function Reader({
     setCompare(null);
     setDocxPreview(false);
     setFinalizeUnsupported(false);
+    setConverted(null);
   }, [item.path]);
 
   useEffect(() => {
@@ -1900,12 +1970,21 @@ export function Reader({
     }
     : item;
   const nextPath = `${deliveryDirOf(item.path)}/${nextVersion(versions.map((v) => v.version))}.md`;
-  // 同目录同名的 .docx（转成 Word 的落点）：服务端给的优先，没刷新到就用刚转出来的那份
-  const docxPath = mdItem.path.replace(/\.md$/i, '.docx');
-  const listedDocx = onFinal ? final?.docx ?? null : current ? current.docx : list?.source === item.path ? list.sourceDocx : null;
-  // 定稿的 Word 只认记录里的那份，不拿刚转出来的成品顶替
-  const docx = listedDocx
-    ?? (!onFinal && converted?.path === docxPath ? { path: docxPath, size: 0, mtime: converted.mtime, generated: true } : null);
+  // 下一次转换要写的位置。原稿旁边的旧成品路径不同，只用来预览，不拿去拦重新转换。
+  const mirrorDocx = docxTargetOf(mdItem.path);
+  const listedDocx = onFinal
+    ? final?.docx ?? null
+    : current
+      ? current.docx
+      : inputList
+        ? inputList.sourceDocx ?? null
+        : outputList?.sourceDocx ?? null;
+  // 定稿的 Word 只认记录里的那份。刚转出的镜像成品优先于列表里还没刷新掉的旧位置兜底。
+  const justWrote = !onFinal && converted?.path === mirrorDocx
+    ? { path: mirrorDocx, size: 0, mtime: converted.mtime, generated: true }
+    : null;
+  const docx = (listedDocx?.path === mirrorDocx ? listedDocx : null) ?? justWrote ?? listedDocx ?? null;
+  const wordDir = (inputList?.dir || mirrorDocx.slice(0, Math.max(mirrorDocx.lastIndexOf('/'), 0)));
   const previewing = docxPreview && Boolean(docx);
   const bodyItem: FileItem = previewing && docx
     ? {
@@ -1925,7 +2004,25 @@ export function Reader({
       <ReaderBody
         {...props}
         item={bodyItem}
-        topBar={eligible ? (
+        topBar={inputList ? (
+          <DeliveryBar
+            wordOnly
+            docxDir={wordDir}
+            versions={[]}
+            selected="source"
+            onSelect={() => {}}
+            compare={null}
+            onCompare={() => {}}
+            onDeai={() => {}}
+            docx={docx}
+            docxPreview={previewing}
+            onDocxPreview={(on) => {
+              setDocxPreview(on);
+              setCompare(null);
+            }}
+            onConvert={() => setConverting(mdItem)}
+          />
+        ) : eligible ? (
           <DeliveryBar
             versions={versions}
             final={final}
@@ -2002,14 +2099,16 @@ export function Reader({
           setDocxPreview(false);
         }}
       />
-      {/* 交付稿不在扫描里：目标 .docx 在不在由服务端判断（409 时再给「覆盖」） */}
+      {/* 只把镜像落点上的成品交给弹窗。旁边的旧成品不在这次要写的位置，不能当成「已有同名文件」 */}
       <DocxExportDialog
         projectId={projectId}
         item={converting}
-        outputItems={docx ? [{ ...bodyItem, path: docx.path, ext: '.docx', docxGenerated: docx.generated }] : []}
+        outputItems={docx && docx.path === docxTargetOf(converting?.path || '')
+          ? [{ ...bodyItem, path: docx.path, ext: '.docx', docxGenerated: docx.generated }]
+          : []}
         onClose={() => setConverting(null)}
         onConverted={(target) => {
-          // 成品与 .md 同目录同名：就地切到「预览 Word」，不跳走
+          // 就地切到「预览 Word」。成品路径用结果里的 target，不跳走
           setConverted(target);
           setCompare(null);
           setDocxPreview(true);

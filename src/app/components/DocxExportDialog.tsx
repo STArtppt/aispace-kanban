@@ -17,6 +17,7 @@ import { writeClipboard } from '@/components/Primitives';
 import { useDocxTools } from '@/hooks/useDocxTools';
 import { ApiError, api, isUnsupported, type DocxTemplateItem, type FileItem } from '@/lib/api';
 import { BASE_TEMPLATE, convertPrompt } from '@/lib/docxPrompt';
+import { docxTargetOf } from '@/lib/deaiPrompt';
 import { cn } from '@/lib/utils';
 
 const storageKey = (projectId: string) => `aispace-kanban:docx-template:${projectId}`;
@@ -78,11 +79,13 @@ function ConvertResultNotice({
   warnings,
   log,
   archived,
+  path,
 }: {
   unfilled: number;
   warnings: string[];
   log: string[];
   archived?: string;
+  path?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   // 没有依赖：sonner 每次悬停进出都会重绘，并把 --initial-height 写回它记住的旧值。
@@ -92,6 +95,7 @@ function ConvertResultNotice({
   });
   return (
     <div ref={ref} className="flex flex-col gap-1">
+      {path ? <span className="truncate" title={path}>{path}</span> : null}
       {archived ? <span>上一份已改名为 {archived.split('/').pop()}</span> : null}
       {unfilled ? <span className="text-destructive">有 {unfilled} 处待填，发出前在 Word 里补上</span> : null}
       {warnings.length ? <span>注意：{warnings.join('；')}</span> : null}
@@ -109,12 +113,15 @@ function ConvertResultNotice({
 
 function showConvertResultToast({
   name,
+  path,
   archived,
   warnings,
   log,
   onPreview,
 }: {
   name: string;
+  /** 成品的工作空间相对路径 */
+  path: string;
   /** 上一份改名后的路径 */
   archived?: string;
   warnings: string[];
@@ -124,11 +131,14 @@ function showConvertResultToast({
   // 封面字段没取到值：成品里是「【待填：…】」，发出前必须补，用 orange 单独点出来
   const unfilled = warnings.filter((w) => w.includes('【待填')).length;
   const duration = warnings.length || log.length ? 15000 : 6000;
+  const detail = warnings.length || log.length || archived;
   toast.success(`已生成 ${name}`, {
     className: 'docx-result-toast',
-    description: warnings.length || log.length ? (
-      <ConvertResultNotice unfilled={unfilled} warnings={warnings} log={log} archived={archived} />
-    ) : archived ? `上一份已改名为 ${archived.split('/').pop()}` : undefined,
+    description: detail ? (
+      <ConvertResultNotice unfilled={unfilled} warnings={warnings} log={log} archived={archived} path={path} />
+    ) : (
+      <span className="block truncate" title={path}>{path}</span>
+    ),
     action: { label: '预览', onClick: onPreview },
     duration,
   });
@@ -192,7 +202,7 @@ export function DocxExportDialog({
     };
   }, [open, projectId]);
 
-  const targetPath = item ? item.path.replace(/\.md$/i, '.docx') : '';
+  const targetPath = item ? docxTargetOf(item.path) : '';
   const targetName = targetPath.split('/').pop() || '';
   const listed = useMemo(() => outputItems.find((f) => f.path === targetPath), [outputItems, targetPath]);
   // 交付稿不在扫描里：阅读器把交付稿接口查到的同名 .docx 传进来；查不到时由服务端判断
@@ -243,6 +253,7 @@ export function DocxExportDialog({
       const log = result.log ?? [];
       showConvertResultToast({
         name,
+        path,
         archived: result.archived,
         warnings,
         log,
@@ -279,8 +290,8 @@ export function DocxExportDialog({
         <DialogPopup>
           <DialogHeader>
             <DialogTitle>转成 Word</DialogTitle>
-            <DialogDescription className="truncate" title={item?.path}>
-              {item?.name} → {targetName}（同目录）
+            <DialogDescription className="truncate" title={targetPath}>
+              {item?.name} → {targetPath}
             </DialogDescription>
           </DialogHeader>
           <DialogBody className="flex flex-col gap-4 text-sm">
@@ -333,12 +344,12 @@ export function DocxExportDialog({
             {existing || blockedByHand ? (
               blockedByHand ? (
                 <p className="text-xs text-destructive">
-                  同目录已有 {targetName}，但它不是本工具生成的（可能是人手改过另存的，或客户给的原件）。
+                  目标位置已有 {targetName}，但它不是本工具生成的（可能是人手改过另存的，或客户给的原件）。
                   为避免覆盖人工修改，请先把它改名或移走。
                 </p>
               ) : willArchive ? (
                 <p className="rounded-md border border-border px-3 py-2 text-xs text-muted-foreground">
-                  同目录已有上次转换的 {targetName}。转换时它会改名为「{stem}-上次转换时间.docx」留在原处，
+                  目标位置已有上次转换的 {targetName}。转换时它会改名为「{stem}-上次转换时间.docx」留在同一目录，
                   在 Word 里对它做过的修改不会丢；新成品仍叫 {targetName}。
                 </p>
               ) : null

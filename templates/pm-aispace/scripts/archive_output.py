@@ -61,7 +61,7 @@ TARGET_LINE_RE = re.compile(r"^target:[ \t]*(.*?)[ \t]*$", re.M)
 LIST_START = "<!-- archive-list:start -->"
 LIST_END = "<!-- archive-list:end -->"
 
-GROUP_LABEL = {"analysis": "分析中间产物", "docs": "交付文档", "decisions": "决策记录"}
+GROUP_LABEL = {"analysis": "分析产物", "docs": "交付文档", "decisions": "决策记录"}
 
 README_TEMPLATE = """# 一次归档 · {label}
 
