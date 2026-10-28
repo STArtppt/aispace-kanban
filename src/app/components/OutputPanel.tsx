@@ -85,7 +85,7 @@ const GROUPS = [
 type GroupKey = (typeof GROUPS)[number]['key'];
 
 /**
- * 页签 = 产出三组 + 「转换产物」。转换产物排在三组之后、**不是产出组**：
+ * 页签 = 「转换产物」+ 产出三组。转换产物排在最前、**不是产出组**：
  * 不建记录、不能归档、不计入完整度与产出总数（数据仍在 scan.input.converted）。
  */
 type OutputTab = GroupKey | 'converted';
@@ -792,6 +792,12 @@ export function OutputPanel({
           className="gap-4"
         >
           <TabsList variant="line">
+            <TabsTrigger value="converted" className="px-2">
+              <span className="truncate">转换产物</span>
+              <span className="shrink-0 text-xs font-normal text-muted-foreground">
+                {searching ? converted.filter((item) => matchConverted(item, query)).length : converted.length}
+              </span>
+            </TabsTrigger>
             {groups.map(({ key, title, files, total, archivedFiles }) => (
               <TabsTrigger key={key} value={key} className="px-2">
                 <span className="truncate">{title}</span>
@@ -801,12 +807,6 @@ export function OutputPanel({
                 </span>
               </TabsTrigger>
             ))}
-            <TabsTrigger value="converted" className="px-2">
-              <span className="truncate">转换产物</span>
-              <span className="shrink-0 text-xs font-normal text-muted-foreground">
-                {searching ? converted.filter((item) => matchConverted(item, query)).length : converted.length}
-              </span>
-            </TabsTrigger>
           </TabsList>
 
           {groups.map(({ key, title, hint, files, total, archivedFiles, archivedTotal }) => (
