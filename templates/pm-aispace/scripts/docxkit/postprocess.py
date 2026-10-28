@@ -4,6 +4,9 @@
 2. 每张表的首行设为跨页重复的表头（pandoc 3 对有表头的表已经这么做，这里补齐漏网的，幂等）；
 3. 以「图 / 表 + 数字」开头的题注，把手写的数字换成 SEQ 域 ——
    域的缓存结果就是原来的数字，所以没刷新域时显示不变，在 Word 里全选 F9 后自动编号；
+   写成「表 2-1」的按章编号：章号留作文字，只把章内序号换成域，章内序号为 1 的那条带 \\r 1 重新起编 ——
+   STYLEREF 取章号、SEQ \\s 1 按标题重置在 LibreOffice 里刷新后都不对；章号以 md 为准，改章重转即可；
+   表题在表格下方时（md2docx 的 table_caption: below），表格末行与表题同页，表题不再拖着下一段；
 4. front-matter 的 `title`：pandoc 已把它渲染成 Title 样式的首段，这里不再动；
 5. 表格单元格里 pandoc 套的 Compact / 正文段落换成 Table Text（五号、居中、无缩进，见 build.py 第 2 条）——
    md 分隔行写了对齐的，pandoc 在段落上直接写 jc，照样生效；
@@ -21,7 +24,7 @@ import re
 from .ooxml import Package, add_marker
 
 RUN_RE = re.compile(r'<w:r>((?:<w:rPr>(?:(?!</w:rPr>).)*</w:rPr>)?)<w:t(?: [^>]*)?>([^<]*)</w:t></w:r>', re.S)
-CAPTION_NUM = re.compile(r"^\s*(图|表)\s*(\d+)")
+CAPTION_NUM = re.compile(r"^\s*(图|表)\s*(\d+)(?:\s*[-－—]\s*(\d+))?")
 
 
 def _style_ids(pkg: Package, names: tuple[str, ...]) -> set[str]:
@@ -49,24 +52,34 @@ def _seq_caption(par: str) -> str:
     m = CAPTION_NUM.match(joined)
     if not m:
         return par
-    label, (ds, de) = m.group(1), m.span(2)
+    label = m.group(1)
+    if m.group(3):  # 表 2-1：章号是文字，章内序号每章重新起编
+        reset = " \\r 1" if int(m.group(3)) == 1 else ""
+        fields = [(m.span(3), f" SEQ {label} \\* ARABIC{reset} ")]
+    else:
+        fields = [(m.span(2), f" SEQ {label} \\* ARABIC ")]
+    ds, de = fields[0][0][0], fields[-1][0][1]
     for start, r in spans:
         text = r.group(2)
         if start <= ds and de <= start + len(text):
             rpr = r.group(1)
-            a, b = ds - start, de - start
-            pieces = []
-            if text[:a]:
-                pieces.append(f"<w:r>{rpr}{_t(text[:a])}</w:r>")
-            # 用复杂域而不是 fldSimple：缓存结果是一个普通 run，浏览器预览（docx-preview）也显示得出数字
-            pieces.append(
-                f'<w:r>{rpr}<w:fldChar w:fldCharType="begin"/></w:r>'
-                f'<w:r>{rpr}<w:instrText xml:space="preserve"> SEQ {label} \\* ARABIC </w:instrText></w:r>'
-                f'<w:r>{rpr}<w:fldChar w:fldCharType="separate"/></w:r>'
-                f'<w:r>{rpr}{_t(text[a:b])}</w:r>'
-                f'<w:r>{rpr}<w:fldChar w:fldCharType="end"/></w:r>')
-            if text[b:]:
-                pieces.append(f"<w:r>{rpr}{_t(text[b:])}</w:r>")
+            pieces, pos = [], ds - start
+            if text[:pos]:
+                pieces.append(f"<w:r>{rpr}{_t(text[:pos])}</w:r>")
+            for (fs, fe), instr in fields:
+                a, b = fs - start, fe - start
+                if text[pos:a]:
+                    pieces.append(f"<w:r>{rpr}{_t(text[pos:a])}</w:r>")
+                # 用复杂域而不是 fldSimple：缓存结果是一个普通 run，浏览器预览（docx-preview）也显示得出数字
+                pieces.append(
+                    f'<w:r>{rpr}<w:fldChar w:fldCharType="begin"/></w:r>'
+                    f'<w:r>{rpr}<w:instrText xml:space="preserve">{instr}</w:instrText></w:r>'
+                    f'<w:r>{rpr}<w:fldChar w:fldCharType="separate"/></w:r>'
+                    f'<w:r>{rpr}{_t(text[a:b])}</w:r>'
+                    f'<w:r>{rpr}<w:fldChar w:fldCharType="end"/></w:r>')
+                pos = b
+            if text[pos:]:
+                pieces.append(f"<w:r>{rpr}{_t(text[pos:])}</w:r>")
             return par[:r.start()] + "".join(pieces) + par[r.end():]
     return par  # 数字跨了几个 run：不硬拆，保持原样
 
@@ -159,6 +172,31 @@ def postprocess(pkg: Package, version: str) -> list[str]:
     doc = re.sub(r"<w:p>(?:(?!</w:p>).)*?</w:p>", caption, doc, flags=re.S)
     if count:
         log.append(f"题注：{count} 条手写编号换成 SEQ 域（在 Word 里全选后按 F9 更新）")
+
+    # 表题在表格下方：末行各段与下一段同页，表题自己不再与下一段同页（样式里的 keepNext 是给表上方题注的）
+    below = 0
+
+    def caption_below(m):
+        nonlocal below
+        tbl, par = m.group(1), m.group(2)
+        sm = re.search(r'<w:pStyle w:val="([^"]+)"\s*/>', par)
+        if not sm or sm.group(1) not in cap_ids:
+            return m.group(0)
+        below += 1
+        rows = list(re.finditer(r"<w:tr\b.*?</w:tr>", tbl, re.S))
+        if rows:
+            last = rows[-1]
+            row = re.sub(r"<w:p>(?!<w:pPr>)", "<w:p><w:pPr></w:pPr>", last.group(0))
+            row = re.sub(r'<w:pPr>(<w:pStyle w:val="[^"]+"\s*/>)?',
+                         lambda x: x.group(0) if x.string.startswith("<w:keepNext", x.end())
+                         else x.group(0) + "<w:keepNext/>", row)
+            tbl = tbl[:last.start()] + row + tbl[last.end():]
+        par = par.replace(sm.group(0), sm.group(0) + '<w:keepNext w:val="0"/>', 1)
+        return tbl + par
+
+    doc = re.sub(r"(<w:tbl>(?:(?!</w:tbl>).)*</w:tbl>)(\s*<w:p>(?:(?!</w:p>).)*?</w:p>)", caption_below, doc, flags=re.S)
+    if below:
+        log.append(f"题注：{below} 条表题在表格下方，已与表格末行同页")
 
     # 表格文字
     to_ids = _style_ids(pkg, ("Table Text",))

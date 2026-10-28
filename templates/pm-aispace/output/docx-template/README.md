@@ -66,7 +66,7 @@ python3 scripts/md2docx.py output/docs/方案.md --template 客户甲      # 客
 
 1. 转之前对照写作规定检查 md：客户模板看 `<模板名>/spec.md`，通用规范看 `scripts/docxkit/base-spec.json`。
    要点：文档标题写成开头唯一的 `#`（或 front-matter 的 `title:`），`##` 起是一级标题；标题里的手写编号、
-   `> [!note]` 批注块、句中加粗转换时会自动处理（结果里的 `log` 列出处理了几处）；表题写在表格**下方**一行 `Table: 表 N 标题`；
+   `> [!note]` 批注块、句中加粗转换时会自动处理（结果里的 `log` 列出处理了几处）；表题写在表格**下方**一行 `Table: 表 N 标题`（成品默认在表格上方；front-matter 写 `table_caption: below` 时放在下方，需要 pandoc 3.5 以上；「表 2-1」按章编号）；
    图题写在 `![图 N 标题](路径)` 的方括号里。需要改就改 md 的写法，不改内容。
    模板带封面（`front.docx`）时，文档类型要在 md 的 front-matter 写 `doctype:`；转换结果里有「【待填：…】」就补上再转。
    **要交付的文档先去 AI 味、转交付稿**，不要转原稿。

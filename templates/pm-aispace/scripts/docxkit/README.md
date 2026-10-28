@@ -27,7 +27,7 @@
 | `build.py` | 清洗 + 按规范重建样式 + 标题多级编号 + 萃取 reference.docx |
 | `spec_md.py` | 由合并后的规范生成 `spec.md` |
 | `pandoc.py` | 找 pandoc（`PANDOC_BIN` → `.env` → `PATH`，≥ 3）、取默认参照模板、调用转换 |
-| `postprocess.py` | pandoc 之后的确定性修补：生成标记、表头跨页重复、题注 SEQ 域 |
+| `postprocess.py` | pandoc 之后的确定性修补：生成标记、表头跨页重复、题注 SEQ 域（「表 2-1」按章编号）、表题在下方时与表格末行同页 |
 | `filters/deai-format.lua` | pandoc 之前的格式处理（pandoc 内置 Lua 执行）：标题平移、手写编号剥离、批注块转提示框、只留段首标签式加粗、东亚换行；计数写 stderr 由 `pandoc.py` 读回 |
 | `front.py` | 前置区：识别（报告 `front` 段）、切出 `front.docx`（占位符、清空样例单元格、目录只留域）、装配到成品前、封面字段取值 |
 | `verify.py` | 用采集器反查样张 / 成品，逐角色比对规范 |

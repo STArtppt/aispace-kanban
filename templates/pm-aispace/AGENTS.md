@@ -170,6 +170,7 @@ python3 scripts/ingest.py --force              # 全部重转
 操作步骤见 [`output/docx-template/README.md`](output/docx-template/README.md)「给 AI 的步骤」。必守的几条：
 
 - **要交付的文档先去 AI 味，转交付稿**，不转原稿。
+- 表题默认在表格上方。客户要求表题在下方时，md 的 front-matter 写 `table_caption: below`（或命令行 `--table-caption below`），需要 pandoc 3.5 以上。写成「表 2-1」时章号留作文字，章内序号换成自动编号，每章从 1 起编。
 - 同名 `.docx` 没有生成标记时脚本会拒绝 —— **不要删它、不要改名绕过**，问用户；有标记的用 `--archive` 重转（上一份改名保留），不要用 `--overwrite`，除非用户明说不要上一份。
 - 提炼的映射方案**先列给用户确认**再生成；模板名已存在要 `--regenerate`，先问用户。
 - 模板目录里是客户的版式材料，不要贴进反馈单或任何公开的地方。

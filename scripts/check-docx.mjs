@@ -303,6 +303,45 @@ print(json.dumps(out, ensure_ascii=False))
     r = run('md2docx.py', ['output/docs/a.md', '--template', '@base', '--overwrite', '--keep-bold']);
     check(r.code === 0 && !(r.result.log || []).some((l) => l.includes('解除段中加粗')), '--keep-bold 时不解除加粗');
 
+    console.log('表题位置与按章编号');
+    const seqOut = execFileSync(PY, [...PY_PRE, '-c', `
+import sys
+sys.path.insert(0, ${JSON.stringify(path.join(SCRIPTS))})
+from docxkit.postprocess import _seq_caption
+def run(text):
+    par = '<w:p><w:r><w:t xml:space="preserve">' + text + '</w:t></w:r></w:p>'
+    return _seq_caption(par)
+plain, ch1, ch3 = run('表 1 功能清单'), run('表 2-1 示例表'), run('表 2-3 示例表')
+print('plain-ok' if 'SEQ 表 \\\\* ARABIC ' in plain and '\\\\r' not in plain else 'plain-bad')
+print('ch1-ok' if 'SEQ 表 \\\\* ARABIC \\\\r 1 ' in ch1 and '表 2-' in ch1 else 'ch1-bad ' + ch1)
+print('ch3-ok' if 'SEQ 表 \\\\* ARABIC ' in ch3 and '\\\\r' not in ch3 and '表 2-' in ch3 else 'ch3-bad ' + ch3)
+`], { encoding: 'utf8' });
+    check(seqOut.includes('plain-ok') && seqOut.includes('ch1-ok') && seqOut.includes('ch3-ok'),
+      '「表 1」整段换成域，「表 2-1」只换章内序号且从 1 起编', seqOut.trim());
+    writeFileSync(path.join(docs, 'badcap.md'), '---\ntable_caption: side\n---\n# 合成\n\n正文。\n');
+    r = run('md2docx.py', ['output/docs/badcap.md', '--template', '@base']);
+    check(r.code === 2 && r.result?.kind === 'bad-caption', 'table_caption 不是 above / below 时拒绝', JSON.stringify(r.result));
+    const pandocMinor = Number((pandoc.stdout.match(/pandoc(?:\.exe)?\s+\d+\.(\d+)/) || [])[1]);
+    if (pandocMinor >= 5) {
+      writeFileSync(path.join(docs, 'cap.md'), [
+        '---', 'table_caption: below', '---', '## 示例章', '',
+        '| 列一 | 列二 |', '| --- | --- |', '| 甲 | 乙 |', '', 'Table: 表 2-1 示例表', '',
+      ].join('\n'));
+      r = run('md2docx.py', ['output/docs/cap.md', '--template', '@base']);
+      const capXml = r.code === 0 ? zipText(mirrorOf('cap.md')) : '';
+      // tblCaption 属性里也有题注原文，可见的那一段在 </w:tbl> 之后
+      const afterTbl = capXml.slice(capXml.lastIndexOf('</w:tbl>'));
+      check(r.code === 0 && (r.result.log || []).some((l) => l.includes('表题在表格下方')),
+        'table_caption: below 时表题放到表格下方', (r.result?.log || []).join('；'));
+      // 章号和连字符可能被拆进相邻的 run，不要求「表 2-」在 XML 里连成一段
+      check(afterTbl.includes('示例表') && afterTbl.includes(' 2-')
+        && afterTbl.includes('SEQ 表 \\* ARABIC \\r 1')
+        && capXml.includes('<w:keepNext w:val="0"/>'),
+        '下方表题：章号留作文字，章内序号带 \\\\r 1，且不再拖着下一段');
+    } else {
+      console.log('  - pandoc 低于 3.5，跳过表题在下方的转换断言');
+    }
+
     mkdirSync(path.join(ws, 'output/delivery/docs/a'), { recursive: true });
     writeFileSync(path.join(ws, 'output/delivery/docs/a/v002.md'), '# 合成\n\n正文。\n');
     r = run('md2docx.py', ['output/delivery/docs/a/v002.md', '--template', '@base']);

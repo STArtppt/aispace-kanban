@@ -102,20 +102,32 @@ def _deai_report(stderr: str, keep_bold: bool) -> tuple[list[str], list[str], st
     return log, warnings, got.get("title") or None
 
 
+def version_at_least(version: str, major: int, minor: int = 0) -> bool:
+    nums = [int(p) for p in version.split(".") if p.isdigit()]
+    while len(nums) < 2:
+        nums.append(0)
+    return (nums[0], nums[1]) >= (major, minor)
+
+
 def md_to_docx(bin_: str, md: Path, reference: Path, out: Path, timeout: int = 110, *,
-               strip_numbers: bool = False, keep_bold: bool = False, front: bool = False) -> tuple[list[str], dict]:
+               strip_numbers: bool = False, keep_bold: bool = False, front: bool = False,
+               table_caption: str | None = None) -> tuple[list[str], dict]:
     """把 md 转成 docx 写到 out（调用方给的临时路径）。返回 (warnings, 格式处理)。
 
     格式处理 = {"log": [...], "title": 文档标题或 None}，由过滤器 filters/deai-format.lua 回报（见它的文件头）。
     以 .md 所在目录为资源路径，`![](../assets/a.png)` 这种相对路径才找得到图。
     读入时不开 east_asian_line_breaks：它在过滤器之前就吞掉中文行间的换行，批注块的标题和正文会粘在一起；
     同一规则由过滤器在处理完批注块之后补做。
+    table_caption 为 below 时表题放到表格下方（pandoc 3.5 起才有 --table-caption-position）。
+    above 是 pandoc 的默认，不传这个参数，好让 3.5 以前的版本照常转换。
     """
     cmd = [bin_, str(md.name), "-f", "markdown", "-t", "docx", "--lua-filter", str(FILTER),
            "--reference-doc", str(reference), "--resource-path", str(md.parent), "-o", str(out)]
     for key, on in (("strip-heading-numbers", strip_numbers), ("keep-bold", keep_bold), ("aispace-front", front)):
         if on:
             cmd += ["-M", f"{key}=true"]
+    if table_caption == "below":
+        cmd += ["--table-caption-position", "below"]
     r = subprocess.run(cmd, cwd=str(md.parent), capture_output=True, timeout=timeout,
                        encoding="utf-8", errors="replace")
     if r.returncode != 0:

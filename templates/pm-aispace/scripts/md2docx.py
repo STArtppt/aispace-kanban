@@ -17,6 +17,8 @@ date / doctype）→ 开头的 `#` 标题（title）→ project.yaml 的 identit
 「【待填：…】」并给 warning。`# 某项目 · 文档类型` 这类标题在模板有文档类型字段时拆成标题与文档类型两项；
 日期按模板原文的写法（profile.json 的 front.dateFormat）。正文页眉页脚里的 {{角色}} 占位符用同一个值替换。
 目录保留为域，成品打开时提示更新域。
+表题默认在表格上方；front-matter 写 `table_caption: below`（或命令行 --table-caption below）放到表格下方，
+需要 pandoc 3.5 以上。表题写成「表 2-1」时，章号留作文字，章内序号换成 SEQ 域（见 docxkit/postprocess.py）。
 
 需要 pandoc 3（查找顺序：PANDOC_BIN 环境变量 → 工作空间 .env 的 PANDOC_BIN → PATH）。
 模板的写作规定在 `output/docx-template/<模板名>/spec.md`；通用规范的在 `scripts/docxkit/base-spec.json`。
@@ -62,7 +64,7 @@ from docxkit.build import build_reference  # noqa: E402
 from docxkit.front import assemble, fill_values, read_front_matter, read_identity, roles_in  # noqa: E402
 from docxkit.ooxml import (CONVERTED, Package, add_marker, heading_numbered, marker_of,  # noqa: E402
                            property_of, set_property, write_atomic)
-from docxkit.pandoc import PandocMissing, default_reference, find_pandoc, md_to_docx  # noqa: E402
+from docxkit.pandoc import PandocMissing, default_reference, find_pandoc, md_to_docx, version_at_least  # noqa: E402
 from docxkit.postprocess import postprocess  # noqa: E402
 from docxkit.spec import merged  # noqa: E402
 
@@ -163,6 +165,9 @@ def convert(args) -> tuple[dict, str]:
     if not md.is_file() or md.suffix.lower() != ".md":
         raise ToolError(f"来源不是一个存在的 .md 文件：{md}", EXIT_ARGS, None, "no-source")
     md = md.resolve()
+    caption_pos = args.table_caption or read_front_matter(md.read_text(encoding="utf-8")).get("table_caption")
+    if caption_pos not in (None, "above", "below"):
+        raise ToolError(f"table_caption 只认 above / below，收到「{caption_pos}」", EXIT_ARGS, None, "bad-caption")
     ref = resolve_template(args.template)
     front_path = ref.parent / "front.docx" if ref is not None else None
     front = Package.read(front_path) if front_path is not None and front_path.is_file() else None
@@ -179,6 +184,10 @@ def convert(args) -> tuple[dict, str]:
         pandoc_bin, pandoc_ver = find_pandoc(WS)
     except PandocMissing as e:
         raise ToolError(str(e).split("。")[0], EXIT_DEPENDENCY, str(e).split("。", 1)[1], "no-pandoc")
+    if caption_pos == "below" and not version_at_least(pandoc_ver, 3, 5):
+        raise ToolError(f"表题放在表格下方需要 pandoc 3.5 以上，当前是 {pandoc_ver}", EXIT_DEPENDENCY,
+                        "升级 pandoc，或改回默认（表题在上方）：去掉 table_caption: below 和 --table-caption below",
+                        "old-pandoc")
 
     with tempfile.TemporaryDirectory(prefix="aispace-md2docx-") as tmp:
         t = Path(tmp)
@@ -190,7 +199,7 @@ def convert(args) -> tuple[dict, str]:
         out_tmp = t / "out.docx"
         numbered = heading_numbered(Package.read(ref))
         warnings, fmt = md_to_docx(pandoc_bin, md, ref, out_tmp, strip_numbers=numbered, keep_bold=args.keep_bold,
-                                   front=front is not None)
+                                   front=front is not None, table_caption=caption_pos)
         out = Package.read(out_tmp)
         log = fmt["log"] + postprocess(out, VERSION)
         if front is not None:
@@ -264,6 +273,8 @@ def main() -> int:
                     help="同名 .docx 是上次转换生成的时，先改名为 <基名>-<上次转换时间>.docx 保留，再写新的")
     ap.add_argument("--overwrite", action="store_true", help="同名 .docx 是上次转换生成的时，替换它")
     ap.add_argument("--keep-bold", action="store_true", help="保留 md 里的全部加粗（默认只保留段首标签式加粗）")
+    ap.add_argument("--table-caption", choices=("above", "below"),
+                    help="表题放在表格上方或下方（默认读 md front-matter 的 table_caption，都没有就是上方）")
     ap.add_argument("--json", action="store_true", help="最后一行打印结果 JSON（给看板用）")
     args = ap.parse_args()
     try:
