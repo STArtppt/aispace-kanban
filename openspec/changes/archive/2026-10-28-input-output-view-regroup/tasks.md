@@ -43,6 +43,6 @@
 - [x] 6.1 `pnpm typecheck`、`pnpm build` 全绿
 - [x] 6.2 重启 `pnpm dev`；浏览器：无概览视图且旧会话兜底；台账预览（有/无 project.yaml、有/无 INDEX.md、深色模式）；原始资料标签与筛选；产出文档的转换产物栏与交付稿栏；工作空间目录丢失的降级
 - [x] 6.3 旧布局工作空间：看板提示迁移、功能正常；对一个实例副本跑迁移脚本 `--dry-run` 与执行，确认图片与「被引用」正常
-- [ ] 6.4 `local-source-sync` 推模板到已登记实例（本 change 的全部模板改动，含 A 未同步的部分）
-- [ ] 6.5 逐个实例：对照合并 `.gitignore`（seedOnly，保留实例自加的行）；列出已跟踪的 `input/raw|assets|sources` 文件，用户确认后 `git rm --cached`
-- [ ] 6.6 逐个实例：迁移脚本 `--dry-run` → 用户确认 → 执行 → 看板核对图片、「被引用」、交付稿 Word 落点
+- [x] 6.4 `local-source-sync` 推模板到已登记实例（本 change 的全部模板改动，含 A 未同步的部分）
+- [x] 6.5 逐个实例：对照合并 `.gitignore`（seedOnly，保留实例自加的行）；列出已跟踪的 `input/raw|assets|sources` 文件，用户确认后 `git rm --cached`
+- [x] 6.6 逐个实例：迁移脚本 `--dry-run` → 用户确认 → 执行 → 看板核对图片、「被引用」、交付稿 Word 落点
