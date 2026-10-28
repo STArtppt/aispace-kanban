@@ -46,22 +46,26 @@ input/sources/*
 !input/sources/README.md
 !input/sources/example.yaml.txt
 
-# ---- 大体积二进制 / 表格产物：output/converted/ 下一律不入库 ----
+# ---- Office 文档与 PDF：不管在哪个目录，一律不入库 ----
+# 原件、交付稿 Word、交底包 xlsx、汇报 pptx、Word 模板包里的 reference.docx 都算。
+# 它们是二进制，git 里看不出改了什么，还常常涉密；版本靠交付稿目录的 v001/v002 留存，本地文件不受影响。
+*.doc
+*.docx
+*.xls
+*.xlsx
+*.xlsm
+*.ppt
+*.pptx
+*.pdf
+
+# ---- 大体积表格 / 数据产物：output/converted/ 下一律不入库 ----
 # output/converted/ 是脚本产物（拆表 csv、点表 / 现场数据 sqlite），重跑 ingest.py / realdata.py / pointtable.py 即可重建；
 # 普通 .md 产物与 _manifest_*.md 摘要仍入库（看板和 AI 靠它了解全局）。
-# output/ 其余目录下的交底包 xlsx / SQL 配置件 / 核对件 csv 是手工交付物，**继续入库**保留版本历史。
+# output/ 其余目录下的 SQL 配置件、核对件 csv 是手工交付物，**继续入库**保留版本历史。
 output/converted/**/*.csv
 output/converted/**/*.tsv
 output/converted/**/*.sqlite
 output/converted/**/*.sqlite-*
 output/converted/**/*.db
 output/converted/**/*.sql
-output/converted/**/*.docx
-output/converted/**/*.doc
-output/converted/**/*.pptx
-output/converted/**/*.ppt
-output/converted/**/*.xlsx
-output/converted/**/*.xlsm
-output/converted/**/*.xls
-output/converted/**/*.pdf
 output/converted/**/*.zip
