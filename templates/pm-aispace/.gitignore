@@ -15,21 +15,16 @@ __pycache__/
 .venv/
 venv/
 
-# 视觉平面 visualization/：references/ 收下来的页面、prototypes/ 工具产出的原型。
-#
-# 原型工具会在包目录里留下依赖和中间产物，这些一律不入库。
-# 原型包本身（已构建的 index.html + 资源）是否入库看你的需要——
-# 不想让生成内容进版本库就整体忽略 visualization/prototypes/（保留 .gitkeep 以便目录还在）。
-visualization/prototypes/**/node_modules/
-visualization/prototypes/**/.axhub-cache/
-visualization/prototypes/**/dist/
-visualization/prototypes/**/.cache/
-
-# 参考页**默认入库**：一份参考是整页 HTML + 几张截图，单份几 MB 到十几 MB。
-# 它是项目的一手资料（当时的那个页面，之后可能就改了或没了），
-# 值这个体积，也应该跟着工作空间一起被拷走、被 AI 找到。
-# 仓库体积吃紧时再取消下面这行的注释，改成只留在本地。
-# visualization/references/
+# ---- 视觉平面 visualization/：整目录不入库，只留两个占位 ----
+# references/ 是收下来的整页 HTML（内联资源后单份可达几十 MB），prototypes/ 是原型工具的构建产物和依赖。
+# 体积大、可重新收取或构建，跟着本机走；看板读的是本地目录，不受影响。
+visualization/*
+!visualization/references/
+!visualization/prototypes/
+visualization/references/*
+!visualization/references/.gitkeep
+visualization/prototypes/*
+!visualization/prototypes/.gitkeep
 
 # Office 编辑时产生的锁文件
 ~$*
@@ -51,11 +46,10 @@ input/sources/*
 !input/sources/README.md
 !input/sources/example.yaml.txt
 
-# ---- 大体积二进制 / 表格产物：output/converted/ 与 visualization/ 下一律不入库 ----
+# ---- 大体积二进制 / 表格产物：output/converted/ 下一律不入库 ----
 # output/converted/ 是脚本产物（拆表 csv、点表 / 现场数据 sqlite），重跑 ingest.py / realdata.py / pointtable.py 即可重建；
 # 普通 .md 产物与 _manifest_*.md 摘要仍入库（看板和 AI 靠它了解全局）。
 # output/ 其余目录下的交底包 xlsx / SQL 配置件 / 核对件 csv 是手工交付物，**继续入库**保留版本历史。
-# visualization/ 只入库 html / meta.json；原型 zip 和参考页截图留本地（覆盖上文「参考页默认入库」的截图部分）。
 output/converted/**/*.csv
 output/converted/**/*.tsv
 output/converted/**/*.sqlite
@@ -71,16 +65,3 @@ output/converted/**/*.xlsm
 output/converted/**/*.xls
 output/converted/**/*.pdf
 output/converted/**/*.zip
-visualization/**/*.zip
-visualization/**/*.png
-visualization/**/*.jpg
-visualization/**/*.jpeg
-visualization/**/*.gif
-visualization/**/*.webp
-visualization/**/*.tif
-visualization/**/*.tiff
-visualization/**/*.emf
-visualization/**/*.wmf
-visualization/**/*.docx
-visualization/**/*.pptx
-visualization/**/*.xlsx
