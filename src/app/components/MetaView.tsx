@@ -51,27 +51,96 @@ function Value({
   );
 }
 
+const WORKSPACE_LABEL: Record<string, string> = {
+  name: '工作空间名',
+  created_at: '创建时间',
+  stage: '当前阶段',
+  owner: '负责人',
+};
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function scalarText(value: unknown): string | null {
+  if (value === null || value === undefined || value === '') return null;
+  if (typeof value === 'object') return null;
+  return String(value);
+}
+
+/** 嵌套对象摊成「键 值」。直接 String(object) 会得到 [object Object]。 */
+function filledText(value: unknown): string | null {
+  const scalar = scalarText(value);
+  if (scalar) return scalar;
+  if (value === null || value === undefined || typeof value !== 'object') return null;
+  const parts = labeledLeaves(value);
+  return parts.length ? parts.join('，') : null;
+}
+
+function labeledLeaves(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap((item) => labeledLeaves(item));
+  if (!isPlainObject(value)) {
+    const scalar = scalarText(value);
+    return scalar ? [scalar] : [];
+  }
+  return Object.entries(value).flatMap(([key, child]) => {
+    if (child !== null && typeof child === 'object') {
+      return labeledLeaves(child).map((text) => `${key} ${text}`);
+    }
+    const scalar = scalarText(child);
+    return scalar ? [`${key} ${scalar}`] : [];
+  });
+}
+
+/**
+ * 开始、结束拼成区间。同级还有别的键（工期）时接在后面。
+ * 区间两端都空、但其它键有值时，不能整格收成「待补充」。
+ */
+function periodFact(period: unknown): { value: string | null; path: string } {
+  const base = 'identity.建设周期';
+  if (!isPlainObject(period)) return { value: null, path: `${base}.开始` };
+  const start = scalarText(period.开始);
+  const end = scalarText(period.结束);
+  const extras = Object.entries(period).flatMap(([key, child]) => {
+    if (key === '开始' || key === '结束') return [];
+    const text = filledText(child);
+    return text ? [[key, text] as const] : [];
+  });
+  const parts: string[] = [];
+  if (start || end) parts.push(`${start || '?'} → ${end || '?'}`);
+  for (const [key, text] of extras) parts.push(`${key} ${text}`);
+  const path = start || end ? `${base}.开始` : extras.length ? `${base}.${extras[0][0]}` : `${base}.开始`;
+  return { value: parts.length ? parts.join('，') : null, path };
+}
+
+/**
+ * identity / workspace 按文件里的书写顺序整组展示。
+ * 写死一份清单时，清单外的字段填上之后从「待补充」消失，格子里又没有，完整度仍把它算进已填。
+ */
+function groupFacts(
+  group: unknown,
+  prefix: string,
+  labelOf: (key: string) => string,
+): [string, string | null, string][] {
+  if (!isPlainObject(group)) return [];
+  return Object.entries(group).map(([key, value]) => {
+    if (prefix === 'identity' && key === '建设周期') {
+      const period = periodFact(value);
+      return ['建设周期', period.value, period.path];
+    }
+    return [labelOf(key), filledText(value), `${prefix}.${key}`];
+  });
+}
+
 function FactGrid({ meta }: { meta: ProjectMeta }) {
-  const identity = (meta.data?.identity || {}) as Record<string, any>;
-  const period = identity.建设周期 || {};
-  const facts: [string, unknown, string][] = [
-    ['甲方', identity.甲方, 'identity.甲方'],
-    ['承建方', identity.承建方, 'identity.承建方'],
-    ['项目类型', identity.项目类型, 'identity.项目类型'],
-    ['合同编号', identity.合同编号, 'identity.合同编号'],
-    [
-      '建设周期',
-      period.开始 || period.结束 ? `${period.开始 || '?'} → ${period.结束 || '?'}` : null,
-      'identity.建设周期.开始',
-    ],
-    ['质保期', identity.质保期, 'identity.质保期'],
-    ['覆盖范围', identity.覆盖范围, 'identity.覆盖范围'],
-    ['当前阶段', meta.data?.workspace?.stage, 'workspace.stage'],
+  const facts = [
+    ...groupFacts(meta.data?.identity, 'identity', (key) => key),
+    ...groupFacts(meta.data?.workspace, 'workspace', (key) => WORKSPACE_LABEL[key] || key),
   ];
   return (
     <dl className="grid grid-cols-1 gap-x-8 gap-y-3 rounded-lg border border-border bg-card px-5 py-4 sm:grid-cols-2">
       {facts.map(([label, value, path]) => (
-        <div key={label} className="flex min-w-0 flex-col gap-0.5">
+        <div key={path} className="flex min-w-0 flex-col gap-0.5">
           <dt className="text-xs text-muted-foreground">{label}</dt>
           <dd className="text-sm break-words">
             <Value value={value} path={path} meta={meta} />
