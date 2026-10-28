@@ -239,7 +239,7 @@ front-matter MUST 是扁平的:只用 `key: value` 与 `key:` + `  - item` 两�
 
 #### Scenario: 一份资料只被记录的状态流水提到过
 
-- **WHEN** 某份 `input/converted/` 的资料只在某条状态流水的说明里被提到
+- **WHEN** 某份 `output/converted/` 的资料只在某条状态流水的说明里被提到
 - **THEN** 它 MUST 仍然显示为「还没有产出引用它」
 
 ### Requirement: decisions 的状态从正文迁进 front-matter

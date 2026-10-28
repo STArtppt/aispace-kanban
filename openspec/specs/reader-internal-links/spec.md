@@ -16,7 +16,7 @@
 并按该文件在扫描结果中的阅读器类型渲染（markdown、表格、图片、代码、html、转换产物等）。
 MUST NOT 新开浏览器窗口，MUST NOT 以源码形式展示 markdown 目标。
 
-目标在扫描结果中的判定 MUST 覆盖 `input/raw`、`input/converted`（含多表产物的分表）、
+目标在扫描结果中的判定 MUST 覆盖 `input/raw`、`output/converted`（旧布局 `input/converted`，含多表产物的分表）、
 `input/assets`（含图库）、`output/analysis`、`output/docs`、`output/decisions` 与 `project.yaml`，
 与刷新后恢复预览时的查找口径一致。
 
@@ -27,7 +27,7 @@ MUST NOT 新开浏览器窗口，MUST NOT 以源码形式展示 markdown 目标�
 MUST NOT 修改 `src/app/lib/api.ts` 的类型。
 
 #### Scenario: 点台账链接就地打开
-- **WHEN** 预览一份 `output/analysis/` 下的分析文档，其中有 `[台账](../../input/converted/<目录>/_manifest_<名>.md)`，用户左键点它
+- **WHEN** 预览一份 `output/analysis/` 下的分析文档，其中有 `[台账](../converted/<目录>/_manifest_<名>.md)`，用户左键点它
 - **THEN** 预览区切换到该转换产物，按转换产物的样式渲染（溯源栏、摘要等）
 - **AND** 没有新开浏览器窗口
 

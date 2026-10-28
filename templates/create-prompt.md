@@ -59,7 +59,7 @@ python3 "{{initScript}}" --from "{{userRoot}}/<模板id>" --name "<工作空间�
 找不到这条脚本，或跑失败时，把第 1 步写好的模板拷到目标目录，并做这些调整：
 - 不要拷 `template.yaml`（那是给看板发现模板用的）
 - `project.yaml` 里填上工作空间名称和今天的日期
-- 保证四个基本目录都在；`input/raw`、`input/converted`、`input/assets` 保持空
+- 保证四个基本目录都在；`input/raw`、`input/assets`、`output/converted` 保持空
 - 在目标目录现建 `skills/` → `.claude/skills` 的相对软链接（Windows 建不了就复制一份）
 
 ## 3. 告诉我什么

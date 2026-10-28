@@ -24,7 +24,7 @@
 - **WHEN** `visualization/references/` 根上有一份散装 `.html`，用户在参考 tab 点「刷新」
 - **THEN** `POST /api/projects/:id/web-ingest` 返回 `status: running`
 - **AND** 任务结束后该文件变成一份可点开的参考卡片（子目录 + `index.html`）
-- **AND** `input/converted/` 下出现对应的 Markdown，能在输入资料视图打开
+- **AND** `output/converted/` 下出现对应的 Markdown，能在产出视图的「转换产物」栏打开
 
 #### Scenario: 请求不带路径
 
@@ -117,7 +117,7 @@
 
 - **WHEN** 本机 PATH 上没有 `defuddle`，用户点刷新
 - **THEN** 任务以失败结束，提示里含安装命令 `npm install -g defuddle`
-- **AND** `visualization/references/` 与 `input/converted/` 都没有半截产物
+- **AND** `visualization/references/` 与 `output/converted/` 都没有半截产物
 
 #### Scenario: 没有 Python
 

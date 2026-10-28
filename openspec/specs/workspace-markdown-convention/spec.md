@@ -5,7 +5,7 @@
 约定工作空间里由人或 agent 手写的 Markdown 怎么写：语法子集以「Obsidian 与看板渲染器
 同时支持」为界，写法规范只在 `templates/pm-aispace/AGENTS.md` 存一份，
 `output/**` 走 `check_markdown.py` 校验与默认可预演的存量迁移。
-`input/converted/**`（转换产物，重跑即覆盖）与 `input/raw/**`（原件）不在校验范围内。
+`output/converted/**`（转换产物，重跑即覆盖）与 `input/raw/**`（原件）不在校验范围内。
 
 ## Requirements
 
@@ -89,7 +89,7 @@ GFM 表格、围栏代码块、```mermaid 代码块。
 
 规范 MUST 声明适用范围:只管 `output/**` 与其它由人或 agent 手写的 Markdown。
 
-MUST NOT 把 `input/converted/**` 纳入校验范围 —— 那里的文件由
+MUST NOT 把 `output/converted/**` 纳入校验范围 —— 那里的文件由
 `ingest.py` / `pointtable.py` / `realdata.py` 生成,重跑即覆盖,
 要改它们的形态应该改转换脚本而不是产物。
 
@@ -97,9 +97,9 @@ MUST NOT 把 `input/converted/**` 纳入校验范围 —— 那里的文件由
 
 #### Scenario: 校验只扫手写区
 
-- **WHEN** 在一个 `input/converted/` 下有数百份产物的工作空间里跑 `check_markdown.py`
+- **WHEN** 在一个 `output/converted/` 下有数百份产物的工作空间里跑 `check_markdown.py`
 - **THEN** 它只报告 `output/**` 下的问题
-- **AND** 不读取、不报告 `input/converted/` 与 `input/raw/` 下的任何文件
+- **AND** 不读取、不报告 `output/converted/` 与 `input/raw/` 下的任何文件
 
 ### Requirement: 存量迁移默认预演
 

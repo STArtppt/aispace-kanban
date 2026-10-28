@@ -2,7 +2,7 @@
 
 ## Purpose
 
-约定数据库作为工作空间输入源的接入方式:靠 `input/sources/*.yaml` 发现、凭据只进工作空间 `.env`、schema 快照与查询产物落 `input/converted/_sources/`、写操作由数据库自己拒绝、看板进程不碰数据库。本能力由 `database-input-source` 变更落地,`add-entries` 补了空目录时的 tab 空态、大库紧凑清单与单表明细不下发扫描载荷。
+约定数据库作为工作空间输入源的接入方式:靠 `input/sources/*.yaml` 发现、凭据只进工作空间 `.env`、schema 快照与查询产物落 `output/converted/_sources/`、写操作由数据库自己拒绝、看板进程不碰数据库。本能力由 `database-input-source` 变更落地,`add-entries` 补了空目录时的 tab 空态、大库紧凑清单与单表明细不下发扫描载荷。
 
 ## Requirements
 
@@ -73,7 +73,7 @@ MUST NOT 把"用户会自己建只读账号"当作安全前提。
 
 ### Requirement: schema 快照是 KB 级摘要,采集不得压垮生产库
 
-采集 MUST 产出 `input/converted/_sources/<源名>/_manifest_<源名>.md`:表清单、每表列名与类型、
+采集 MUST 产出 `output/converted/_sources/<源名>/_manifest_<源名>.md`:表清单、每表列名与类型、
 可取到的列注释、主外键、行数**量级**、以及受行数上限约束的少量样例行。
 行数 MUST 取 `information_schema` 一类的**估算值**,MUST NOT 对业务表执行 `count(*)`。
 采集 MUST 只发只读语句,MUST 设置语句超时,MUST 在结束时断开连接 ——
@@ -199,16 +199,16 @@ MySQL `SET SESSION TRANSACTION READ ONLY`),使即便使用高权限账号,
 
 ### Requirement: 查询产物落盘且可溯源,上下文里只留路径与摘要
 
-按需查询 MUST 把结果写成 `input/converted/_sources/<源名>/<查询名>.csv`,
+按需查询 MUST 把结果写成 `output/converted/_sources/<源名>/<查询名>.csv`,
 并配一份 `_manifest_<查询名>.md`,frontmatter MUST 记录 SQL 原文、执行时间、
 返回行数、结果文件的 sha256 —— 与 `ingest.py` 现有产物的溯源字段同构。
 每条查询 MUST 带行数上限与语句超时;超上限时 MUST 截断并在 manifest 里显式写明"已截断"。
-`input/converted/_sources/` 前缀下的产物 MUST NOT 出现在「已转换」清单里,
+`output/converted/_sources/` 前缀下的产物 MUST NOT 出现在「已转换」清单里,
 MUST 挂到「数据库源」tab 里对应的源下 —— 数据库和文件是两条来源,不混在一个清单里。
 
 #### Scenario: 跑一条查询
 - **WHEN** 执行一条返回若干行的只读查询
-- **THEN** `input/converted/_sources/<源名>/` 下出现结果 csv 和对应的 `_manifest_<查询名>.md`
+- **THEN** `output/converted/_sources/<源名>/` 下出现结果 csv 和对应的 `_manifest_<查询名>.md`
 - **AND** manifest 的 frontmatter 里能读到完整 SQL、行数和 sha256
 - **AND** 这份产物出现在「数据库源」tab 里对应的源下
 - **AND** 「已转换」tab 的清单里**没有**它,该 tab 的计数也没有因它增加
@@ -228,7 +228,7 @@ MUST 挂到「数据库源」tab 里对应的源下 —— 数据库和文件是
 看板服务端 MUST NOT 引入任何数据库驱动依赖,MUST NOT 在自身进程内建立数据库连接。
 采集与查询 MUST 通过 `spawn` 工作空间的 `scripts/db_ingest.py` 完成,
 与现有触发 `scripts/ingest.py` 的路径同构:看板只起子进程、读 stdout、报进度,
-写 `input/converted/` 的是脚本本身。
+写 `output/converted/` 的是脚本本身。
 新增的接收路径参数的接口 MUST 先过 `resolveInside()`。
 非环回监听时,触发采集的接口 MUST 返回 403,与其它会起子进程的接口一致。
 

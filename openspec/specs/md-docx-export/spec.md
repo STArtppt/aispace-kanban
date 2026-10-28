@@ -21,7 +21,7 @@
 | --- | --- |
 | 产出三组原稿 `output/<组>/<子路径>.md`（含组内子目录与已归档项） | `output/delivery/<组>/<子路径>/<基名>.docx` |
 | 交付稿 `output/delivery/<组>/<子路径>/v<序号>.md` | 同目录 `v<序号>.docx` |
-| 输入转换产物 `input/converted/<子路径>.md` | `output/delivery/converted/<子路径>/<基名>.docx` |
+| 转换产物 `output/converted/<子路径>.md`（旧布局 `input/converted/`） | `output/delivery/converted/<子路径>/<基名>.docx` |
 | 以上都不是（只有命令行会传） | `.md` 同目录同基名，与改动前一致 |
 
 镜像目录不存在时脚本 SHALL 按需创建。脚本 MUST NOT 往 `input/` 写任何文件；来源是输入转换产物而算出的落点不在

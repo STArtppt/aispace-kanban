@@ -23,7 +23,7 @@
 
 ## 2 · 放入资料
 
-资料有三种入口，最后都汇到 `input/converted/`，AI 只读那里。
+资料有三种入口，最后都汇到 `output/converted/`，AI 只读那里。
 
 **文件**：把原始文件**原样**丢进 `input/raw/`，不用整理、不用改名，子目录随你分。
 
@@ -37,13 +37,13 @@ input/raw/站点数据/闸门底坎库容.xlsx
 （写进 `input/.ingestignore`，文件本身还在）。
 
 **网页**：政策文件、公开标准、友商文档站这类网页资料，让 AI 跑工作空间的
-`scripts/web_ingest.py <URL>`，正文会转成 Markdown 落进 `input/converted/`，带溯源。
+`scripts/web_ingest.py <URL>`，正文会转成 Markdown 落进 `output/converted/`，带溯源。
 要登录才能看的页面走浏览器采集插件或剪藏，见第 7 节的「刷新收件箱」。
 
 **数据库**：库可以作为**按需查询**的远端资料源。「输入资料 → 原始资料」标题栏的数据库图标
 打开「添加数据库源」，填显示名、粘一段连接信息，点「复制 prompt 给 AI」，粘给 AI 由它落配置
 （`input/sources/<名字>.yaml`，口令只进工作空间 `.env`）。配好后「数据库源」tab 出现，
-点「刷新 schema」采一份表结构快照到 `input/converted/_sources/`；具体数据由 AI 需要时再查。
+点「刷新 schema」采一份表结构快照到 `output/converted/_sources/`；具体数据由 AI 需要时再查。
 
 > 看板**不存凭据**：口令和 key 只从输入框进剪贴板，刷新页面就没了。
 > 配置里给的通常是高权限账号，别指望「反正是只读账号」——让 AI 查询前想清楚。
@@ -78,7 +78,7 @@ input/raw/站点数据/闸门底坎库容.xlsx
 配过数据源时还有**数据库源**。在「原始资料」点「开始转换」一次处理全部，
 某一行点「转成AI易读」只转那一份。转完你会得到：
 
-- `input/converted/` —— 目录结构与 `raw/` 一一对齐的 `.md` / `.csv`，
+- `output/converted/` —— 目录结构与 `raw/` 一一对齐的 `.md` / `.csv`，
   每份都带溯源 frontmatter（来自哪个源文件、什么工具、什么时候转的）；
 - `input/INDEX.md` —— 资料台账，一行一份，含状态与告警。
 
@@ -97,7 +97,7 @@ input/raw/站点数据/闸门底坎库容.xlsx
 
 > 资料我放进 input/ 了，先入库，然后帮我摸清这个项目的现状。
 
-之后是**持续对话**，不是一次性提问：让它读 `input/converted/`，你补背景、纠正它的
+之后是**持续对话**，不是一次性提问：让它读 `output/converted/`，你补背景、纠正它的
 误读、指出哪份资料更可信；它把结论写进 `output/`。看板会自动刷新，你在网页上读渲染
 后的结果，比在终端里翻字舒服得多。
 
@@ -212,7 +212,7 @@ input/raw/站点数据/闸门底坎库容.xlsx
 - **采集插件投递**：在浏览器里用 annotation-collect 采集插件把页面投给看板（默认就投到
   `127.0.0.1:7788`），直接出现在参考 tab，来源标「插件投递」。插件会尽力脱敏，但**不是安全保证**。
 - **刷新收件箱**：用剪藏或「另存为」把 `.html` 丢进 `visualization/references/` 根上，
-  点参考 tab 的「刷新收件箱」，散装页面会收成标准参考目录，正文同时抽进 `input/converted/`
+  点参考 tab 的「刷新收件箱」，散装页面会收成标准参考目录，正文同时抽进 `output/converted/`
   让 AI 能读。旧工作空间没有 `scripts/web_ingest.py` 时不显示这个按钮。
 
 **已接入原型工作区的原型**（Axhub Make 同步过来的镜像，目录里有 `SYNC.md`）会聚合成一行：
@@ -314,11 +314,11 @@ AI 也读得到；还没有记录时暂存在看板缓存里，让 AI 建一份�
 
 | 你点的 | 谁写 | 写哪里 |
 | --- | --- | --- |
-| 转换资料 | 工作空间的 `scripts/ingest.py` | `input/converted/` |
+| 转换资料 | 工作空间的 `scripts/ingest.py` | `output/converted/` |
 | 忽略此文件 / 目录 | 看板 | 往 `input/.ingestignore` 追加一行 |
-| 刷新 schema | 工作空间的 `scripts/db_ingest.py` | `input/converted/_sources/` |
+| 刷新 schema | 工作空间的 `scripts/db_ingest.py` | `output/converted/_sources/` |
 | 贴 URL 采集 | 看板 | `visualization/references/` `visualization/prototypes/` 下**新建**目录 |
-| 刷新收件箱 | 工作空间的 `scripts/web_ingest.py` | 散装页面收成新参考目录，正文进 `input/converted/` |
+| 刷新收件箱 | 工作空间的 `scripts/web_ingest.py` | 散装页面收成新参考目录，正文进 `output/converted/` |
 | 刷新原型 | 原型工作区的同步脚本 | 该原型的镜像目录 |
 | 保存未决问题 | 看板 | 那一份 `Q<编号>.md` 的人工反馈部分 |
 | 保存产出物状态 | 看板 | 那一份 `I<编号>.md` 的状态与流水 |

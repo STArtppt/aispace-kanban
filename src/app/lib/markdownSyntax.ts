@@ -1,7 +1,7 @@
 /**
  * 工作空间 Markdown 里 Obsidian 那一组扩展的 remark 变换。
  *
- * wikilink 不按全库文件名找：`input/converted/` 镜像原始资料，同名文件会重复，
+ * wikilink 不按全库文件名找：`output/converted/` 镜像原始资料，同名文件会重复，
  * 猜一个就是指错。规则是：`./` `../` 相对当前文件，带 `/` 的从工作空间根算，
  * 裸文件名只认同一目录。`[[目标#标题]]` 的标题不写进 href —— 阅读器的
  * `resolveRelative` 会把 `#` 后面当成文件名的一部分，点开就 404。

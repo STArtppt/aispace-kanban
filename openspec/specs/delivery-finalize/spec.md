@@ -22,7 +22,7 @@
 
 #### Scenario: 资料上不出现
 
-- **WHEN** 用户打开 `input/converted/某份资料.md`
+- **WHEN** 用户打开 `output/converted/某份资料.md`
 - **THEN** 顶栏没有「定稿」按钮
 
 #### Scenario: 旧服务进程

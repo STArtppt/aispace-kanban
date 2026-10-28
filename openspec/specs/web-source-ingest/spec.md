@@ -14,7 +14,7 @@ URL 模式不向 `visualization/` 写任何文件,收件箱模式只把根上散
 ### Requirement: 网页资料有独立入口,产物与文档转换同构
 
 工作空间 MUST 提供 `scripts/web_ingest.py`,把一个网页 URL 转成
-Markdown 落进 `input/converted/`,使它与 docx / PDF 产物一样能被分析、被溯源、
+Markdown 落进 `output/converted/`,使它与 docx / PDF 产物一样能被分析、被溯源、
 被看板的树形视图收录。
 
 落点、`_manifest_` 命名、忽略清单解析 MUST 复用既有 `scripts/layout.py`,
@@ -24,7 +24,7 @@ MUST NOT 另起一套目录规则 —— 两套落点规则会让「按批次删
 #### Scenario: 转换一个网页
 
 - **WHEN** 执行 `python3 scripts/web_ingest.py <URL>`
-- **THEN** 在 `input/converted/` 下生成一份 `.md`
+- **THEN** 在 `output/converted/` 下生成一份 `.md`
 - **AND** 该文件带 front-matter,能在看板的输入资料视图里打开并显示溯源信息
 
 #### Scenario: 落点与文档产物同构
@@ -117,7 +117,7 @@ MUST NOT 静默降级成保存原始 HTML、直接请求 URL 或换用别的抓�
 
 - **WHEN** 环境里找不到 `defuddle`
 - **THEN** 脚本打印安装命令并以非零码退出
-- **AND** `input/converted/` 下没有产生任何文件
+- **AND** `output/converted/` 下没有产生任何文件
 
 #### Scenario: 未安装 single-file 且需要抓页
 
@@ -193,7 +193,7 @@ URL 模式（`web_ingest.py <URL>`）的行为 MUST 保持不变：仍然不向 
 - **WHEN** 根上有一份 SingleFile 另存的 `.html`，执行 `python3 scripts/web_ingest.py --inbox`
 - **THEN** 该文件从根上消失，变成 `visualization/references/<slug>/index.html`
 - **AND** 同目录有 `meta.json`，`source` 为 `manual`
-- **AND** `input/converted/` 下有一份带扁平 front-matter 的 Markdown，`reference` 字段指向这个新目录
+- **AND** `output/converted/` 下有一份带扁平 front-matter 的 Markdown，`reference` 字段指向这个新目录
 
 #### Scenario: 已有参考目录不被动
 

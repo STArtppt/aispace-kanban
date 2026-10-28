@@ -276,9 +276,9 @@ try {
   if (pdfDone.status !== 'done') {
     die(`PDF 转换失败：${pdfDone.message || pdfDone.status}`, pdfDone.log);
   }
-  const convertedPdf = path.join(wsPath, 'input', 'converted', 'smoke-anydoc.md');
+  const convertedPdf = path.join(wsPath, 'output', 'converted', 'smoke-anydoc.md');
   if (!fs.existsSync(convertedPdf)) {
-    die('PDF 转完没有产物 input/converted/smoke-anydoc.md', pdfDone.log);
+    die('PDF 转完没有产物 output/converted/smoke-anydoc.md', pdfDone.log);
   }
   const convertedBody = fs.readFileSync(convertedPdf, 'utf8');
   if (!/converted_by:\s*anydoc/i.test(convertedBody)) {

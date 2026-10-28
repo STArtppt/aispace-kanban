@@ -200,5 +200,5 @@ README 里的提示词 MUST 把这一条明写出来。
 
 #### Scenario: 归档不改变反链计数
 
-- **WHEN** 一份 `input/converted/` 的资料只被某份产出物引用,而那份产出物被归档了
+- **WHEN** 一份 `output/converted/` 的资料只被某份产出物引用,而那份产出物被归档了
 - **THEN** 这份资料 MUST 仍然显示为「被 1 篇产出引用」,MUST NOT 退回「还没有产出引用它」
