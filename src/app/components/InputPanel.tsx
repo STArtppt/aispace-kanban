@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowUpDown, BookOpen, ChevronDown, ChevronRight, Copy, Database, EyeOff, FileOutput, FolderOpen, Key, ListFilter, Loader2, RefreshCw, Star, StarOff, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, BookOpen, ChevronDown, ChevronRight, Copy, Database, EyeOff, FileOutput, FolderInput, FolderOpen, Key, ListFilter, Loader2, PencilLine, RefreshCw, Star, StarOff, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,9 +26,11 @@ import {
   TruncatedHint,
   writeClipboard,
   type RowAction,
+  type RowDragProps,
 } from '@/components/Primitives';
 import { ApiKeyDialog, DatabaseSourceDialog, type EnvConfigKind } from '@/components/EnvConfigDialog';
-import { DirActions, FileTree, ViewModeToggle, readViewMode, type ViewMode } from '@/components/FileTree';
+import { DirActions, FileTree, ViewModeToggle, readViewMode, type TreeDnd, type ViewMode } from '@/components/FileTree';
+import { RAW_ROOT_KEY, RawOrganizeDialog, type OrganizeMode, type OrganizeTarget } from '@/components/RawOrganizeDialog';
 import { KindIcon, LIST_PAGE_SIZE, useListPage } from '@/components/ConvertedList';
 import { lastIngestAt, ledgerItem } from '@/hooks/useBoardSession';
 import { useFileManagerName, usePathSeparator } from '@/hooks/useFileManager';
@@ -40,6 +43,8 @@ import {
   type DatabaseSourceItem,
   type FileItem,
   type IngestJob,
+  type RawDir,
+  type RawOrganizeResult,
   type Scan,
 } from '@/lib/api';
 import { absolutePath, formatBytes, formatRelative, markdownLink } from '@/lib/format';
@@ -75,6 +80,24 @@ function pendingLabel(item: FileItem): string {
     return rel || item.name;
   }
   return item.name;
+}
+
+/** 旧服务进程（没有 canOrganizeRaw / organizeKey）时的置灰说明 */
+const ORGANIZE_OLD_SERVER = '看板服务是旧版本，重启看板服务后可用';
+
+/**
+ * 「重命名」「移动到…」为什么不能用；能用时返回空串（不变量 1 第十三条）。
+ * 不能用时置灰并写原因，不隐藏：新旧进程混跑时，人才分得清是版本问题还是没有这个功能。
+ */
+function organizeBlockReason(scan: Scan): string {
+  if (scan.available === false) return '工作空间目录找不到了，重新关联之后才能整理';
+  const { input } = scan;
+  if (input.canOrganizeRaw === undefined) return ORGANIZE_OLD_SERVER;
+  if (input.canOrganizeRaw) return '';
+  if (input.organizeRawBlock === 'legacy-converted') {
+    return '转换产物还在 input/converted/，先迁移到 output/converted/ 再整理';
+  }
+  return '这个工作空间没有 scripts/move_raw.py，更新模板后可用';
 }
 
 /** 原始资料区搜索：文件名 / 相对 raw/ 的路径 */
@@ -160,6 +183,9 @@ function PendingRow({
   onIngest,
   ignoring,
   onIgnore,
+  organizeBlocked,
+  onOrganize,
+  dragProps,
 }: {
   item: FileItem;
   /** 树形视图里的层级；列表视图不传 */
@@ -180,6 +206,11 @@ function PendingRow({
   onIngest: (filePath: string) => void;
   ignoring: boolean;
   onIgnore: (targetPath: string) => void;
+  /** 「重命名」「移动到…」不能用的理由；空串 = 可以 */
+  organizeBlocked: string;
+  onOrganize: (target: OrganizeTarget, mode: OrganizeMode) => void;
+  /** 树形视图里能拖时由 FileTree 给 */
+  dragProps?: RowDragProps;
 }) {
   const thisRowRunning = (ingestRunning && ingestingPath === item.path) || ignoring;
   // 树里目录已经画在上一层了，行内只留文件名；列表里仍显示相对 raw/ 的路径
@@ -214,10 +245,29 @@ function PendingRow({
     icon: pinned ? StarOff : Star,
     onSelect: () => onTogglePin(item.path),
   };
-  // 忽略的只给「在访达中显示」：取消忽略要删 .ingestignore 的行，不在看板的写入例外里
+  // 整理是加在各状态上的另一类操作，不替换按状态给的那几项
+  const blocked = organizeBlocked || (item.organizeKey ? '' : ORGANIZE_OLD_SERVER);
+  const target: OrganizeTarget = { path: item.path, key: item.organizeKey || '', isDir: false };
+  const organize: RowAction[] = [
+    {
+      label: '重命名',
+      icon: PencilLine,
+      disabled: Boolean(blocked),
+      hint: blocked || undefined,
+      onSelect: () => onOrganize(target, 'rename'),
+    },
+    {
+      label: '移动到…',
+      icon: FolderInput,
+      disabled: Boolean(blocked),
+      hint: blocked || undefined,
+      onSelect: () => onOrganize(target, 'move'),
+    },
+  ];
+  // 忽略的只多给整理：取消忽略要删 .ingestignore 的行，不在看板的写入例外里
   const actions: RowAction[] =
     state === 'ignored'
-      ? [reveal]
+      ? [...organize, reveal]
       : state === 'converted'
         ? [
             pin,
@@ -235,6 +285,7 @@ function PendingRow({
                   },
                 ]
               : []),
+            ...organize,
             ...copies,
             reveal,
           ]
@@ -256,11 +307,12 @@ function PendingRow({
               disabled: ignoring,
               onSelect: () => onIgnore(item.path),
             },
+            ...organize,
             ...copies,
             reveal,
           ];
   return (
-    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path}>
+    <Row indent={indent} onClick={() => onOpen(item)} active={openPath === item.path} dragProps={dragProps}>
       <KindIcon item={item} />
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span
@@ -319,6 +371,10 @@ function PendingList({
   onIngest,
   ignoringPath,
   onIgnore,
+  rawDirs,
+  organizeBlocked,
+  canDrag,
+  onOrganize,
 }: {
   items: FileItem[];
   /** 转换产物，给已转的原件反查「打开产物」 */
@@ -337,8 +393,31 @@ function PendingList({
   onIngest: (filePath: string) => void;
   ignoringPath: string;
   onIgnore: (targetPath: string) => void;
+  /** 服务端下发的目录及其整理键；目录行的整理动作与拖放靠它换键 */
+  rawDirs: RawDir[];
+  organizeBlocked: string;
+  /** 树形、筛选为「全部」、搜索为空、能整理时才开拖放 */
+  canDrag: boolean;
+  /** destKey 只在拖放时给：目标已经选好，弹窗直接预览 */
+  onOrganize: (target: OrganizeTarget, mode: OrganizeMode, destKey?: string) => void;
 }) {
   const { pins, togglePin } = usePins(projectId);
+  const dirKeyOf = useMemo(() => new Map(rawDirs.map((d) => [d.path, d.organizeKey])), [rawDirs]);
+  const dnd: TreeDnd<FileItem> | undefined = canDrag
+    ? {
+        canDragFile: (item) => Boolean(item.organizeKey),
+        canDragDir: (dirKey) => dirKeyOf.has(`input/raw/${dirKey}`),
+        onDrop: (from, toDirKey) => {
+          const target: OrganizeTarget = 'item' in from
+            ? { path: from.item.path, key: from.item.organizeKey || '', isDir: false }
+            : { path: `input/raw/${from.dirKey}`, key: dirKeyOf.get(`input/raw/${from.dirKey}`) || '', isDir: true };
+          const destKey = toDirKey ? dirKeyOf.get(`input/raw/${toDirKey}`) : RAW_ROOT_KEY;
+          // 放下只打开预览，不写盘
+          if (target.key && destKey) onOrganize(target, 'move', destKey);
+        },
+        rootLabel: '放到 input/raw 根上',
+      }
+    : undefined;
   const productBySource = useMemo(() => {
     const map = new Map<string, ConvertedItem>();
     for (const item of converted) if (item.source && !map.has(item.source)) map.set(item.source, item);
@@ -377,6 +456,8 @@ function PendingList({
     ingestingPath,
     onIngest,
     onIgnore,
+    organizeBlocked,
+    onOrganize: (target: OrganizeTarget, mode: OrganizeMode) => onOrganize(target, mode),
   };
 
   if (!ordered.length) {
@@ -399,10 +480,12 @@ function PendingList({
           treePathOf={pendingLabel}
           keyOf={(item) => item.path}
           expandAll={searching}
-          renderFile={(item, indent) => (
+          dnd={dnd}
+          renderFile={(item, indent, dragProps) => (
             <PendingRow
               item={item}
               indent={indent}
+              dragProps={dragProps}
               pinned={pins.has(item.path)}
               ignoring={ignoringPath === item.path}
               product={productBySource.get(item.path)}
@@ -429,6 +512,25 @@ function PendingList({
                 onSelect: () => onIgnore(dirPath),
               },
             ];
+            const organizeKey = dirKeyOf.get(dirPath) || '';
+            const blocked = organizeBlocked || (organizeKey ? '' : ORGANIZE_OLD_SERVER);
+            const target: OrganizeTarget = { path: dirPath, key: organizeKey, isDir: true };
+            extra.push(
+              {
+                label: '重命名',
+                icon: PencilLine,
+                disabled: Boolean(blocked),
+                hint: blocked || undefined,
+                onSelect: () => onOrganize(target, 'rename'),
+              },
+              {
+                label: '移动到…',
+                icon: FolderInput,
+                disabled: Boolean(blocked),
+                hint: blocked || undefined,
+                onSelect: () => onOrganize(target, 'move'),
+              },
+            );
             return (
               <DirActions
                 projectId={projectId}
@@ -947,6 +1049,11 @@ export function InputPanel({
   const [query, setQuery] = useState('');
   const [rawFilter, setRawFilter] = useState<RawFilter>(readRawFilter);
   const [sortKey, setSortKey] = useState<SortKey>(readInputSort);
+  const [organizing, setOrganizing] = useState<{ target: OrganizeTarget; mode: OrganizeMode; destKey?: string } | null>(null);
+  // 整理后正开着的条目先按新路径开一个占位，新扫描到了再换成正式条目
+  const [followPath, setFollowPath] = useState('');
+  const { pins, movePin } = usePins(projectId);
+  const organizeBlocked = organizeBlockReason(scan);
   // 「复制绝对路径」要工作空间在磁盘上的位置，scan.project.root 里带着；拿不到时 absolutePath 自己退回相对路径
   const sep = usePathSeparator();
   const absPath = useCallback(
@@ -973,7 +1080,59 @@ export function InputPanel({
     setIgnoreError('');
     setIgnoringPath('');
     setQuery('');
+    setOrganizing(null);
+    setFollowPath('');
   }, [projectId]);
+
+  useEffect(() => {
+    if (!followPath) return;
+    const found = input.raw.find((item) => item.path === followPath)
+      || input.converted.find((item) => item.path === followPath);
+    if (found) {
+      setFollowPath('');
+      if (openPath === followPath) onOpen(found);
+    }
+  }, [input.raw, input.converted, followPath, openPath, onOpen]);
+
+  const afterOrganize = (result: RawOrganizeResult) => {
+    // 先整条对上的，再按目录前缀换（长的在前），与脚本的 map_path 同一顺序
+    const maps = [...result.pathMap].sort((a, b) => Number(a.dir) - Number(b.dir) || b.from.length - a.from.length);
+    const mapPath = (p: string) => {
+      for (const m of maps) {
+        if (p === m.from) return m.to;
+        if (m.dir && p.startsWith(`${m.from}/`)) return m.to + p.slice(m.from.length);
+      }
+      return '';
+    };
+    // 收藏和正开着的预览跟到新路径；列表本身由 SSE 推来的新扫描刷新
+    for (const p of pins) {
+      const next = mapPath(p);
+      if (next) movePin(p, next);
+    }
+    const nextOpen = openPath ? mapPath(openPath) : '';
+    if (nextOpen) {
+      const current = input.raw.find((item) => item.path === openPath)
+        || input.converted.find((item) => item.path === openPath);
+      if (current) {
+        // 转换产物的摘要和预览文件也跟着搬了；原始资料条目没有这两个字段
+        const { manifestPath, htmlPath } = current as { manifestPath?: string; htmlPath?: string };
+        // 旧键服务端已认不出，占位条目不带键
+        onOpen({
+          ...current,
+          path: nextOpen,
+          name: nextOpen.split('/').pop() || current.name,
+          ...(manifestPath ? { manifestPath: mapPath(manifestPath) || manifestPath } : {}),
+          ...(htmlPath ? { htmlPath: mapPath(htmlPath) || htmlPath } : {}),
+          organizeKey: undefined,
+          docKey: undefined,
+        });
+        setFollowPath(nextOpen);
+      }
+    }
+    toast.success(`已${result.mode === 'rename' ? '改名' : '移动'}到 ${result.to}`, {
+      description: result.links ? `更新了 ${result.linkFiles} 个文件中的 ${result.links} 处路径` : undefined,
+    });
+  };
 
   useEffect(() => {
     localStorage.setItem(INPUT_VIEW_KEY, viewMode);
@@ -1220,6 +1379,10 @@ export function InputPanel({
                 onIngest={(filePath) => void ingest.start(filePath)}
                 ignoringPath={ignoringPath}
                 onIgnore={(targetPath) => void ignore(targetPath)}
+                rawDirs={input.rawDirs || []}
+                organizeBlocked={organizeBlocked}
+                canDrag={viewMode === 'tree' && activeRawFilter === 'all' && !query.trim() && !organizeBlocked}
+                onOrganize={(target, mode, destKey) => setOrganizing({ target, mode, destKey })}
               />
             ) : query.trim() ? (
               <EmptyState title="没有匹配的原始资料" hint="试试更短的关键词，或清空搜索" />
@@ -1282,6 +1445,15 @@ export function InputPanel({
         </Tabs>
       </section>
 
+      <RawOrganizeDialog
+        projectId={projectId}
+        target={organizing?.target || null}
+        mode={organizing?.mode || 'rename'}
+        initialDest={organizing?.destKey}
+        dirs={input.rawDirs || []}
+        onClose={() => setOrganizing(null)}
+        onDone={afterOrganize}
+      />
       <ApiKeyDialog
         open={envKind === 'api_key'}
         onOpenChange={(next) => {

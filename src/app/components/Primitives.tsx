@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type MouseEvent, type ReactElement, type ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, Copy, Loader2, MoreHorizontal, type LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -112,12 +112,20 @@ export function TruncatedHint({ text, children }: { text: string; children?: Rea
   );
 }
 
+/** 行上的拖放属性：树形视图的拖动整理用，直接挂在行的 button 上，不多包一层 DOM（会破坏分割线） */
+export type RowDragProps = Pick<
+  ButtonHTMLAttributes<HTMLButtonElement>,
+  'draggable' | 'onDragStart' | 'onDragEnd' | 'onDragOver' | 'onDragLeave' | 'onDrop'
+>;
+
 export function Row({
   active,
   indent,
   onClick,
   children,
   className,
+  dragProps,
+  dropTarget,
 }: {
   active?: boolean;
   /** 树形视图里的层级：每层往右缩 1.125rem，行本身仍然是整行宽（悬停底色不断） */
@@ -125,6 +133,9 @@ export function Row({
   onClick?: () => void;
   children: ReactNode;
   className?: string;
+  dragProps?: RowDragProps;
+  /** 拖着东西停在这一行上、松手就会落到这里：上一圈描边 */
+  dropTarget?: boolean;
 }) {
   // 树形行（有 indent）的底边线不横贯整行，左端退到与本行内容左对齐：
   // 目录里挨着的几个文件看分割线就知道是同层级的并列项，线跟着层级缩进。
@@ -134,6 +145,7 @@ export function Row({
     <button
       type="button"
       onClick={onClick}
+      {...dragProps}
       style={
         pad ? ({ paddingLeft: pad, '--row-sep-left': pad } as CSSProperties) : undefined
       }
@@ -152,6 +164,7 @@ export function Row({
           : 'border-b border-border last:border-b-0',
         // 选中：深一档的底 + 左侧竖条，与 hover 的浅灰区分开
         active && 'bg-selected shadow-[inset_2px_0_0_0_var(--color-foreground)] hover:bg-selected',
+        dropTarget && 'bg-accent ring-2 ring-ring ring-inset',
         className,
       )}
     >

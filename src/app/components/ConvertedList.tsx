@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppWindow, CodeXml, Copy, CopyPlus, FileText, Image, RefreshCw, Star, StarOff, Table } from 'lucide-react';
+import { AppWindow, CodeXml, Copy, CopyPlus, FileText, Image, PencilLine, RefreshCw, Star, StarOff, Table } from 'lucide-react';
 import { EmptyState, ListPager, Row, RowActions, writeClipboard } from '@/components/Primitives';
 import { DirActions, FileTree, type ViewMode } from '@/components/FileTree';
 import { codePreviewLanguage } from '@/components/CodeFileView';
@@ -182,7 +182,7 @@ function ConvertedRow({
               void writeClipboard(absPath(item.path));
             },
           },
-          // 只有单文件 .md（带 docKey，与「转成 Word」同一批）能复制进产出三组；转换产物不提供改名
+          // 只有单文件 .md（带 docKey，与「转成 Word」同一批）能复制进产出三组
           ...(item.docKey
             ? [
                 {
@@ -194,6 +194,14 @@ function ConvertedRow({
                 },
               ]
             : []),
+          // 产物名字跟着原件走：在这里改名会和原件对不上。置灰并指路，免得人回文件夹手改
+          {
+            label: '重命名',
+            icon: PencilLine,
+            disabled: true,
+            hint: '到「输入资料 → 原始资料」里重命名或移动原件，产物、台账和链接会一起更新',
+            onSelect: () => {},
+          },
         ]}
       />
     </Row>

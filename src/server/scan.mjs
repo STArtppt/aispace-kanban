@@ -193,6 +193,36 @@ function rel(root, abs) {
   return path.relative(root, abs).split(path.sep).join('/');
 }
 
+/**
+ * 原始资料清单里出现过的目录（`input/raw` 本身不算）：只含「下面至少有一个已列出文件」的。
+ * 整理（第十三条）只能把东西移到这些目录或根上；空目录不进来，本次不做新建目录。
+ * @param {string[]} filePaths 工作空间相对路径
+ */
+function rawDirsOf(filePaths) {
+  const dirs = new Set();
+  for (const p of filePaths) {
+    const parts = p.split('/');
+    for (let i = 3; i < parts.length; i += 1) dirs.add(parts.slice(0, i).join('/'));
+  }
+  return [...dirs].sort((a, b) => a.localeCompare(b, 'zh'));
+}
+
+/**
+ * 按整理键反查原始资料里的文件或目录；查不到返回 null。
+ * 键与扫描下发的 `organizeKey` 同一算法，只在这里反查 —— 产出改名、转 Word 的键换不来它，它也换不来那些。
+ * @param {string} root
+ * @param {string} key
+ * @returns {{ path: string, isDir: boolean } | null}
+ */
+export function findRawByKey(root, key) {
+  if (typeof key !== 'string' || !/^[0-9a-f]{16}$/.test(key)) return null;
+  const files = listFiles(path.join(root, 'input', 'raw')).map((abs) => rel(root, abs));
+  const file = files.find((p) => docKeyOf(p) === key);
+  if (file) return { path: file, isDir: false };
+  const dir = rawDirsOf(files).find((p) => docKeyOf(p) === key);
+  return dir ? { path: dir, isDir: true } : null;
+}
+
 /** 转换产物根的两种位置：新布局在前。docxTargetOf 与 citations 的旧前缀别名都按这份认 */
 export const CONVERTED_ROOTS = ['output/converted', 'input/converted'];
 
@@ -923,8 +953,11 @@ function scanInput(root) {
       ...stat(abs),
       // 可选：提炼 Word 模板时用它指定来源（第九条例外不收路径）。旧前端不认，忽略即可
       ...(path.extname(abs).toLowerCase() === '.docx' ? { docKey: docKeyOf(p) } : {}),
+      // 可选：重命名 / 移动（第十三条）用它指定来源，只在 findRawByKey 里反查
+      organizeKey: docKeyOf(p),
     };
   });
+  const rawDirs = rawDirsOf(raw.map((r) => r.path)).map((p) => ({ path: p, organizeKey: docKeyOf(p) }));
 
   const convertedRoot = convertedRootOf(root);
   const converted = [];
@@ -971,6 +1004,10 @@ function scanInput(root) {
   const indexPath = path.join(inputDir, 'INDEX.md');
   // 模板工作空间才有 scripts/ingest.py；自己 mkdir 的只有目录约定，不能在看板里触发转换
   const canIngest = fs.existsSync(path.join(root, 'scripts', 'ingest.py'));
+  // 原始资料整理（第十三条）：要有 move_raw.py，产物也不能还在旧位置 input/converted/（脚本会拒绝）。
+  // 判据与 http.mjs 的 runRawOrganize 起脚本前的两道拦截同一口径
+  const organizeRawBlock = !fs.existsSync(path.join(root, 'scripts', 'move_raw.py')) ? 'no-script'
+    : convertedRoot.layout === 'input' ? 'legacy-converted' : '';
   // 数据源：没有 input/sources/ 目录就是 null，整个字段不进 JSON（前端据此不渲染那个 tab）
   const sources = scanSources(root);
   return {
@@ -986,6 +1023,10 @@ function scanInput(root) {
     convertedRoot: convertedRoot.rel,
     ...(convertedRoot.leftover ? { convertedLeftover: true } : {}),
     canIngest,
+    // 可选：旧前端不认。rawDirs 是「移动到…」能选的目录，根用固定值 root，不在数组里
+    rawDirs,
+    canOrganizeRaw: !organizeRawBlock,
+    ...(organizeRawBlock ? { organizeRawBlock } : {}),
     ...(sources ? { sources } : {}),
     // 有 input/sources/ 目录才需要知道采集脚本在不在（空数组也要给，刷新按钮才能出现在空态旁）
     ...(sources ? { canIngestSources: fs.existsSync(path.join(root, 'scripts', 'db_ingest.py')) } : {}),

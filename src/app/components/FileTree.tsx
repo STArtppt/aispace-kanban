@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useMemo, useState, type DragEvent, type ReactNode } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -9,7 +9,7 @@ import {
   List,
   type LucideIcon,
 } from 'lucide-react';
-import { HeaderTooltip, Row, RowActions, writeClipboard, type RowAction } from '@/components/Primitives';
+import { HeaderTooltip, Row, RowActions, writeClipboard, type RowAction, type RowDragProps } from '@/components/Primitives';
 import { api } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -197,6 +197,27 @@ function buildTree<T>(items: T[], treePathOf: (item: T) => string): TreeDir<T> {
   return root;
 }
 
+/** 被拖的那一项：一个文件，或树里的一个目录（dirKey 相对本列表根） */
+export type TreeDragSource<T> = { item: T } | { dirKey: string };
+
+/**
+ * 树的拖放。可选：不传时树与原来完全一样（产出清单、转换产物都不传）。
+ * 放下只回调 onDrop，**不写盘**；能不能放（不能放进自己、子目录或原来的父目录）由树自己判断。
+ */
+export interface TreeDnd<T> {
+  canDragFile: (item: T) => boolean;
+  canDragDir: (dirKey: string) => boolean;
+  /** toDirKey 相对本列表根，'' 是根 */
+  onDrop: (from: TreeDragSource<T>, toDirKey: string) => void;
+  /** 拖动时顶部出现的「放到根上」区域的文案 */
+  rootLabel: string;
+}
+
+function parentOf(treePath: string): string {
+  const cut = treePath.lastIndexOf('/');
+  return cut === -1 ? '' : treePath.slice(0, cut);
+}
+
 export function FileTree<T>({
   items,
   treePathOf,
@@ -204,13 +225,14 @@ export function FileTree<T>({
   renderFile,
   renderDirActions,
   expandAll,
+  dnd,
 }: {
   items: T[];
   /** 这份文件在树里的位置，相对本列表的根目录，如 `客户版/需求说明.md` */
   treePathOf: (item: T) => string;
   keyOf: (item: T) => string;
-  /** 画一行文件；indent 要透给 Row，否则层级看不出来 */
-  renderFile: (item: T, indent: number) => ReactNode;
+  /** 画一行文件；indent 要透给 Row，否则层级看不出来。dragProps 有就原样挂到 Row 上 */
+  renderFile: (item: T, indent: number, dragProps?: RowDragProps) => ReactNode;
   /**
    * 目录行尾的动作（复制路径、转这一整个目录…）。dirKey 是相对本列表根目录的路径。
    * 树是前端按路径拼的，只有调用方知道它对应磁盘上的哪个目录，所以由调用方来给。
@@ -221,8 +243,54 @@ export function FileTree<T>({
    * 看着就跟搜不到一样。搜索结束后仍回到用户自己点开的那几层。
    */
   expandAll?: boolean;
+  dnd?: TreeDnd<T>;
 }) {
   const root = useMemo(() => buildTree(items, treePathOf), [items, treePathOf]);
+  // 正在拖的那一项（treePath 是它在树里的位置）与鼠标停在哪个目录上（'' = 根）
+  const [dragging, setDragging] = useState<{ from: TreeDragSource<T>; treePath: string; isDir: boolean } | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+
+  const canDropOn = (target: string) => {
+    if (!dragging) return false;
+    if (dragging.isDir && (target === dragging.treePath || target.startsWith(`${dragging.treePath}/`))) return false;
+    return target !== parentOf(dragging.treePath);
+  };
+
+  const endDrag = () => {
+    setDragging(null);
+    setOver(null);
+  };
+
+  const dragSourceProps = (from: TreeDragSource<T>, treePath: string, isDir: boolean): RowDragProps => ({
+    draggable: true,
+    onDragStart: (event: DragEvent<HTMLButtonElement>) => {
+      // Firefox 不放数据就不开始拖；真正的载荷在 state 里
+      event.dataTransfer.setData('text/plain', treePath);
+      event.dataTransfer.effectAllowed = 'move';
+      setDragging({ from, treePath, isDir });
+    },
+    onDragEnd: endDrag,
+  });
+
+  // 处理函数按 HTMLElement 写：目录行（button）和顶部的根放置区（div）共用
+  const dropProps = (target: string) => ({
+    onDragOver: (event: DragEvent<HTMLElement>) => {
+      if (!canDropOn(target)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+      if (over !== target) setOver(target);
+    },
+    onDragLeave: () => {
+      if (over === target) setOver(null);
+    },
+    onDrop: (event: DragEvent<HTMLElement>) => {
+      event.preventDefault();
+      const from = dragging?.from;
+      const ok = canDropOn(target);
+      endDrag();
+      if (from && ok) dnd?.onDrop(from, target);
+    },
+  });
   // 记「展开了哪些」：切到树形时全部收起，先看清目录结构，再往下点想看的那一支
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set<string>());
 
@@ -239,8 +307,20 @@ export function FileTree<T>({
     const rows: ReactNode[] = [];
     for (const child of dir.dirs) {
       const open = expandAll || expanded.has(child.key);
+      const dirDrag: RowDragProps | undefined = dnd
+        ? {
+            ...(dnd.canDragDir(child.key) ? dragSourceProps({ dirKey: child.key }, child.key, true) : {}),
+            ...dropProps(child.key),
+          }
+        : undefined;
       rows.push(
-        <Row key={`dir:${child.key}`} indent={depth} onClick={() => toggle(child.key)}>
+        <Row
+          key={`dir:${child.key}`}
+          indent={depth}
+          onClick={() => toggle(child.key)}
+          dragProps={dirDrag}
+          dropTarget={over === child.key}
+        >
           <span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
             {open ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
             <Folder className="size-4" />
@@ -257,12 +337,30 @@ export function FileTree<T>({
     for (const file of dir.files) {
       // Fragment 只用来挂 key，不产生额外 DOM：多包一层 div 会让每行都变成
       // 「div 里的最后一个子元素」，Row 的 last:border-b-0 把分割线全删掉
-      rows.push(<Fragment key={keyOf(file)}>{renderFile(file, depth)}</Fragment>);
+      const fileDrag = dnd?.canDragFile(file) ? dragSourceProps({ item: file }, treePathOf(file), false) : undefined;
+      rows.push(<Fragment key={keyOf(file)}>{renderFile(file, depth, fileDrag)}</Fragment>);
     }
     return rows;
   };
 
+  const tree = <div className="overflow-hidden rounded-lg border border-border">{renderLevel(root, 0)}</div>;
+  // 不拖放的清单（产出、转换产物）结构与原来一模一样
+  if (!dnd) return tree;
   return (
-    <div className="overflow-hidden rounded-lg border border-border">{renderLevel(root, 0)}</div>
+    <div className="flex flex-col gap-2">
+      {dragging && canDropOn('') ? (
+        <div
+          role="presentation"
+          {...dropProps('')}
+          className={cn(
+            'rounded-lg border border-dashed border-border px-3 py-2.5 text-center text-xs text-muted-foreground',
+            over === '' && 'border-ring bg-accent text-foreground',
+          )}
+        >
+          {dnd.rootLabel}
+        </div>
+      ) : null}
+      {tree}
+    </div>
   );
 }

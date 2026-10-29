@@ -492,6 +492,39 @@ def append_flow(text: str, entry: str) -> str:
 # ---------------------------------------------------------------- 计划
 
 
+def follow_source_sha(before: dict[str, str], after: dict[str, str]) -> set[str]:
+    """内容变了的原稿，交付稿里原本对得上的 source_sha 换成新摘要（就地改 after），返回改过的交付稿。
+
+    scripts/move_raw.py 也调它：两个脚本改链接都会让原稿内容变，跟进规则只写这一份。
+    """
+    sha_follow: set[str] = set()
+    for p in list(after):
+        if not is_original_md(p):
+            continue
+        old_sha, new_sha = sha16(norm(before[p])), sha16(norm(after[p]))
+        if old_sha == new_sha:
+            continue
+        mirror = f"{DELIVERY_DIR}/{p[len('output/'):-3]}"
+        mdir = WS / mirror
+        if not mdir.is_dir():
+            continue
+        for v in sorted(mdir.iterdir()):
+            vp = f"{mirror}/{v.name}"
+            if not DELIVERY_FILE_RE.match(v.name) or vp not in before:
+                continue
+            cur = after.get(vp, before[vp])
+            fm = FRONT_RE.match(cur)
+            if not fm:
+                continue
+            block = fm.group(0)
+            new_block, n = re.subn(rf"^(source_sha:[ \t]*['\"]?){old_sha}(['\"]?[ \t]*\r?)$",
+                                   rf"\g<1>{new_sha}\g<2>", block, flags=re.M)
+            if n:
+                after[vp] = new_block + cur[fm.end():]
+                sha_follow.add(vp)
+    return sha_follow
+
+
 def build_plan(src: str, new_stem: str) -> tuple[Plan, dict[str, tuple[str, str]], dict]:
     plan = Plan(src, new_stem)
     clash = plan.conflicts()
@@ -523,31 +556,7 @@ def build_plan(src: str, new_stem: str) -> tuple[Plan, dict[str, tuple[str, str]
             links[p] = len(edits)
 
     # 第二轮：内容变了的原稿，交付稿里对得上的 source_sha 跟着换
-    sha_follow: set[str] = set()
-    for p in list(after):
-        if not is_original_md(p):
-            continue
-        old_sha, new_sha = sha16(norm(before[p])), sha16(norm(after[p]))
-        if old_sha == new_sha:
-            continue
-        mirror = f"{DELIVERY_DIR}/{p[len('output/'):-3]}"
-        mdir = WS / mirror
-        if not mdir.is_dir():
-            continue
-        for v in sorted(mdir.iterdir()):
-            vp = f"{mirror}/{v.name}"
-            if not DELIVERY_FILE_RE.match(v.name) or vp not in before:
-                continue
-            cur = after.get(vp, before[vp])
-            fm = FRONT_RE.match(cur)
-            if not fm:
-                continue
-            block = fm.group(0)
-            new_block, n = re.subn(rf"^(source_sha:[ \t]*['\"]?){old_sha}(['\"]?[ \t]*\r?)$",
-                                   rf"\g<1>{new_sha}\g<2>", block, flags=re.M)
-            if n:
-                after[vp] = new_block + cur[fm.end():]
-                sha_follow.add(vp)
+    sha_follow = follow_source_sha(before, after)
 
     # 第三轮：记录留痕
     flowed: list[str] = []

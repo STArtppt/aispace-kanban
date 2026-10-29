@@ -42,7 +42,7 @@ import { listFeedback, markSent, readFeedback } from './feedback.mjs';
 import { readQuestion, scanQuestions, writeQuestion } from './questions.mjs';
 import { readRecord, scanRecords, writeRecordStatus } from './records.mjs';
 import { REFERENCES_DIR, resolveReferenceDir, scanReferences } from './references.mjs';
-import { ARCHIVE_DIR, OUTPUT_GROUPS, findDocByKey, scanWorkspace, verifySource } from './scan.mjs';
+import { ARCHIVE_DIR, OUTPUT_GROUPS, convertedRootOf, findDocByKey, findRawByKey, scanWorkspace, verifySource } from './scan.mjs';
 import { readSheetPage, scanSheet } from './spreadsheet.mjs';
 import { resolveAppVersion } from './version.mjs';
 
@@ -1320,6 +1320,100 @@ async function runConvertedCopy(project, body, { apply }) {
   }
 }
 
+const RAW_ORGANIZE_TIMEOUT_MS = 60 * 1000;
+const RAW_ORGANIZE_MAX_NAME = 200;
+const RAW_ORGANIZE_BODY_KEYS = new Set(['key', 'name', 'destKey', 'plan']);
+
+/**
+ * 原始资料整理请求的校验，**在起脚本之前**全部做完。请求只带 `key`，外加 `name`（改名）或 `destKey`（移动）其中一个，
+ * 执行时再带预览指纹 `plan`；多一个字段都 400。键只在原始资料（findRawByKey）里反查，目标根用固定值 `root`。
+ * 新名字与 move_raw.py 的 check_name 同一规则（两边各拦一次）；冲突、点表这类要看磁盘的判断留给脚本。
+ */
+function resolveRawOrganizeTarget(root, body) {
+  const bad = (message, kind = 'invalid') => {
+    const err = new Error(message);
+    err.statusCode = 400;
+    err.kind = kind;
+    return err;
+  };
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw bad('请求体必须是 { key, name } 或 { key, destKey }。');
+  const extra = Object.keys(body).filter((k) => !RAW_ORGANIZE_BODY_KEYS.has(k));
+  if (extra.length) throw bad(`请求里不认识这些字段：${extra.join('、')}。只收 key、name / destKey 与 plan，不收路径。`);
+  const hasName = body.name !== undefined;
+  if (hasName === (body.destKey !== undefined)) {
+    throw bad('一次只能改名或只换目录：name 和 destKey 要且只能给一个。');
+  }
+  const src = findRawByKey(root, body.key);
+  if (!src) throw bad('在原始资料里找不到这一项（列表可能已经变了），刷新后再试。', 'stale-key');
+  resolveInside(root, src.path);
+  if (!src.path.startsWith('input/raw/')) throw bad('只能整理 input/raw/ 里的资料。');
+  if (hasName) {
+    const name = typeof body.name === 'string' ? body.name : '';
+    if (!name.trim()) throw bad('新名字是空的。');
+    if (name !== name.trim()) throw bad('新名字首尾不能是空白。');
+    if (name === '.' || name === '..' || /[/\\\0]/.test(name)) {
+      throw bad(`新名字只能是一层名字，不能含 / \\ 或空字符，也不能是 . 或 ..：${name}`);
+    }
+    if (name.startsWith('.') || name.endsWith('.')) throw bad(`新名字不能以 . 开头或结尾：${name}`);
+    if ([...name].length > RAW_ORGANIZE_MAX_NAME) throw bad(`新名字超过 ${RAW_ORGANIZE_MAX_NAME} 个字。`);
+    return { relPath: src.path, args: ['--to', name] };
+  }
+  let dest = 'input/raw';
+  if (body.destKey !== 'root') {
+    const found = findRawByKey(root, body.destKey);
+    if (!found?.isDir) throw bad('在原始资料里找不到这个目标目录（列表可能已经变了），刷新后再试。', 'stale-key');
+    dest = found.path;
+  }
+  resolveInside(root, dest);
+  return { relPath: src.path, args: ['--into', dest] };
+}
+
+/**
+ * 原始资料重命名 / 移动：spawn 工作空间的 scripts/move_raw.py（**AGENTS.md 不变量 1 第十三条窄例外**）。
+ * 看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；搬原件和产物、改台账、忽略规则、链接都是脚本做的。
+ * 预览（`--dry-run`）与执行（`--apply --expect <指纹>`）是同一支脚本的两种模式，服务端不存预览状态。
+ *
+ * 退出码映射：2（落点已存在）、3（预览后有文件变了）→ 409；4（不合法或不允许）→ 400；超时 504；其余 500。
+ * 没有脚本、产物还在 input/converted/ 时 400，不 spawn。
+ */
+async function runRawOrganize(project, body, { apply }) {
+  const root = project.root;
+  const target = resolveRawOrganizeTarget(root, body);
+  const script = path.join(root, 'scripts', 'move_raw.py');
+  const refuse = (message, kind) => {
+    const err = new Error(message);
+    err.statusCode = 400;
+    err.kind = kind;
+    return err;
+  };
+  if (!fs.existsSync(script)) {
+    throw refuse('这个工作空间没有 scripts/move_raw.py，看板没法替你整理。'
+      + '更新模板（让工作空间 AI 走 pm-template-update）之后就有了；不要在文件夹里手改，台账和产物会对不上。', 'no-script');
+  }
+  if (convertedRootOf(root).layout === 'input') {
+    throw refuse('转换产物还在旧位置 input/converted/，先迁移到 output/converted/ 再整理原始资料'
+      + '（工作空间里跑 python3 scripts/migrate_converted_to_output.py --dry-run 看计划）。', 'legacy-converted');
+  }
+  const args = ['--source', target.relPath, ...target.args];
+  if (apply) {
+    const expect = typeof body.plan === 'string' ? body.plan : '';
+    if (!/^[0-9a-f]{16}$/.test(expect)) throw refuse('执行整理要带预览给出的指纹，先预览一次。', 'invalid');
+    args.push('--apply', '--expect', expect);
+  } else {
+    args.push('--dry-run');
+  }
+  try {
+    return await runScript(root, script, args, { timeoutMs: RAW_ORGANIZE_TIMEOUT_MS, label: apply ? '整理' : '整理预览' });
+  } catch (err) {
+    if (err.kind === 'conflict' || err.kind === 'stale') err.statusCode = 409;
+    if (err.kind === 'timeout') {
+      err.statusCode = 504;
+      if (apply) err.message += `。${target.relPath} 可能已经整理过了，刷新列表看一眼再决定要不要重试。`;
+    }
+    throw err;
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -2267,6 +2361,19 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, await runConvertedCopy(project, body, { apply: sub !== 'preview' }));
+  }
+
+  // 原始资料重命名 / 移动（不变量 1 第十三条窄例外）：看板只 spawn 工作空间的 scripts/move_raw.py，
+  // 请求只带整理键、新名字或目标目录键与（执行时）预览指纹，不接受任何路径；同步等脚本退出。
+  // 预览也起子进程，所以两条都过环回与同源两道闸
+  if (head === 'projects' && id && action === 'raw-organize' && req.method === 'POST') {
+    const sub = segments[3] || '';
+    if (sub && sub !== 'preview') return json(res, 400, { error: `不认识这个操作：${sub}` });
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
+    const project = requireProject(id);
+    const body = await readBody(req);
+    return json(res, 200, await runRawOrganize(project, body, { apply: sub !== 'preview' }));
   }
 
   if (head === 'projects' && id && action === 'web-ingest') {

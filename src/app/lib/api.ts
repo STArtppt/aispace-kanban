@@ -77,6 +77,77 @@ export interface FileItem {
    * `true` 才允许在「转成 Word」里勾选覆盖；`false` 一律拒绝覆盖。缺字段 = 旧服务，不据此判断。
    */
   docxGenerated?: boolean;
+  /**
+   * 只在 `input.raw` 条目上：「重命名」「移动到…」（不变量 1 第十三条）只拿它指定来源，不传路径。
+   * 可选：旧服务进程没有，缺了整理动作置灰、不能拖。
+   */
+  organizeKey?: string;
+}
+
+/** 原始资料里出现过的目录（其下至少有一个已列出文件；`input/raw` 根不在内，请求里用 `root`） */
+export interface RawDir {
+  path: string;
+  organizeKey: string;
+}
+
+/** 整理被挡住的原因：工作空间没有 `scripts/move_raw.py`，或转换产物还在旧位置 `input/converted/` */
+export type OrganizeRawBlock = 'no-script' | 'legacy-converted';
+
+/**
+ * POST /api/projects/:id/raw-organize/preview 与 /raw-organize 的请求体。**只带键**，不带路径：
+ * `name`（改名，文件不写扩展名）与 `destKey`（移动；`root` 表示 `input/raw` 根）二者只给一个。
+ * 执行时 `plan` 必须是预览给出的指纹。
+ */
+export type RawOrganizeRequest = { key: string; plan?: string } & (
+  | { name: string; destKey?: never }
+  | { destKey: string; name?: never }
+);
+
+/** 整理计划里的一处改名或移动（整理前 → 整理后） */
+export interface RawOrganizePair {
+  from: string;
+  to: string;
+  kind: 'file' | 'dir';
+}
+
+/** 旧路径 → 新路径的对照。`dir` 为真按前缀换（目录里的文件跟着走），否则整条相等才换 */
+export interface RawOrganizePathMap {
+  from: string;
+  to: string;
+  dir: boolean;
+}
+
+/** 预览结果（`move_raw.py --dry-run --json`）。排除范围里的命中不在 files 里 */
+export interface RawOrganizePlan {
+  ok: true;
+  mode: 'rename' | 'move';
+  source: string;
+  to: string;
+  isDir: boolean;
+  renames: RawOrganizePair[];
+  /** 跟着移动的原件份数（目录时是其下全部文件） */
+  rawFiles: number;
+  products: { from: string; to: string }[];
+  /** 要改写的文件；`links` 是处数，`sourceSha` 表示交付稿 source_sha 跟着原稿换新 */
+  files: RenameFileChange[];
+  /** 台账表格里改了几行 */
+  indexRows: number;
+  ignore: {
+    rewritten: { from: string; to: string }[];
+    /** 规则是被移动项的上级目录、移出去后不再命中：追加的新路径 */
+    added: string[];
+    /** 只靠通配符命中、整理后结果会变的规则：脚本不改 */
+    wildcard: string[];
+  };
+  linkFiles: number;
+  links: number;
+  pathMap: RawOrganizePathMap[];
+  plan: string;
+}
+
+/** 执行结果：形状同预览 */
+export interface RawOrganizeResult extends RawOrganizePlan {
+  failed?: string[];
 }
 
 export type ArchiveRole = 'handoff' | 'index';
@@ -538,6 +609,14 @@ export interface Scan {
      * 可选：旧服务进程没有这个字段时退回纯文字提示（改动前的行为）。
      */
     canIngest?: boolean;
+    /** 「移动到…」能选的目录。可选：旧服务进程没有 */
+    rawDirs?: RawDir[];
+    /**
+     * 原始资料能否重命名 / 移动。可选：缺了 = 旧服务进程，菜单置灰提示重启；
+     * `false` 时看 `organizeRawBlock` 说原因。
+     */
+    canOrganizeRaw?: boolean;
+    organizeRawBlock?: OrganizeRawBlock;
     /**
      * input/sources/*.yaml 配的数据库源，每个源挂着它在转换产物根 `_sources/` 下的产物。
      *
@@ -1737,6 +1816,24 @@ export const api = {
    */
   renameOutput: (id: string, body: RenameRequest & { plan: string }) =>
     request<RenameResult>(`/api/projects/${id}/rename`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 原始资料整理预览：服务端 spawn `scripts/move_raw.py --dry-run`，磁盘不变。
+   * 409 = 落点已存在（kind `conflict`）；400 = 名字不合法、键查不到、点表规则不允许、没有脚本或产物在旧位置。
+   */
+  rawOrganizePreview: (id: string, body: RawOrganizeRequest) =>
+    request<RawOrganizePlan>(`/api/projects/${id}/raw-organize/preview`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 执行整理：脚本按预览指纹重算，对不上 409（kind `stale`），磁盘不变。
+   * 看板自己不写盘（不变量 1 第十三条窄例外），错误信息是脚本原话。
+   */
+  rawOrganize: (id: string, body: RawOrganizeRequest & { plan: string }) =>
+    request<RawOrganizeResult>(`/api/projects/${id}/raw-organize`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),

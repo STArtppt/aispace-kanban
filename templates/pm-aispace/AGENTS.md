@@ -16,7 +16,7 @@ input/  →  （分析）  →  output/  →  visualization/
 | 目录 | 职责 | 写入规则 |
 | --- | --- | --- |
 | `project.yaml` | 项目元信息：背景目标、干系人、里程碑、成果要求、约束 | 由 `pm-project-meta` 增量维护 |
-| `input/raw/` | 人类给的原始资料 | **只读**，永不改动删除，是溯源的终点。**默认不读**（见「不要做的事」） |
+| `input/raw/` | 人类给的原始资料 | 原件**内容不改、不删**，是溯源的终点。改名和移动目录只走看板「原始资料 → 重命名 / 移动到…」或 `scripts/move_raw.py`（先 `--dry-run`），**不要在文件夹里手改**，你也不要手改路径。**默认不读**（见「不要做的事」） |
 | `input/assets/` | 图片：`<文档名>/` 是抽出的图，`未分类/` 是直接放进 raw/ 的单图 | 脚本生成。看图直接读图片文件 |
 | `input/INDEX.md` | 资料台账（产物列链到 `../output/converted/…`） | 表格由脚本生成；人工判断写「人工批注」区 |
 | `output/converted/` | 转换后的 `.md` / `.csv`，**目录结构镜像 `input/raw/`**；正文里的图片跨目录指回 `input/assets/`。不属于下面的产出三组（不建记录、不归档） | 脚本生成，**不要手改**（重跑会覆盖） |
@@ -239,7 +239,7 @@ Axhub Make 服务端在本项目之外常驻，**不要在这里跑 `npx @axhub/
 | `output/docx-template/` | `spec.md` 语法管、front-matter 不强制 | 其余是 json / docx |
 | 各目录下的 `README.md` | 语法管、front-matter **不强制** | 目录说明 |
 | `output/converted/` | **不管**（`check_markdown.py` 跳过它） | 脚本生成；要改形态就改脚本 |
-| `input/raw/` | **不碰** | 原件只读 |
+| `input/raw/` | **不碰** | 原件内容不改不删；改名和移动只走看板或 `scripts/move_raw.py`，不要在文件夹里手改 |
 
 ### 现在可用
 
@@ -314,7 +314,7 @@ GitHub 的 `main` 可能与用户本机版本有出入，对不上时如实说�
 ## 不要做的事
 
 - **不要主动读 `input/raw/`**（除非用户明确说「打开原件」「对照原始 PDF」）。一律优先 `output/converted/` 和 `input/INDEX.md`。
-- 不要修改或删除 `input/raw/` 里的任何文件；不要手改 `output/converted/` 的产物或在里面手建目录。
+- 不要修改或删除 `input/raw/` 里的任何文件，也不要在那里手动改名、挪目录（台账、产物、忽略规则会对不上；整理走看板或 `scripts/move_raw.py`）；不要手改 `output/converted/` 的产物或在里面手建目录。
   想基于某份转换产物继续写，用看板「产出文档 → 转换产物 → 更多 → 复制到…」（终端里是 `scripts/copy_converted.py`，先 `--dry-run`），
   复制件落进 `output/<组>/` 同样的子目录、图片链接不断；不要直接改 converted 里那份，也不要移走它（下次转换会再生成一份）。
 - **不要把大表整个读进上下文**（现场数据 csv / sqlite 事实表、`测点主表.csv`），走 SQL。
