@@ -11,9 +11,6 @@
 | `input/raw/测点表/` | 点表 ×2 | [`../output/converted/测点表/_manifest_测点表批量处理.md`](../output/converted/测点表/_manifest_测点表批量处理.md) | ✓ 已汇总为测点主表 |
 | `input/raw/现场数据/实时.csv` | 现场实测数据 | [`../output/converted/现场数据/_manifest_实时.md`](../output/converted/现场数据/_manifest_实时.md) | ✓ 已建成时序库 |
 
-> 另有 2 份资料按 `input/.ingestignore` 忽略，不计入待转换：
-> - `input/raw/忽略目录/` 1 份
-
 ## 人工批注
 
 - 权威版本：以甲方最近一次发来的为准，批次甲的说明是权威版本。

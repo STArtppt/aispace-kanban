@@ -213,7 +213,6 @@ try {
     'AGENTS.md',
     '.gitignore',
     'input/raw/.gitkeep',
-    'input/.ingestignore',
     'visualization/references',
     'visualization/prototypes',
     '.claude/skills/pm-doc-ingest/SKILL.md',
@@ -238,19 +237,12 @@ try {
   if (!scan.input?.canIngest) die('扫描没标 canIngest —— 模板工作空间应有 scripts/ingest.py');
   ok('扫描正常，读到了 project.yaml，canIngest=true');
 
-  // ── 6b 看板触发转换（立刻返回 + 无 raw 时脚本秒退）────────────────────────
-  const started = await fetch(`${base}/api/projects/${created.id}/ingest`, { method: 'POST' }).then((r) => r.json());
-  if (started.status !== 'running' && started.status !== 'done') {
-    die(`触发转换失败：${started.error || JSON.stringify(started)}`);
+  // ── 6b 看板不发起全量转换：不带路径直接 400，不起脚本 ────────────────────
+  const started = await fetch(`${base}/api/projects/${created.id}/ingest`, { method: 'POST' });
+  if (started.status !== 400) {
+    die(`空路径转换没被拒（返回 ${started.status}，应该是 400）`, await started.text());
   }
-  const ingestDone = await waitFor(async () => {
-    const st = await fetch(`${base}/api/projects/${created.id}/ingest`).then((r) => r.json());
-    return st.status === 'done' || st.status === 'error' ? st : null;
-  }, { timeout: 30000 });
-  if (ingestDone.status !== 'done') {
-    die(`转换没有成功结束：${ingestDone.message || ingestDone.status}`, ingestDone.log);
-  }
-  ok('POST /ingest 能跑完（空 raw 秒退）');
+  ok('POST /ingest 空路径返回 400');
 
   // ── 6c 装包后能转 PDF（专门验 anydoc 被写进发布包依赖，而不是只在本地 node_modules 里）──
   if (!installedPkg.dependencies?.['@firecrawl/anydoc']) {
@@ -461,49 +453,18 @@ try {
   }
   ok('单文件转换只认 input/raw/，越界路径被挡住');
 
-  // ── 7b 看板忽略资料：写 input/.ingestignore，从待转换里拿掉 ────────────────
-  const rawFile = path.join(wsPath, 'input', 'raw', '忽略我.txt');
-  fs.writeFileSync(rawFile, 'x');
-  const beforeIgnore = await fetch(`${base}/api/projects/${created.id}/scan`).then((r) => r.json());
-  if (!beforeIgnore.input?.pending?.some((f) => f.path === 'input/raw/忽略我.txt')) {
-    die('刚放进 raw 的文件没出现在待转换里', JSON.stringify(beforeIgnore.input?.pending));
+  // ── 7b 看板不发起全量转换：空路径和 input/raw 根都 400，不 spawn ──────────
+  for (const body of [{}, { path: '' }, { path: 'input/raw' }, { path: 'input/raw/' }]) {
+    const rejected = await fetch(`${base}/api/projects/${created.id}/ingest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (rejected.status !== 400) {
+      die(`全量转换没被拒（${JSON.stringify(body)} 返回 ${rejected.status}，应该是 400）`);
+    }
   }
-  const ignored = await fetch(`${base}/api/projects/${created.id}/ignore`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path: 'input/raw/忽略我.txt' }),
-  }).then(async (r) => ({ status: r.status, body: await r.json() }));
-  if (ignored.status !== 200 || ignored.body.pattern !== 'raw/忽略我.txt') {
-    die(`忽略失败：${ignored.status} ${JSON.stringify(ignored.body)}`);
-  }
-  const ignoreText = fs.readFileSync(path.join(wsPath, 'input', '.ingestignore'), 'utf8');
-  if (!ignoreText.split(/\r?\n/).includes('raw/忽略我.txt')) {
-    die('忽略后 .ingestignore 里没有对应行', ignoreText);
-  }
-  const afterIgnore = await fetch(`${base}/api/projects/${created.id}/scan`).then((r) => r.json());
-  if (afterIgnore.input?.pending?.some((f) => f.path === 'input/raw/忽略我.txt')) {
-    die('忽略后文件还在待转换里');
-  }
-  if (!afterIgnore.input?.stats?.ignored) die('忽略后 stats.ignored 还是 0');
-  ok('POST /ignore 能写入 .ingestignore，扫描不再把它算待转换');
-
-  const ignoreEscape = await fetch(`${base}/api/projects/${created.id}/ignore`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path: '../../../etc/passwd' }),
-  });
-  if (ignoreEscape.status !== 403) {
-    die(`忽略的路径穿越没被挡住（返回 ${ignoreEscape.status}，应该是 403）`);
-  }
-  const ignoreOutside = await fetch(`${base}/api/projects/${created.id}/ignore`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ path: 'output/docs/foo.md' }),
-  });
-  if (ignoreOutside.status !== 400) {
-    die(`input/raw/ 以外的路径没被拒（返回 ${ignoreOutside.status}，应该是 400）`);
-  }
-  ok('忽略只认 input/raw/，越界路径被挡住');
+  ok('ingest 空路径和 input/raw 根返回 400');
 
   // ── 7b2 批注历史：写看板缓存目录，不写工作空间 ──────────────────────────
   const histFile = 'output/docs/smoke-notes.md';
@@ -677,7 +638,6 @@ try {
     ['POST', '/api/projects'],
     ['POST', '/api/workspaces'],
     [`POST`, `/api/projects/${created.id}/ingest`],
-    [`POST`, `/api/projects/${created.id}/ignore`],
     [`POST`, `/api/projects/${created.id}/capture`],
     [`POST`, `/api/projects/${created.id}/proto-sync`],
     [`POST`, `/api/projects/${created.id}/web-ingest`],
@@ -923,7 +883,6 @@ try {
       '/api/projects',
       '/api/workspaces',
       `/api/projects/${created.id}/ingest`,
-      `/api/projects/${created.id}/ignore`,
       `/api/projects/${created.id}/capture`,
       `/api/projects/${created.id}/proto-sync`,
       `/api/projects/${created.id}/web-ingest`,

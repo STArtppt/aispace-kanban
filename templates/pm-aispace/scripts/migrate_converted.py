@@ -42,7 +42,7 @@ import unicodedata
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import ingest  # noqa: E402  复用格式分派表和忽略清单，保证和转换脚本判断一致
+import ingest  # noqa: E402  复用格式分派表，保证和转换脚本判断一致
 import layout  # noqa: E402
 
 REPO = layout.REPO
@@ -253,7 +253,7 @@ def main() -> int:
         log("input/converted/ 不存在，没什么可搬的。")
         return 0
 
-    files, _ = ingest.collect([], layout.load_ignore())
+    files = ingest.collect([])
 
     moves: list[tuple[Path, Path]] = []          # (旧产物, 新产物) 单文件
     asset_renames: dict[str, str] = {}           # assets/ 下的目录改名
@@ -440,7 +440,7 @@ def main() -> int:
     log(f"\n搬迁完成{'（有 %d 处冲突已跳过）' % conflicts if conflicts else ''}。接下来跑：")
     log("  python3 scripts/migrate_converted_to_output.py   # 先把产物整体搬到 output/converted/（可先 --dry-run）")
     if "ingest" in todo_scripts:
-        log("  python3 scripts/ingest.py          # 重建 xlsx / html 的目录型产物，刷新台账")
+        log("  python3 scripts/ingest.py input/raw   # 重建 xlsx / html 的目录型产物，刷新台账")
     if "pointtable" in todo_scripts:
         log("  python3 scripts/pointtable.py      # 重建点表主表和 sqlite")
     if "realdata" in todo_scripts:

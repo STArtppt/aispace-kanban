@@ -19,7 +19,7 @@ defuddle 自己去抓只能拿到初始 HTML，SPA 站点会变成空壳。
 
 `single-file` 是 AGPL-3.0，只 spawn、永不 import（理由见看板仓 `src/server/capture.mjs` 开头）。
 
-落点、`_manifest_` 命名、忽略清单解析全部复用 [`layout.py`](layout.py)，不另起一套。
+落点、`_manifest_` 命名全部复用 [`layout.py`](layout.py)，不另起一套。
 网页是一源一产物，所以走 `single_target`：`output/converted/web/<host>/<标题>.md`。
 虚拟的 `input/raw/web/...` 路径只用来算落点，**不会往 raw/ 写任何东西**。
 没有 URL 时 host 用 `dropped`，标题用参考 slug。
@@ -66,10 +66,7 @@ from urllib.parse import unquote, urlparse, urlunparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from layout import (  # noqa: E402
     RAW,
-    add_ignore_flags,
     ensure_layout,
-    ignore_patterns,
-    is_ignored,
     md_link,
     rel_path,
     repo_rel,
@@ -616,7 +613,6 @@ def convert_html(
     ref_dir: Path | None,
     overwrite: bool,
     as_new: bool,
-    patterns: list[str],
     skip_changed: bool,
     title_fallback: str = "",
 ) -> str:
@@ -639,12 +635,6 @@ def convert_html(
         raise RuntimeError("规整之后正文是空的，没有写入。")
 
     fake_raw = virtual_raw(source, title)
-    if is_ignored(fake_raw, patterns):
-        raise RuntimeError(
-            f"按 input/.ingestignore，`{repo_rel(fake_raw)}` 会被忽略，本次不写产物。"
-            "这条网页资料如果确实要进分析链路，从忽略清单里拿掉对应规则。"
-        )
-
     planned = single_target(fake_raw, ".md")
     img_dir = ASSETS / safe_component(title)
     link_prefix = md_link(f"{rel_path(img_dir, planned.parent)}/")
@@ -798,7 +788,6 @@ def run_inbox(args: argparse.Namespace) -> int:
         return die(MISSING_DEFUDDLE, 2)
 
     REF_ROOT.mkdir(parents=True, exist_ok=True)
-    patterns = ignore_patterns(args)
     filed = 0
     extracted = 0
     skipped = 0
@@ -823,7 +812,6 @@ def run_inbox(args: argparse.Namespace) -> int:
                 ref_dir=ref_dir,
                 overwrite=args.overwrite,
                 as_new=args.as_new,
-                patterns=patterns,
                 skip_changed=True,
                 title_fallback=ref_dir.name,
             )
@@ -894,7 +882,6 @@ def run_url(args: argparse.Namespace) -> int:
                 ref_dir=ref_dir,
                 overwrite=args.overwrite,
                 as_new=args.as_new,
-                patterns=ignore_patterns(args),
                 skip_changed=False,
             )
         except RuntimeError as exc:
@@ -902,7 +889,7 @@ def run_url(args: argparse.Namespace) -> int:
             if text == "MISSING_DEFUDDLE":
                 return die(MISSING_DEFUDDLE, 2)
             # URL 模式：正文已变没给覆盖参数，走退出码 1
-            return die(text if "正文已经变了" in text or text.startswith("按 input/") else f"提取失败：{text}", 1)
+            return die(text if "正文已经变了" in text else f"提取失败：{text}", 1)
 
         print(msg)
         if html_source == "single-file" and msg.startswith("已写入"):
@@ -919,7 +906,6 @@ def main() -> int:
     ap.add_argument("--inbox", action="store_true", help="扫描 visualization/references/ 根上的散装页面并抽出正文")
     ap.add_argument("--overwrite", action="store_true", help="正文已变时覆盖旧产物")
     ap.add_argument("--as-new", action="store_true", help="正文已变时另存一份，不覆盖旧产物")
-    add_ignore_flags(ap)
     args = ap.parse_args()
     ensure_layout()
 

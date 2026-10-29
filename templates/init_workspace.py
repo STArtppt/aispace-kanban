@@ -316,11 +316,6 @@ def main() -> int:
         keep = d / ".gitkeep"
         if not any(d.iterdir()):
             keep.touch()
-    # .ingestignore 是约定文件不是示例资料，要铺过去；input/ 其它内容一律不带
-    ignore_src = src_root / "input" / ".ingestignore"
-    if tool is None and ignore_src.exists():
-        shutil.copy2(ignore_src, target / "input" / ".ingestignore")
-
     (target / "project.yaml").write_text(render_project_yaml(src_root, args.name), encoding="utf-8")
     if tool is not None and hashes is not None:
         module, meta = tool
@@ -341,8 +336,9 @@ def main() -> int:
         log(f"  禁改看板源码的权限规则：{guard} 条" if guard else "  没找到看板根目录，未生成禁改看板源码的权限规则")
         ingest = target / "scripts" / "ingest.py"
         if ingest.exists():
-            log("\n下一步：把资料放进 input/raw/，然后跑")
-            log("  python3 scripts/ingest.py")
+            log("\n下一步：把资料放进 input/raw/，然后指定要转的文件或目录，例如")
+            log("  python3 scripts/ingest.py input/raw/批次甲/说明.docx")
+            log("先看计划、不写文件：python3 scripts/ingest.py --dry-run")
         else:
             log("\n下一步：把资料放进 input/raw/，产出写到 output/。")
     return 0

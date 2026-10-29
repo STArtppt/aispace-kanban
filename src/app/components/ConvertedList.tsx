@@ -356,8 +356,8 @@ export function ConvertedList({
           有 <span className="text-destructive">{staleCount} 份原件在转换后动过</span>
           ，产物可能已经不对。右上角筛选可以只看这些；「输入资料 → 原始资料」里它们标着「改动」。
           {canIngest
-            ? '行内「更多」点「重新转换」只重转那一份；「原始资料」里的「开始转换」会把动过的一起重跑。'
-            : '在工作空间里重跑一次 scripts/ingest.py 即可，只有动过的会重转。'}
+            ? '行内「更多」点「重新转换」只重转那一份；「原始资料」里标着「改动」的那一行也可以重新转换。'
+            : '在工作空间里重跑 python3 scripts/ingest.py <文件或目录>，只有动过的会重转。'}
         </p>
       ) : null}
       {searching ? (
@@ -443,8 +443,8 @@ export function ConvertedList({
           title="还没有转换产物"
           hint={
             canIngest
-              ? '把资料放进 input/raw/，再到「输入资料 → 原始资料」点「开始转换」'
-              : '把资料放进 input/raw/，然后在工作空间里跑 scripts/ingest.py'
+              ? '把资料放进 input/raw/，再到「输入资料 → 原始资料」对那一行点「转成AI易读」'
+              : '把资料放进 input/raw/，然后在工作空间里跑 python3 scripts/ingest.py <文件或目录>'
           }
         />
       )}

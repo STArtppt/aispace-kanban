@@ -254,50 +254,6 @@ export function convertedRootOf(root) {
 }
 
 /**
- * 读 input/.ingestignore —— 不进转换、也不算「待转换」的资料清单。
- * gitignore 风格：一行一个模式，# 是注释，路径相对 input/ 写。
- * 工作空间 scripts/layout.py 的 load_ignore()（三个转换脚本共用）读的是同一份，
- * 两边规则改动要同步。
- */
-function readIgnorePatterns(root) {
-  const file = path.join(root, 'input', '.ingestignore');
-  if (!fs.existsSync(file)) return [];
-  return fs
-    .readFileSync(file, 'utf8')
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith('#'))
-    .map((l) => l.replace(/\/+$/, ''));
-}
-
-/** 把模式里的 * / ? 通配翻成正则，其余字符原样转义 */
-function globToRegExp(pattern) {
-  const body = pattern
-    .split('')
-    .map((ch) => (ch === '*' ? '[^/]*' : ch === '?' ? '[^/]' : ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
-    .join('');
-  return new RegExp(`^${body}$`);
-}
-
-/**
- * 返回「这份资料是否被忽略」的判定函数。
- * 入参是相对工作空间根的路径（input/raw/客户版/x.doc），而模式相对 input/ 写
- * （raw/客户版），所以先剥掉 input/ 前缀再比。
- */
-function makeIgnoreMatcher(patterns) {
-  if (!patterns.length) return () => false;
-  const compiled = patterns.map((p) => ({ raw: p, re: globToRegExp(p) }));
-  return (relPath) => {
-    const p = relPath.startsWith('input/') ? relPath.slice('input/'.length) : relPath;
-    const name = p.split('/').pop();
-    return compiled.some(
-      // 目录前缀命中：写 raw/客户版 等于连同其下所有文件
-      ({ raw, re }) => p === raw || p.startsWith(`${raw}/`) || re.test(p) || re.test(name),
-    );
-  };
-}
-
-/**
  * 转换产物根（convertedRootOf）下可转 Word 的单文件 `.md`。
  * 不收 `_manifest_*.md` / `_manifest.md`、目录型产物内部、`SplittingObject/` `MergedObject/`、`_sources/`。
  * 与 describeConverted 挂 `docKey` 的条件对齐，反查才找得回扫描下发的键。
@@ -940,7 +896,6 @@ function scanSources(root) {
 
 function scanInput(root) {
   const inputDir = path.join(root, 'input');
-  const isIgnored = makeIgnoreMatcher(readIgnorePatterns(root));
   const raw = listFiles(path.join(inputDir, 'raw')).map((abs) => {
     const p = rel(root, abs);
     return {
@@ -948,8 +903,6 @@ function scanInput(root) {
       name: path.basename(abs),
       ext: path.extname(abs).toLowerCase(),
       reader: readerKind(path.extname(abs).toLowerCase()),
-      // 忽略的资料仍留在 raw 列表和总量里 —— 藏起来就等于忘了它还在
-      ignored: isIgnored(p),
       ...stat(abs),
       // 可选：提炼 Word 模板时用它指定来源（第九条例外不收路径）。旧前端不认，忽略即可
       ...(path.extname(abs).toLowerCase() === '.docx' ? { docKey: docKeyOf(p) } : {}),
@@ -989,15 +942,13 @@ function scanInput(root) {
     convertedSources.has(r.path) ||
     assetSources.has(r.path) ||
     coveredDirs.some((d) => r.path.startsWith(d.prefix) && d.kinds.includes(r.ext));
-  // 忽略的不算缺口：它们是「看过、判定用不上」，跟「还没转」不是一回事
-  const pending = raw.filter((r) => !r.ignored && !isCovered(r));
-  const ignored = raw.filter((r) => r.ignored);
+  const pending = raw.filter((r) => !isCovered(r));
   // 原件在转换后动过：从产物的 sourceState 反查回 raw（目录型 source 判不出改动，不会是 stale）
   const staleSources = new Set(converted.filter((c) => c.sourceState === 'stale').map((c) => c.source));
-  // 可选字段，旧前端不认：原始资料据此全量列出、行内打标签，不再因转换或忽略从列表里消失。
-  // 判定与上面的 pending / ignored 同一口径，只是不再丢掉非待转的条目
+  // 可选字段，旧前端不认：原始资料据此全量列出、行内打标签，不再因转换从列表里消失。
+  // 不读 input/.ingestignore，也不再产出 ignored。
   for (const r of raw) {
-    r.state = r.ignored ? 'ignored' : isCovered(r) ? 'converted' : 'pending';
+    r.state = isCovered(r) ? 'converted' : 'pending';
     if (r.state === 'converted' && staleSources.has(r.path)) r.stale = true;
   }
 
@@ -1035,7 +986,6 @@ function scanInput(root) {
       converted: converted.length,
       assets: assets.length,
       pending: pending.length,
-      ignored: ignored.length,
       warnings: converted.filter((c) => c.warning).length,
       orphaned: converted.filter((c) => c.sourceState === 'missing').length,
       stale: converted.filter((c) => c.sourceState === 'stale').length,

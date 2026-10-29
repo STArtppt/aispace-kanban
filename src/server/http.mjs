@@ -472,8 +472,9 @@ function appendIngestLog(job, chunk) {
 }
 
 /**
- * 转换 / 忽略只认 input/raw/ 下真实存在的路径。
+ * 转换只认 input/raw/ 下真实存在的路径。
  * 相对路径统一成 /，跟 scan 的 rel()、前端 FileItem.path 对齐。
+ * 空路径返回 null，由调用方拒绝（看板不发起全量转换）。
  */
 function resolveRawTarget(root, relPath) {
   const raw = typeof relPath === 'string' ? relPath.trim() : '';
@@ -491,90 +492,8 @@ function resolveRawTarget(root, relPath) {
     err.statusCode = 404;
     throw err;
   }
-  // 目录是允许的：ingest.py 的 paths 参数本来就吃目录；「忽略此目录」也走这里。
+  // 目录是允许的：ingest.py 的 paths 参数本来就吃目录，但 input/raw 根本身由 startIngest 拒绝。
   return { abs, rel, isDir: fs.statSync(abs).isDirectory() };
-}
-
-/**
- * 把一条模式追加进 input/.ingestignore。
- * 看板在这里只追加一行，不改原件；解除忽略走 removeIgnore。ingest.py 和 scan.mjs 读的是同一份。
- * 不经过 ingest.py：这不是转换，旧工作空间的脚本也没有写入入口。
- * 模式相对 input/ 写（raw/某目录），跟手改那份文件的约定一致。
- */
-function addIgnore(project, relPath) {
-  const raw = typeof relPath === 'string' ? relPath.trim() : '';
-  if (!raw) {
-    const err = new Error('请指定要忽略的文件或目录');
-    err.statusCode = 400;
-    throw err;
-  }
-  const target = resolveRawTarget(project.root, raw);
-  const rawRoot = path.resolve(project.root, 'input', 'raw');
-  if (target.abs === rawRoot) {
-    const err = new Error('不能忽略整个 input/raw/，请指定其中的文件或子目录');
-    err.statusCode = 400;
-    throw err;
-  }
-  // input/raw/客户版/a.pdf → raw/客户版/a.pdf
-  const pattern = target.rel.replace(/^input\//, '').replace(/\/+$/, '');
-  const file = path.join(project.root, 'input', '.ingestignore');
-  const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  const existing = prev
-    .split('\n')
-    .map((l) => l.trim().replace(/\/+$/, ''))
-    .filter((l) => l && !l.startsWith('#'));
-  // 已有更宽的目录模式，或同一行已经写过，就别重复追加
-  if (existing.some((p) => pattern === p || pattern.startsWith(`${p}/`))) {
-    return { ok: true, pattern, already: true };
-  }
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  const body = prev
-    ? `${prev.endsWith('\n') ? prev : `${prev}\n`}${pattern}\n`
-    : `# 忽略清单 —— 不转换、看板上也不算「待转换」\n# 路径相对 input/ 写，例如 raw/某目录 或 raw/某文件.pdf\n\n${pattern}\n`;
-  fs.writeFileSync(file, body, 'utf8');
-  return { ok: true, pattern, already: false };
-}
-
-/**
- * 从 input/.ingestignore 删掉这份文件或目录的规则（解除忽略）。
- * 只删**字面**对得上的行：目录连同字面落在它下面的行一起删；注释、通配符和别的行原样保留。
- * 被上级目录规则或通配符忽略的，这里删不到，报错说清该去哪一层解除。先写临时文件再原子替换。
- */
-function removeIgnore(project, relPath) {
-  const target = resolveRawTarget(project.root, relPath);
-  if (!target) {
-    const err = new Error('请指定要解除忽略的文件或目录');
-    err.statusCode = 400;
-    throw err;
-  }
-  const pattern = target.rel.replace(/^input\//, '').replace(/\/+$/, '');
-  const file = path.join(project.root, 'input', '.ingestignore');
-  const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
-  const norm = (line) => line.trim().replace(/\/+$/, '');
-  const hit = (line) => {
-    const p = norm(line);
-    if (!p || p.startsWith('#')) return false;
-    return p === pattern || (target.isDir && p.startsWith(`${pattern}/`));
-  };
-  const lines = prev.split('\n');
-  const removed = lines.filter(hit).map(norm);
-  if (!removed.length) {
-    const parent = lines.map(norm).find((p) => p && !p.startsWith('#') && pattern.startsWith(`${p}/`));
-    const err = new Error(parent
-      ? `它是被上级规则 ${parent} 忽略的，请到那一层解除忽略`
-      : `input/.ingestignore 里没有字面写着 ${pattern} 的规则，可能是通配符规则命中的，请手改那份文件`);
-    err.statusCode = 409;
-    throw err;
-  }
-  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.tmp-${process.pid}-${Date.now()}`);
-  try {
-    fs.writeFileSync(tmp, lines.filter((line) => !hit(line)).join('\n'), 'utf8');
-    fs.renameSync(tmp, file);
-  } catch (err) {
-    fs.rmSync(tmp, { force: true });
-    throw err;
-  }
-  return { ok: true, removed };
 }
 
 /**
@@ -593,7 +512,8 @@ function resolveAnydocBin() {
  * 在工作空间里异步跑 scripts/ingest.py。
  * 看板只 spawn，真正写转换产物（`output/converted/`，旧布局 `input/converted/`）的是工作空间自己的脚本 —— 与 runInit 同构。
  * 接口立刻返回，进度靠 GET /ingest 轮询；写盘会被 watchWorkspace 捕获，页面自己刷新。
- * relPath 有值时只转它（ingest.py 的 paths 参数，可以是文件也可以是目录）；缺省转整个 input/raw/。
+ * relPath 必须是 input/raw/ 下的文件或子目录。空路径和 input/raw 根本身返回 400，不 spawn：
+ * 看板不发起全量转换；终端里人有意写 input/raw 仍可全转，那不经过这里。
  */
 async function startIngest(project, relPath) {
   const existing = ingestJobs.get(project.id);
@@ -604,6 +524,17 @@ async function startIngest(project, relPath) {
   }
 
   const target = resolveRawTarget(project.root, relPath);
+  if (!target) {
+    const err = new Error('请指定 input/raw/ 下的文件或子目录。看板不一次转换全部资料。');
+    err.statusCode = 400;
+    throw err;
+  }
+  const rawRoot = path.resolve(project.root, 'input', 'raw');
+  if (target.abs === rawRoot) {
+    const err = new Error('不能一次转换整个 input/raw/，请指定其中的文件或子目录。');
+    err.statusCode = 400;
+    throw err;
+  }
 
   const script = path.join(project.root, 'scripts', 'ingest.py');
   if (!fs.existsSync(script)) {
@@ -632,15 +563,13 @@ async function startIngest(project, relPath) {
     startedAt: new Date().toISOString(),
     finishedAt: '',
     exitCode: null,
-    path: target ? target.rel : '',
-    message: target
-      ? `正在转换 ${target.rel}${target.isDir ? '/ 下的资料' : ''} … 大 PDF 可能要几分钟。`
-      : '正在转换 input/raw/ … 大 PDF 可能要几分钟。',
+    path: target.rel,
+    message: `正在转换 ${target.rel}${target.isDir ? '/ 下的资料' : ''} … 大 PDF 可能要几分钟。`,
     log: '',
   };
   ingestJobs.set(project.id, job);
 
-  const args = target ? [...prefix, script, target.rel] : [...prefix, script];
+  const args = [...prefix, script, target.rel];
   const env = { ...process.env };
   const anydocBin = resolveAnydocBin();
   if (anydocBin) env.ANYDOC_BIN = anydocBin;
@@ -2311,24 +2240,6 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       const started = await startSourceIngest(project, body.source);
       return json(res, 200, started);
     }
-  }
-
-  // 往 input/.ingestignore 追加一行：用户在待转换列表点「忽略」时走这里
-  if (head === 'projects' && id && action === 'ignore' && req.method === 'POST') {
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
-    const project = requireProject(id);
-    const body = await readBody(req);
-    return json(res, 200, addIgnore(project, body.path));
-  }
-
-  // 从 input/.ingestignore 删掉字面对得上的行：用户点「解除忽略」时走这里
-  if (head === 'projects' && id && action === 'unignore' && req.method === 'POST') {
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
-    const project = requireProject(id);
-    const body = await readBody(req);
-    return json(res, 200, removeIgnore(project, body.path));
   }
 
   // 预览批注。有产出物记录时读/写工作空间 output/records/notes/，没有记录时退回看板缓存。

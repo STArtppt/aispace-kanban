@@ -26,8 +26,8 @@ cp .env.example .env    # 要把 token 填进 MINERU_API_KEY
 # 3. 把收到的资料丢进 input/raw/（原样丢，不用整理）
 cp ~/Downloads/需求规格说明书.docx ~/Downloads/功能清单.xlsx input/raw/
 
-# 4. 转换成 AI 可读格式
-python3 scripts/ingest.py
+# 4. 转换成 AI 可读格式（必须写明文件或目录；先看计划用 --dry-run，不写文件）
+python3 scripts/ingest.py input/raw/需求规格说明书.docx
 
 # 5. 打开你的 AI 编码工具开始干活
 claude

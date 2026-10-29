@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { AlertTriangle, ChevronRight, Folder, FolderInput, Loader2, PencilLine } from 'lucide-react';
+import { ChevronRight, Folder, FolderInput, Loader2, PencilLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -342,7 +342,7 @@ export function RawOrganizeDialog({
                 {mode === 'rename'
                   ? `只填这一层的名字${ext ? '，扩展名不变' : ''}，仍留在原目录。`
                   : '选一个目标目录，名字不变。'}
-                转换产物、台账、忽略规则和别的文档里的链接会一起跟上，确认前不会改动磁盘。
+                转换产物、台账和别的文档里的链接会一起跟上，确认前不会改动磁盘。
               </p>
             )}
 
@@ -378,7 +378,6 @@ function PlanSummary({
   showFiles: boolean;
   onToggleFiles: () => void;
 }) {
-  const { ignore } = plan;
   const counts = [
     plan.products.length ? `转换产物 ${plan.products.length} 处跟着搬` : '',
     plan.indexRows ? `台账 ${plan.indexRows} 行` : '',
@@ -399,33 +398,7 @@ function PlanSummary({
             {r.kind === 'dir' ? '/' : ''}
           </li>
         ))}
-        {ignore.rewritten.map((r) => (
-          <li key={`ig:${r.from}`} className="break-all">
-            忽略规则 {r.from} → {r.to}
-          </li>
-        ))}
-        {ignore.added.map((a) => (
-          <li key={`add:${a}`} className="break-all">
-            追加忽略规则 {a}（移出原目录后仍保持忽略）
-          </li>
-        ))}
       </ul>
-      {ignore.wildcard.length ? (
-        <div className="flex min-w-0 gap-2 rounded-lg border border-destructive/40 p-2 text-xs text-destructive">
-          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-          <div className="min-w-0">
-            <p>这些忽略规则含通配符，整理后可能不再套用，脚本不会改：</p>
-            <ul className="mt-1 flex flex-col gap-0.5">
-              {ignore.wildcard.map((w) => (
-                <li key={w} className="break-all font-mono">
-                  {w}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1">仍点「确定」就按这个结果执行，要保持忽略请事后改 input/.ingestignore。</p>
-          </div>
-        </div>
-      ) : null}
       {plan.files.length ? (
         <div className="flex min-w-0 flex-col gap-1">
           <button

@@ -56,7 +56,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from layout import (  # noqa: E402  input/ 的共用约定，三个转换脚本共用一份
-    MERGE_DIR, add_ignore_flags, ignore_patterns, is_ignored, md_link,
+    MERGE_DIR, md_link,
     ensure_layout, merge_paths, safe_component,
 )
 from xls_reader import XlsError, read_xls  # noqa: E402  与本脚本同目录
@@ -494,28 +494,22 @@ def write_manifest(manifest_path: Path, name: str, src_dir: Path, digest: str, s
 # 主流程
 # --------------------------------------------------------------------------- #
 
-def collect_pointtable_dirs(patterns: list[str]) -> list[Path]:
-    """自动发现：input/raw/ 下**直接子目录**中含可识别点表文件的，算一个点表集。
-
-    忽略清单在这里格外要紧：探测要逐个读文件头，客户一次交来的上千份存量资料全扫一遍
-    要好几分钟。整个目录被忽略时直接跳过，连走都不走进去。
-    """
+def collect_pointtable_dirs() -> list[Path]:
+    """自动发现：input/raw/ 下**直接子目录**中含可识别点表文件的，算一个点表集。"""
     found = []
     for child in sorted(RAW.iterdir()):
-        if not child.is_dir() or child.name.startswith(".") or is_ignored(child, patterns):
+        if not child.is_dir() or child.name.startswith("."):
             continue
         for p in child.rglob("*"):
-            if (p.is_file() and not p.name.startswith(".")
-                    and not is_ignored(p, patterns) and detect(p)):
+            if p.is_file() and not p.name.startswith(".") and detect(p):
                 found.append(child)
                 break
     return found
 
 
-def process(src_dir: Path, patterns: list[str], force: bool, dry_run: bool,
-            want_sqlite: bool) -> bool:
+def process(src_dir: Path, force: bool, dry_run: bool, want_sqlite: bool) -> bool:
     files = [p for p in sorted(src_dir.rglob("*"))
-             if p.is_file() and not p.name.startswith(".") and not is_ignored(p, patterns)]
+             if p.is_file() and not p.name.startswith(".")]
     targets = [(p, detect(p)) for p in files]
     targets = [(p, k) for p, k in targets if k]
     if not targets:
@@ -561,10 +555,8 @@ def main() -> int:
     ap.add_argument("--force", action="store_true", help="忽略缓存强制重建")
     ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写产物")
     ap.add_argument("--no-sqlite", action="store_true", help="不产出 sqlite 索引")
-    add_ignore_flags(ap)
     args = ap.parse_args()
     ensure_layout()
-    patterns = ignore_patterns(args)
 
     if args.paths:
         dirs = [Path(p) if Path(p).is_absolute() else REPO / p for p in args.paths]
@@ -573,14 +565,14 @@ def main() -> int:
             log("找不到目录：" + "、".join(str(d) for d in missing))
             return 1
     else:
-        dirs = collect_pointtable_dirs(patterns)
+        dirs = collect_pointtable_dirs()
         if not dirs:
             log("input/raw/ 下没有发现点表目录。把点表放进去（支持 .xls/.xlsx 表格型、"
                 "[RTU]/[遥信] 分段型 .txt）再跑一次。")
             return 0
 
     CONVERTED.mkdir(parents=True, exist_ok=True)
-    changed = sum(process(d, patterns, args.force, args.dry_run, not args.no_sqlite)
+    changed = sum(process(d, args.force, args.dry_run, not args.no_sqlite)
                   for d in dirs)
     if not args.dry_run:
         log(f"\n完成：{changed} 个点表集有更新。")

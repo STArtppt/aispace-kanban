@@ -84,11 +84,7 @@ export function LedgerOverview({
           <Stat
             label="资料"
             value={scan.input.stats.converted}
-            hint={
-              scan.input.stats.ignored
-                ? `共 ${scan.input.stats.raw} 份原始文件 · ${scan.input.stats.ignored} 份已忽略`
-                : `共 ${scan.input.stats.raw} 份原始文件`
-            }
+            hint={`共 ${scan.input.stats.raw} 份原始文件`}
           />
         )}
         <Stat

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
  * 原始资料整理（templates/pm-aispace/scripts/move_raw.py）的回归：
- * 把合成工作空间拷到临时目录，先预览、再执行，断言原件、产物、台账、忽略规则、各类引用都跟到新路径，
+ * 把合成工作空间拷到临时目录，先预览、再执行，断言原件、产物、台账、各类引用都跟到新路径，
  * 不该动的没动，再用看板的 scanWorkspace 核对「整理前已转的，整理后仍是已转」。
  *
  *     node scripts/check-move-raw.mjs        （pnpm test:raw-move）
  *
- * 为什么要有它：一次整理跨原件、产物、台账、忽略清单和整个 output/，模板 Python 脚本没有静态检查。
+ * 为什么要有它：一次整理跨原件、产物、台账和整个 output/，模板 Python 脚本没有静态检查。
  * 语料全部合成，说明见 fixtures/raw-move/README.md。
  */
 
@@ -153,26 +153,16 @@ console.log('文件改名');
   check(rawState(ws, 'input/raw/批次甲/说明-修订.docx') === 'converted', '整理后仍是「已转」，不报原件已改');
 }
 
-// ---------------------------------------------------------------- 字面忽略规则（带方括号）
-
-console.log('忽略规则');
-{
-  const ws = freshWorkspace();
-  check(rawState(ws, 'input/raw/资料[终版].docx') === 'ignored', '改名前是「忽略」');
-  const r = organize(ws, '--source', 'input/raw/资料[终版].docx', '--to', '资料[定稿]');
-  check(r.code === 0, '文件名带方括号也能改名', r.err);
-  check(read(ws, 'input/.ingestignore').split('\n').includes('raw/资料[定稿].docx'), '字面规则跟着改');
-  check(rawState(ws, 'input/raw/资料[定稿].docx') === 'ignored', '改名后仍是「忽略」');
-}
-
 // ---------------------------------------------------------------- 目录移动
 
 console.log('目录移动');
 {
   const ws = freshWorkspace();
+  const ignoreBefore = read(ws, 'input/.ingestignore');
+  check(rawState(ws, 'input/raw/忽略目录/旧.txt') === 'pending', '遗留忽略清单不再把文件标成忽略');
   const p = preview(ws, '--source', 'input/raw/批次甲', '--into', 'input/raw/归档');
   check(p.code === 0, '预览成功', p.err);
-  check(p.json?.ignore?.wildcard?.includes('raw/批次甲/*.pdf'), '通配符规则单独列进预览');
+  check(!('ignore' in (p.json || {})), '预览不再带 ignore 字段');
   const r = run(ws, '--source', 'input/raw/批次甲', '--into', 'input/raw/归档', '--apply', '--expect', p.json?.plan || '');
   check(r.code === 0, '执行成功', r.err);
   check(has(ws, 'input/raw/归档/批次甲/说明.docx') && has(ws, 'input/raw/归档/批次甲/附件.pdf') && !has(ws, 'input/raw/批次甲'),
@@ -181,7 +171,7 @@ console.log('目录移动');
   check(has(ws, prod) && !has(ws, 'output/converted/批次甲'), '镜像目录一起搬');
   check(read(ws, prod).includes('](../../../../input/assets/说明/img1.png)')
     && read(ws, prod).includes('src="../../../../input/assets/说明/img1.png"'), '换了深度，图片链接按新位置重算');
-  check(read(ws, 'input/.ingestignore').split('\n').includes('raw/批次甲/*.pdf'), '通配符规则不改');
+  check(read(ws, 'input/.ingestignore') === ignoreBefore, '遗留的 .ingestignore 一个字节不改');
   check(read(ws, 'input/assets/未分类/_manifest.md').includes('  - input/raw/归档/批次甲/草图.png'), '未分类图片清单里的原件路径跟进');
   check(read(ws, 'input/INDEX.md').includes('[`../output/converted/归档/批次甲/说明.md`](../output/converted/归档/批次甲/说明.md)'),
     '台账产物链接换了深度也跟进');

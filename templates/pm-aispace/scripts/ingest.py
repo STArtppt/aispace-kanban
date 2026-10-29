@@ -39,13 +39,14 @@ html/htm → 可预览单文件原型：拷贝 HTML + 校验 + _manifest.md（�
 
 用法
 ----
-    python3 scripts/ingest.py                     # 转换 input/raw/ 下所有文件
-    python3 scripts/ingest.py --force             # 忽略缓存全部重转
-    python3 scripts/ingest.py --dry-run           # 只打印计划
-    python3 scripts/ingest.py path/to/a.docx      # 只转指定文件
-    python3 scripts/ingest.py --ocr               # 扫描版 PDF，让 MinerU 走 OCR
-    python3 scripts/ingest.py --pdf-engine mineru # 要抽图、要公式、版式复杂时走在线
-    python3 scripts/ingest.py --pdf-engine anydoc # 强制本地，不外发文件
+    python3 scripts/ingest.py input/raw/某目录      # 转换这个目录（必须写明范围）
+    python3 scripts/ingest.py input/raw/某文件.docx
+    python3 scripts/ingest.py input/raw/某目录 --force   # 忽略缓存，重转这个范围
+    python3 scripts/ingest.py --dry-run           # 只打印 input/raw/ 全部原件的计划，不写文件
+    python3 scripts/ingest.py input/raw           # 人有意要全转时，显式写出这个目录
+    python3 scripts/ingest.py input/raw/某文件.pdf --ocr
+    python3 scripts/ingest.py input/raw/某文件.pdf --pdf-engine mineru
+    python3 scripts/ingest.py input/raw/某文件.pdf --pdf-engine anydoc
 """
 
 from __future__ import annotations
@@ -73,7 +74,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import anydoc  # noqa: E402  与本脚本同目录
 import mineru  # noqa: E402  与本脚本同目录
 from layout import (  # noqa: E402  input/ 的共用约定，三个转换脚本共用一份
-    add_ignore_flags, ensure_layout, ignore_patterns, is_ignored, md_link, merge_paths,
+    ensure_layout, md_link, merge_paths,
     rel_path, safe_component, single_target, split_paths,
 )
 from xls_reader import XlsError, read_xls  # noqa: E402  与本脚本同目录
@@ -1054,8 +1055,8 @@ def plan(files: list[Path], pdf_engine: str, requested: str = "auto") -> list[tu
     return out
 
 
-def collect(paths: list[str], ignore: list[str] | None = None) -> tuple[list[Path], list[Path]]:
-    """返回 (要处理的文件, 被忽略的文件)。忽略的单独返回，好让调用方报个数。"""
+def collect(paths: list[str]) -> list[Path]:
+    """列出要处理的文件。paths 为空时扫整个 input/raw/，只给 --dry-run 看全量计划用。"""
     if paths:
         files = []
         for p in paths:
@@ -1063,11 +1064,7 @@ def collect(paths: list[str], ignore: list[str] | None = None) -> tuple[list[Pat
             files.extend(sorted(f for f in path.rglob("*") if f.is_file()) if path.is_dir() else [path])
     else:
         files = sorted(f for f in RAW.rglob("*") if f.is_file())
-    files = [f for f in files if not f.name.startswith(".") and f.name != ".gitkeep"]
-    patterns = ignore or []
-    kept = [f for f in files if not is_ignored(f, patterns)]
-    dropped = [f for f in files if is_ignored(f, patterns)]
-    return kept, dropped
+    return [f for f in files if not f.name.startswith(".") and f.name != ".gitkeep"]
 
 
 ROW_RE = re.compile(r"^\|\s*`([^`]+)`\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*$")
@@ -1098,7 +1095,7 @@ def read_index_rows() -> dict[str, dict]:
     return rows
 
 
-def write_index(records: list[dict], ignored: list[Path] | None = None) -> None:
+def write_index(records: list[dict]) -> None:
     now = dt.datetime.now().astimezone().strftime("%Y-%m-%d %H:%M")
     # 旧行打底，本次跑到的覆盖掉，没跑到的原样留着
     merged = read_index_rows()
@@ -1126,16 +1123,6 @@ def write_index(records: list[dict], ignored: list[Path] | None = None) -> None:
     for r in sorted(records, key=lambda x: x["source"]):
         target = f"[`{r['target']}`]({index_link(r['target'])})" if r["target"] else "—"
         lines.append(f"| `{r['source']}` | {r['kind']} | {target} | {r['status']} |")
-    if ignored:
-        # 忽略的资料不逐份列（可能上千份），按顶层目录汇总一行，让人知道它们还在
-        groups: dict[str, int] = {}
-        for f in ignored:
-            rel = f.relative_to(REPO) if f.is_relative_to(REPO) else f
-            top = "/".join(rel.parts[:3]) if len(rel.parts) > 3 else str(rel)
-            groups[top] = groups.get(top, 0) + 1
-        lines += ["", f"> 另有 {len(ignored)} 份资料按 `input/.ingestignore` 忽略，不计入待转换："]
-        for top, n in sorted(groups.items()):
-            lines.append(f"> - `{top}/` {n} 份")
     lines += [
         "",
         "## 人工批注",
@@ -1155,10 +1142,10 @@ def write_index(records: list[dict], ignored: list[Path] | None = None) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="把 input/raw/ 的文档转换成 AI 可读格式")
-    ap.add_argument("paths", nargs="*", help="指定文件或目录，默认整个 input/raw/")
+    ap.add_argument("paths", nargs="*",
+                    help="要转换的文件或目录，如 input/raw/批次甲。不写路径时拒绝运行；--dry-run 例外，可看全量计划")
     ap.add_argument("--force", action="store_true", help="忽略 sha256 缓存，全部重转")
-    add_ignore_flags(ap)
-    ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件")
+    ap.add_argument("--dry-run", action="store_true", help="只打印计划，不写文件；可以不带路径，看 input/raw/ 全部原件")
     ap.add_argument("--pdf-engine", choices=["auto", "anydoc", "mineru", "markitdown"], default="auto",
                     help="PDF / PPTX 用哪个引擎。auto=本地 anydoc（扫描件自动升级 MinerU OCR）；"
                          "mineru=在线解析（抽图/公式/复杂版式）；anydoc=强制本地；markitdown=老兜底")
@@ -1169,15 +1156,18 @@ def main() -> int:
     ap.add_argument("--mineru-timeout", type=int, default=mineru.POLL_TIMEOUT,
                     help=f"MinerU 单批轮询上限秒数，默认 {mineru.POLL_TIMEOUT}")
     args = ap.parse_args()
+    # 不带路径就拒绝，而且在任何写盘之前退出：agent 照旧文档敲一句空命令时不会把全部资料转掉。
+    # --dry-run 只打印计划，仍允许不带路径。显式写出 input/raw 是人有意全转，放行。
+    if not args.paths and not args.dry_run:
+        log("请指定要转换的文件或目录。例如：")
+        log("  python3 scripts/ingest.py input/raw/批次甲/说明.docx")
+        log("  python3 scripts/ingest.py input/raw/批次甲")
+        log("要先看全部原件的计划、不写文件：python3 scripts/ingest.py --dry-run")
+        return 1
+
     ensure_layout()
 
-    CONVERTED.mkdir(parents=True, exist_ok=True)
-    ASSETS.mkdir(parents=True, exist_ok=True)
-
-    patterns = ignore_patterns(args)
-    files, ignored = collect(args.paths, patterns)
-    if ignored:
-        log(f"· 按 input/.ingestignore 忽略 {len(ignored)} 份（不计入待转换，加 --no-ignore 可强制转）")
+    files = collect(args.paths)
     if not files:
         log("input/raw/ 里没有文件。把 docx / pdf / xlsx / pptx 放进去再跑一次。")
         return 0
@@ -1209,6 +1199,9 @@ def main() -> int:
             dest = target.relative_to(REPO) if target != Path() else "—"
             log(f"  {how:12} {src.relative_to(REPO)}  →  {dest}")
         return 0
+
+    CONVERTED.mkdir(parents=True, exist_ok=True)
+    ASSETS.mkdir(parents=True, exist_ok=True)
 
     records: list[dict] = []
     failures = 0
@@ -1374,7 +1367,7 @@ def main() -> int:
         })
 
     write_assets_manifest(records)
-    write_index(records, ignored)
+    write_index(records)
     log(f"\n台账已更新：{INDEX.relative_to(REPO)}")
     if failures:
         log(f"有 {failures} 个文件转换失败，见上方日志。")

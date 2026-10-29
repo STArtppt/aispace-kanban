@@ -4,9 +4,8 @@
 为什么要有它
 ------------
 看板和转换脚本按**路径**把原件和它的一切对上：`input/INDEX.md` 的台账行、`output/converted/` 里与
-`input/raw/` 同构的产物、产物 front-matter 的 `source`、`input/.ingestignore` 里的字面路径、
-别处文档里指向原件或产物的链接。在文件夹里手挪，这些全断：列表里多出一份「待转」，旧产物成了孤儿，
-被忽略的资料重新冒出来。
+`input/raw/` 同构的产物、产物 front-matter 的 `source`、别处文档里指向原件或产物的链接。
+在文件夹里手挪，这些全断：列表里多出一份「待转」，旧产物成了孤儿。
 
 它做的事
 --------
@@ -14,12 +13,11 @@
 2. 对应的转换产物搬到新的镜像位置（落点调 `layout.py`，不手写规则），改写产物的 `source` / `sources`、
    `payload` / `preview`，以及因为换了目录而失效的相对链接（含指向 `input/assets/` 的图片，图片本身不动）。
 3. 改写台账表格里对得上的行；「## 人工批注」只改解析后指向旧路径的链接，普通句子不动。
-4. `.ingestignore`：整行等于被移动的路径（或在它下面）的规则改前缀；规则是被移动项的上级目录、
-   移动后又不在它下面了，就追加一行新路径，忽略状态不变；只靠通配符命中的规则不改，在预览里单列。
-5. `output/**` 的 `.md` / `.yaml` / `.yml`、`output/docx-template/**` 的 `.json` 与根 `project.yaml` 里
+4. `output/**` 的 `.md` / `.yaml` / `.yml`、`output/docx-template/**` 的 `.json` 与根 `project.yaml` 里
    解析后指向旧路径的链接和字段改成新路径（链接规则与 `rename_output.py` 同一份）；
    交付稿 `v*.md` 只改 front-matter；记录「## 状态流水」不改；内容因此变了的原稿，交付稿 `source_sha` 换新。
-6. `input/assets/未分类/_manifest.md` 里列的原件路径改成新路径。
+5. `input/assets/未分类/_manifest.md` 里列的原件路径改成新路径。
+   遗留的 `input/.ingestignore` 不读、不改。
 
 不碰：原件内容、`input/assets/` 的文件、`input/sources/`、`output/delivery/` 的 `.docx`、`visualization/`、`.claude/`。
 **不删除任何文件**，整理后留下的空目录也不删。不为这次整理重跑 `ingest.py`。
@@ -56,14 +54,13 @@ from urllib.parse import quote, unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ingest  # noqa: E402  点表 / 现场数据的判定与台账行格式，与转换脚本同一份
-import layout  # noqa: E402  产物落点与忽略清单的共用约定
+import layout  # noqa: E402  产物落点的共用约定
 import rename_output as ro  # noqa: E402  链接解析与 source_sha 跟进，与产出改名同一份
 from copy_converted import FENCE_RE, IMG_RE  # noqa: E402  代码块与 <img> 的识别，与复制同一份
 
 WS = layout.REPO
 RAW = "input/raw"
 INDEX = "input/INDEX.md"
-IGNORE = "input/.ingestignore"
 ASSET_MANIFEST = "input/assets/未分类/_manifest.md"
 TEMPLATE_DIR = "output/docx-template"
 MAX_NAME = 200
@@ -591,50 +588,6 @@ def index_edits(text: str, mv: Move, lit: re.Pattern | None) -> tuple[list[tuple
     return edits, rows
 
 
-def glob_hit(pat: str, p: str) -> bool:
-    return PurePosixPath(p).match(pat) or PurePosixPath(p.rsplit("/", 1)[-1]).match(pat)
-
-
-def ignore_plan(text: str, mv: Move, moved_files: list[str]) -> tuple[str, dict]:
-    """改写 .ingestignore。规则相对 input/ 写。分类跟着 layout.is_ignored 的顺序：先字面、再通配符。"""
-    old, new = mv.src[len("input/"):], mv.dst[len("input/"):]
-    pairs = [(f[len("input/"):], (mv.map_path(f) or f)[len("input/"):]) for f in moved_files]
-    if mv.is_dir:
-        pairs.append((old, new))
-    olds = [a for a, _ in pairs]
-    rewritten, added, wildcard = [], [], []
-    lines = text.splitlines(keepends=True)
-    out = []
-    for line in lines:
-        s = line.strip()
-        pat = s.rstrip("/")
-        if not s or s.startswith("#"):
-            out.append(line)
-            continue
-        # 字面命中 = 某个被移动的路径等于这条规则、或在它下面（layout.is_ignored 的第一支）。
-        # 光是以被移动目录开头不算：`raw/批次甲/*.pdf` 只靠通配符命中，改前缀会改掉它的含义
-        if ((pat == old or pat.startswith(old + "/"))
-                and any(a == pat or a.startswith(pat + "/") for a in olds)):
-            repl = new + pat[len(old):] + ("/" if s.endswith("/") else "")
-            out.append(line.replace(s, repl, 1))
-            rewritten.append({"from": s, "to": repl})
-            continue
-        out.append(line)
-        if old.startswith(pat + "/"):
-            # 规则是被移动项的上级目录：移出去之后就不再被它忽略，追加一行新路径保住忽略状态
-            if not new.startswith(pat + "/") and new not in added:
-                added.append(new)
-            continue
-        if any(glob_hit(pat, a) != glob_hit(pat, b) for a, b in pairs):
-            wildcard.append(s)
-    result = "".join(out)
-    if added:
-        if result and not result.endswith("\n"):
-            result += "\n"
-        result += "".join(f"{a}\n" for a in added)
-    return result, {"rewritten": rewritten, "added": added, "wildcard": wildcard}
-
-
 # ---------------------------------------------------------------- 扫描范围
 
 
@@ -737,16 +690,6 @@ def build_plan(src: str, to: str | None, into: str | None) -> tuple[Move, dict[s
             after[p] = ro.apply_edits(text, edits)
             links[p] = len(edits)
 
-    ignore = {"rewritten": [], "added": [], "wildcard": []}
-    if (WS / IGNORE).is_file() and not (WS / IGNORE).is_symlink():
-        text = ro.read_text(IGNORE)
-        if text is not None:
-            before[IGNORE] = text
-            new_text, ignore = ignore_plan(text, mv, files)
-            if new_text != text:
-                after[IGNORE] = new_text
-                links[IGNORE] = len(ignore["rewritten"]) + len(ignore["added"])
-
     sha_follow = ro.follow_source_sha(before, after)
 
     changed = {p: (before[p], after[p]) for p in sorted(after) if after[p] != before[p]}
@@ -777,7 +720,6 @@ def build_plan(src: str, to: str | None, into: str | None) -> tuple[Move, dict[s
         "products": mv.products,
         "files": file_rows,
         "indexRows": index_rows,
-        "ignore": ignore,
         "linkFiles": sum(1 for f in file_rows if f["links"]),
         "links": sum(f["links"] for f in file_rows),
         "pathMap": path_map,
@@ -916,7 +858,7 @@ def main() -> int:
         except (AttributeError, ValueError):
             pass
     as_json = "--json" in sys.argv[1:]
-    ap = Parser(description="给 input/raw/ 里的文件或目录改名、移动，连带产物、台账、忽略规则与引用")
+    ap = Parser(description="给 input/raw/ 里的文件或目录改名、移动，连带产物、台账与引用")
     ap.add_argument("--source", default="", help="工作空间相对路径，如 input/raw/批次甲/说明.docx")
     ap.add_argument("--to", default=None, help="新名字（文件不写扩展名）")
     ap.add_argument("--into", default=None, help="目标目录，如 input/raw/归档；input/raw 本身也行")
@@ -950,8 +892,6 @@ def main() -> int:
     for f in result["files"]:
         extra = "、source_sha" if f.get("sourceSha") else ""
         print(f"  {f['path']}" + (f" · {f['links']} 处" if f["links"] else "") + extra)
-    for w in result["ignore"]["wildcard"]:
-        print(f"  ⚠ 忽略规则 {w} 含通配符，整理后可能不再套用，脚本不会改")
     if not args.apply:
         print(f"指纹：{result['plan']}")
     return 0

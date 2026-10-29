@@ -18,7 +18,7 @@ description: 把看板模板（aispace-kanban 的 templates/pm-aispace）的新�
 | 保留 | 这边改过，模板没变 | 不动 |
 | 冲突 | 两边都改过；或首次接入时和新版对不上 | **不动**，由你逐个合并 |
 | 模板已删除 | 新版模板不再有这个文件 | 不删，告诉用户 |
-| seedOnly 有新版 | `project.yaml`、`.gitignore`、`input/.ingestignore`、去 AI 味规则库这类「铺完归工作空间」的文件，模板那边变了 | 不动，按下文逐个处理 |
+| seedOnly 有新版 | `project.yaml`、`.gitignore`、去 AI 味规则库这类「铺完归工作空间」的文件，模板那边变了 | 不动，按下文逐个处理 |
 
 基线记在 `.aispace/template.lock.json`（入库，别手改）。本项目专有的约定在工作空间根的 `AGENTS.local.md`，
 它不属于模板，更新不碰它。
@@ -94,8 +94,9 @@ lock 来源是 `local:<目录名>@<提交号>` 且本机条件成立时，从本
 
 - **去 AI 味规则库**（`.claude/skills/pm-deai-writing/rules/**`）：按 `pm-deai-writing` 的「用法四 · 并入模板新规则」并入，
   本地编号不改。
-- **`.gitignore`、`input/.ingestignore`**：模板新加的忽略项多半该要，列给用户，确认后追加到末尾；这边原有的行不动。
+- **`.gitignore`**：模板新加的忽略项多半该要，列给用户，确认后追加到末尾；这边原有的行不动。
   `visualization/` 改成整目录不入库、只留两个 `.gitkeep` 时，不是在末尾追加几行。已经入库的参考页和原型，确认后用 `git rm --cached` 移出索引（只动索引，不删工作区里的文件）。连历史里的大文件一起清掉要重写历史，由用户另决定，不在这次更新里做。
+- **遗留的 `input/.ingestignore`**：模板不再分发这份文件，脚本和看板也不再读它。更新时**不删、不改**，也不要往里面追加新的忽略项。文件留着不影响转换。
 - **`project.yaml`**：模板加了新字段时，把新字段按 `null` 补进来；已有的值一个不改。
 - 其它：列出差异，问用户。
 

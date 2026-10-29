@@ -35,7 +35,7 @@ input/  →  （分析）  →  output/  →  visualization/
 ## 产物落点：`output/converted/` 镜像 `input/raw/`
 
 转换产物**不平铺**，目录结构与 `input/raw/` 一一对齐 —— 删 `converted/某批/` 就删掉那批资料的全部产物。
-规则实现在 [`scripts/layout.py`](scripts/layout.py)（各转换脚本共用，忽略清单解析也在这里）：
+规则实现在 [`scripts/layout.py`](scripts/layout.py)（各转换脚本共用）：
 
 | 情形 | 落点 |
 | --- | --- |
@@ -112,23 +112,21 @@ PM 接手项目最大的风险是**把自己的推断当成项目事实**写进 
 ## 阶段一：资料转换
 
 ```bash
-python3 scripts/ingest.py                      # 转换 input/raw/ 下的新资料（幂等，只转有变化的）
-python3 scripts/ingest.py --dry-run            # 先看计划
-python3 scripts/ingest.py input/raw/某目录      # 只转指定目录或文件
-python3 scripts/ingest.py --force              # 全部重转
+python3 scripts/ingest.py --dry-run                  # 先看全部原件的计划，不写文件
+python3 scripts/ingest.py input/raw/某目录            # 转这个目录（幂等，只转有变化的）
+python3 scripts/ingest.py input/raw/某目录/说明.docx  # 只转这一份
+python3 scripts/ingest.py input/raw                   # 要转整个 input/raw/ 时必须把路径写出来
+python3 scripts/ingest.py --force input/raw/某目录    # 这个目录全部重转
 ```
+
+不带路径、又不是 `--dry-run` 时脚本直接退出，什么都不写。看板里一次只转用户点的那一份或那一个目录。
+旧工作空间里留下的 `input/.ingestignore` 不再生效：脚本和看板都不读它。更新模板时不要删、不要改。
 
 格式分派、PDF / PPTX 引擎、MinerU 配置见 [`input/README.md`](input/README.md)。要记住的只有：
 
 - **默认不外发文件**。只有 `--pdf-engine mineru` 或扫描件自动升级 OCR 才会把资料传给 MinerU。
 - 产物 frontmatter 带 `warning` 的几乎是空的（OCR 也没识别出来），要提醒用户这份资料实际不可用。
 - `.wps` / `.et` / `.dps` 始终不支持，请用户另存为。
-
-**忽略清单 `input/.ingestignore`**（gitignore 风格，路径相对 `input/`）：上千份存量资料里用不上的写进去，
-既不转换，也不在看板上一直报「待转换」。看板上「忽略此文件 / 此目录」也是往这里追加一行。
-被忽略的资料**仍计入看板总量并标注份数** —— 它们是「看过、判定用不上」，不是「不存在」。
-临时开关：`--ignore "raw/某目录"`（不写进文件）、`--no-ignore`（本次全转）。
-`layout.py` 与看板读的是同一份；匹配规则要改，看板那侧你不能改，写反馈单。
 
 ### 其它资料管线
 
@@ -314,7 +312,7 @@ GitHub 的 `main` 可能与用户本机版本有出入，对不上时如实说�
 ## 不要做的事
 
 - **不要主动读 `input/raw/`**（除非用户明确说「打开原件」「对照原始 PDF」）。一律优先 `output/converted/` 和 `input/INDEX.md`。
-- 不要修改或删除 `input/raw/` 里的任何文件，也不要在那里手动改名、挪目录（台账、产物、忽略规则会对不上；整理走看板或 `scripts/move_raw.py`）；不要手改 `output/converted/` 的产物或在里面手建目录。
+- 不要修改或删除 `input/raw/` 里的任何文件，也不要在那里手动改名、挪目录（台账和产物会对不上；整理走看板或 `scripts/move_raw.py`）；不要手改 `output/converted/` 的产物或在里面手建目录。
   想基于某份转换产物继续写，用看板「产出文档 → 转换产物 → 更多 → 复制到…」（终端里是 `scripts/copy_converted.py`，先 `--dry-run`），
   复制件落进 `output/<组>/` 同样的子目录、图片链接不断；不要直接改 converted 里那份，也不要移走它（下次转换会再生成一份）。
 - **不要把大表整个读进上下文**（现场数据 csv / sqlite 事实表、`测点主表.csv`），走 SQL。

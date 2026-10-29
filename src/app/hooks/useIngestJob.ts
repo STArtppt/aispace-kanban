@@ -10,7 +10,7 @@ export interface IngestControl {
   running: boolean;
   error: string;
   start: (filePath?: string) => Promise<void>;
-  /** 关掉后不再因刷新 / 切项目弹回来；下次点「开始转换」失败才会再出现 */
+  /** 关掉后不再因刷新 / 切项目弹回来；下次点转换失败才会再出现 */
   dismissError: () => void;
 }
 

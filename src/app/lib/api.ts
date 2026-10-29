@@ -38,14 +38,13 @@ export interface FileItem {
   words?: number;
   status?: string;
   date?: string;
-  /** 按 input/.ingestignore 命中被忽略：不算待转换。旧服务进程没有这个字段。 */
-  ignored?: boolean;
   /**
-   * 只在 `input.raw` 条目上：`converted` 有对应产物 / `pending` 待转 / `ignored` 命中忽略规则。
-   * 判定在服务端（与 `pending`、`ignored` 同一口径），前端不拿 raw 与 pending 求差。
+   * 只在 `input.raw` 条目上：`converted` 有对应产物 / `pending` 待转。
+   * 判定在服务端（与 `pending` 同一口径），前端不拿 raw 与 pending 求差。
    * 可选：旧服务进程没有，缺了「原始资料」退回只列待转、不显示标签（改动前的行为）。
+   * 运行时旧进程仍可能给字符串 `ignored`，前端读成 string 再比对，按待转显示。
    */
-  state?: 'converted' | 'pending' | 'ignored';
+  state?: 'converted' | 'pending';
   /** 只在 `input.raw` 条目上：有产物，但原件在转换后改过（同产物的 sourceState === 'stale'） */
   stale?: boolean;
   /** 一条标注都没有时服务端不返回；旧服务进程也没有。缺了就什么都不显示。 */
@@ -132,7 +131,11 @@ export interface RawOrganizePlan {
   files: RenameFileChange[];
   /** 台账表格里改了几行 */
   indexRows: number;
-  ignore: {
+  /**
+   * 旧版 `move_raw.py` 才会给：改写 `input/.ingestignore` 的计划。
+   * 新脚本不再读那份文件，前端也不渲染。缺了照常显示预览。
+   */
+  ignore?: {
     rewritten: { from: string; to: string }[];
     /** 规则是被移动项的上级目录、移出去后不再命中：追加的新路径 */
     added: string[];
@@ -605,7 +608,7 @@ export interface Scan {
     pending: FileItem[];
     indexPath: string;
     /**
-     * 工作空间里有 scripts/ingest.py 时为 true，前端才显示「开始转换」按钮。
+     * 工作空间里有 scripts/ingest.py 时为 true，行内和目录才给转换。
      * 可选：旧服务进程没有这个字段时退回纯文字提示（改动前的行为）。
      */
     canIngest?: boolean;
@@ -639,11 +642,6 @@ export interface Scan {
       converted: number;
       assets: number;
       pending: number;
-      /**
-       * 按 input/.ingestignore 忽略的份数：不算待转换，但仍计入 raw 总量。
-       * 可选：旧服务进程没有这个字段，缺了就不显示这一项。
-       */
-      ignored?: number;
       warnings: number;
       /** 原件已不在 / 原件转换后动过的产物份数。可选：旧服务进程没有这两个字段，缺了就不显示。 */
       orphaned?: number;
@@ -1983,7 +1981,7 @@ export const api = {
     }),
   /**
    * 触发工作空间 scripts/ingest.py；立刻返回，进度用 ingestStatus 轮询。
-   * targetPath 有值时只转它（input/raw/ 下的文件或目录）；缺省转整个 input/raw/。
+   * targetPath 必须是 input/raw/ 下的文件或子目录。空路径和 input/raw 根本身服务端返回 400，不启动转换。
    * 注意目录是后加的：旧服务进程对目录会返回 400「请指定一个文件，不要指定目录」，
    * 前端把这句原样显示出来即可（不是白屏，也不需要前端自己判断能不能转目录）。
    */
@@ -2032,12 +2030,6 @@ export const api = {
     request<WebIngestJob>(`/api/projects/${id}/web-ingest`, { method: 'POST' }),
   webIngestStatus: (id: string) => request<WebIngestJob>(`/api/projects/${id}/web-ingest`),
   /**
-   * 把 input/raw/ 下的文件或目录写进 input/.ingestignore，不再算待转换。
-   * 文件还在磁盘上，只是看板和 ingest.py 一起跳过它。
-   * already = 清单里已有这条（或更宽的目录）时没再追加。
-   * 旧服务进程没有这个接口，request 会带上「重启 serve」的提示。
-   */
-  /**
    * 贴 URL 采集（plane: 'reference'）或导入云端原型（plane: 'prototype'）。
    * 立刻返回 running，进度用 captureStatus 轮询；落盘由 visualization/ 的 SSE 捕获，清单自己刷新。
    *
@@ -2051,21 +2043,6 @@ export const api = {
       body: JSON.stringify({ plane, url }),
     }),
   captureStatus: (id: string) => request<CaptureJob>(`/api/projects/${id}/capture`),
-  addIgnore: (id: string, targetPath: string) =>
-    request<{ ok: boolean; pattern: string; already?: boolean }>(`/api/projects/${id}/ignore`, {
-      method: 'POST',
-      body: JSON.stringify({ path: targetPath }),
-    }),
-  /**
-   * 解除忽略：删掉 input/.ingestignore 里字面对得上的行（目录连同其下的行）。
-   * 被上级目录或通配符规则忽略的删不到，409 带着该去哪解除的说明，原样显示即可。
-   * 旧服务进程没有这个接口，request 会带上「重启 serve」的提示。
-   */
-  removeIgnore: (id: string, targetPath: string) =>
-    request<{ ok: boolean; removed: string[] }>(`/api/projects/${id}/unignore`, {
-      method: 'POST',
-      body: JSON.stringify({ path: targetPath }),
-    }),
   /**
    * 预览批注历史。有产出物记录时读工作空间 `output/records/notes/I<编号>.md`，
    * 没有记录时退回看板缓存 `~/.pmwork/dashboard/note-history/`，两边合并。

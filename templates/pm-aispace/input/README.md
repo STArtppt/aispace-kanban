@@ -6,11 +6,11 @@
 
 ```bash
 cp ~/Downloads/*.docx ~/Downloads/*.xlsx input/raw/   # 原样丢进来，不用整理
-python3 scripts/ingest.py                             # 转换
+python3 scripts/ingest.py input/raw/需求规格.docx      # 转这一份；目录就写目录
 ```
 
-不用手动分类、不用改文件名、不用先删掉没用的——先全部进来，`INDEX.md` 会列出清单，
-之后再判断哪些是权威版本。
+不用手动分类、不用改文件名。命令必须带要转的文件或目录；`python3 scripts/ingest.py --dry-run`
+只打印计划、不写文件。`INDEX.md` 会列出已转的清单，之后再判断哪些是权威版本。
 
 ## 子目录与转换产物
 
@@ -68,10 +68,10 @@ Token 在 <https://mineru.net/apiManage> 创建。`.env` 已在 `.gitignore` 里
 **没配 key 也能用**：PDF 走本地 anydoc。想明确控制用哪个引擎：
 
 ```bash
-python3 scripts/ingest.py --pdf-engine anydoc       # 强制本地，不外发文件（也是默认）
-python3 scripts/ingest.py --pdf-engine mineru       # 强制在线（没 key 会明确报错）
-python3 scripts/ingest.py --ocr                     # 扫描版 PDF，让 MinerU 走 OCR
-python3 scripts/ingest.py --model-version vlm       # 版式特别复杂时换模型试试
+python3 scripts/ingest.py --pdf-engine anydoc input/raw/说明.pdf       # 强制本地，不外发文件（也是默认）
+python3 scripts/ingest.py --pdf-engine mineru input/raw/说明.pdf       # 强制在线（没 key 会明确报错）
+python3 scripts/ingest.py --ocr input/raw/扫描件.pdf                   # 扫描版 PDF，让 MinerU 走 OCR
+python3 scripts/ingest.py --model-version vlm input/raw/说明.pdf       # 版式特别复杂时换模型试试
 ```
 
 MinerU 的实际限制：单文件 200MB / 200 页，免费额度 1000 页/天，一批最多 200 个文件。
@@ -110,7 +110,6 @@ sqlite3 output/converted/集控点表/MergedObject/测点.sqlite \
 ```
 
 `ingest.py` 识别到点表就让路；点表目录里的普通表格仍由 `ingest.py` 按 sheet 转 CSV。
-整个目录被 `.ingestignore` 忽略时 `pointtable.py` 直接跳过，不逐个读文件头。
 
 **边界**：只做格式归一，**不做**设备树绑定、间隔匹配、测点编码生成（那些依赖每个厂站的解析规则表，
 属于工程侧数据接入）。分段型点表的「设备名」是启发式推断的，写进正式文档前按解析规则核对并标 `[推断]`。

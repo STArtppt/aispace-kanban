@@ -12,9 +12,13 @@ description: 把人类可读的项目资料（docx / PDF / xlsx / pptx / html �
 ## 先转换
 
 ```bash
-python3 scripts/ingest.py --dry-run   # 资料多或来源杂时，先看计划
-python3 scripts/ingest.py             # 实际转换（幂等，只处理有变化的）
+python3 scripts/ingest.py --dry-run                    # 资料多或来源杂时，先看全部计划，不写文件
+python3 scripts/ingest.py input/raw/某目录              # 实际转换（幂等，只处理有变化的）
+python3 scripts/ingest.py input/raw/某目录/说明.docx    # 只转这一份
 ```
+
+不带路径、又不是 `--dry-run` 时脚本拒绝运行，不会把 `input/raw/` 全部转掉。
+要转整个 `input/raw/` 必须把这个路径写在命令里。看板一次只转用户点的那一份或那一个目录。
 
 脚本按格式分派：
 
@@ -128,7 +132,7 @@ PPTX  维持 MinerU；没 key 时兜底 anydoc
 
 几个需要你判断的情况：
 
-- **扫描版 PDF** → 默认就会自动升级；也可以加 `--ocr --force` 重跑：`python3 scripts/ingest.py --ocr --force`
+- **扫描版 PDF** → 默认就会自动升级；也可以加 `--ocr --force` 重跑：`python3 scripts/ingest.py --ocr --force input/raw/扫描件.pdf`
 - **要抽图、要公式、版式特别复杂**（多栏、跨页大表、图文混排还原乱） → `--pdf-engine mineru`，复杂版式再加 `--model-version vlm`
 - **资料涉密** → 默认的 anydoc 就是本地处理，不用再加开关。**只有 `--pdf-engine mineru` 或扫描件升级才会把文件上传到 MinerU 服务器**。
   但**先确认脚本开头没有喊「找不到本地 anydoc」** —— 喊了就说明这轮会走 MinerU，
@@ -190,7 +194,7 @@ MinerU 单文件上限 200MB / 200 页，超限脚本在上传前就会拦住并
 
 ## 增量资料
 
-对方后续补发资料是常态。直接把新文件丢进 `input/raw/` 重跑脚本即可，
+对方后续补发资料是常态。把新文件丢进 `input/raw/` 后，用那份文件或它所在目录的路径重跑脚本即可，
 没变化的文件会跳过。重点是判断新资料**是否推翻了已有结论**：
 
 - 新版本覆盖了旧文档 → 更新台账的权威版本批注，并检查 `output/` 里受影响的分析和文档

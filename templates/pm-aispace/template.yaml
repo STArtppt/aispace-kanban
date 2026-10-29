@@ -13,13 +13,12 @@ sync:
   seedOnly:
     - project.yaml
     - .gitignore
-    - input/.ingestignore
     - .claude/skills/pm-deai-writing/rules/**
   # 不分发
   exclude:
     - template.yaml
     - visualization/**
-    # input/ 只铺 README.md 和 .ingestignore；下面这些是示例和占位，目录由铺设脚本现建
+    # input/ 只铺 README.md；下面这些是示例和占位，目录由铺设脚本现建
     - input/raw/**
     - input/converted/**
     - output/converted/**

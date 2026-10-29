@@ -32,9 +32,8 @@ input/raw/需求规格说明书.docx
 input/raw/站点数据/闸门底坎库容.xlsx
 ```
 
-`input/raw/` 是**溯源的终点**，进去之后就别再改它。用不上的资料不必删，
-在「原始资料」列表那一行的「更多」里点「忽略此文件 / 忽略此目录」，它就不再算缺口
-（写进 `input/.ingestignore`，文件本身还在）。
+`input/raw/` 是**溯源的终点**，进去之后就别再改它。用不上的资料留在原地，
+转换时只点要转的那一份或那个目录。
 
 **网页**：政策文件、公开标准、友商文档站这类网页资料，让 AI 跑工作空间的
 `scripts/web_ingest.py <URL>`，正文会转成 Markdown 落进 `output/converted/`，带溯源。
@@ -67,7 +66,7 @@ input/raw/站点数据/闸门底坎库容.xlsx
 「添加 API Key」，填 `MINERU_API_KEY` 和值，点「复制 prompt 给 AI」，粘给 AI 让它写进工作空间的 `.env`。
 也可以自己照着 `.env.example` 在工作空间根目录建 `.env`。
 
-> 在终端里自己跑 `python3 scripts/ingest.py` 时，如果开头出现
+> 在终端里自己跑 `python3 scripts/ingest.py <文件或目录>` 时，如果开头出现
 > **「⚠ 找不到本地 anydoc」**，说明这轮 PDF 会被传出去。先起一次看板（它会把自带
 > anydoc 的位置记到 `{{configDir}}/runtime.json`，脚本自己会去读），或者
 > `npm i -g @firecrawl/anydoc`。涉密资料看到这句先停下。
@@ -75,8 +74,8 @@ input/raw/站点数据/闸门底坎库容.xlsx
 ## 4 · 转换文档
 
 「输入资料」分四个 tab：**原始资料**（还没转的）、**转换产物**、**图片资料**，
-配过数据源时还有**数据库源**。在「原始资料」点「开始转换」一次处理全部，
-某一行点「转成AI易读」只转那一份。转完你会得到：
+配过数据源时还有**数据库源**。在「原始资料」某一行点「转成AI易读」只转那一份，
+目录行点「转这一整个目录」转这个目录。不提供一次转完全部。转完你会得到：
 
 - `output/converted/` —— 目录结构与 `raw/` 一一对齐的 `.md` / `.csv`，
   每份都带溯源 frontmatter（来自哪个源文件、什么工具、什么时候转的）；
@@ -314,8 +313,7 @@ AI 也读得到；还没有记录时暂存在看板缓存里，让 AI 建一份�
 
 | 你点的 | 谁写 | 写哪里 |
 | --- | --- | --- |
-| 转换资料 | 工作空间的 `scripts/ingest.py` | `output/converted/` |
-| 忽略此文件 / 目录 | 看板 | 往 `input/.ingestignore` 追加一行 |
+| 转换资料 | 工作空间的 `scripts/ingest.py` | `output/converted/`（只转你点的那一份或那个目录） |
 | 刷新 schema | 工作空间的 `scripts/db_ingest.py` | `output/converted/_sources/` |
 | 贴 URL 采集 | 看板 | `visualization/references/` `visualization/prototypes/` 下**新建**目录 |
 | 刷新收件箱 | 工作空间的 `scripts/web_ingest.py` | 散装页面收成新参考目录，正文进 `output/converted/` |

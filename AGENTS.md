@@ -37,11 +37,9 @@
    - 资料转换:spawn 工作空间的 `scripts/ingest.py`(`http.mjs` 的 `startIngest`)。
      脚本读 `input/raw/`,产物写 `output/converted/`(旧布局工作空间是 `input/converted/`,
      产物还在旧位置时新脚本拒绝写,先由人跑模板的一次性迁移脚本;看板不 spawn 迁移,也不提供按钮)。
-     `ANYDOC_BIN` 由看板注入本地 anydoc 路径,解析不到就不注入(脚本走 PATH)
-   - 忽略待转换资料:追加 `input/.ingestignore`(`http.mjs` 的 `addIgnore`)。只追加一行模式,不改原件;
-     解除忽略(`removeIgnore`)只删**字面**等于该文件 / 目录模式的行,目录连同字面落在其下的行;
-     注释、通配符与上级目录规则不动(删不到就 409 说明去哪解除),先写临时文件再原子替换。
-     这份文件是看板与 ingest.py 的共用约定,不经脚本
+     `ANYDOC_BIN` 由看板注入本地 anydoc 路径,解析不到就不注入(脚本走 PATH)。
+     请求必须带 `input/raw/` 下的文件或子目录;空路径和 `input/raw` 根本身 400,不 spawn。
+     看板不一次转换全部资料。实例里留下的 `input/.ingestignore` 不读、不改、不再生效
 
    **第二条 · 采集视觉材料**(`capture.mjs` 的 `writeCaptureDir`,直写):
    ① 只写 `visualization/references/<slug>/` 与 `visualization/prototypes/<slug>/`;
@@ -185,8 +183,8 @@
       执行时带预览指纹(含被移动子树的文件、大小、修改时间),脚本重算不符就退出 3(409),**服务端不存预览状态**;
    ⑤ 脚本只做:在 `input/raw/` 内改名或移动(原件字节不动);把对应转换产物搬到 `layout.py` 算出的新镜像位置,改写其
       `source` / `sources` / `payload` / `preview` 与因换目录失效的相对链接(含指向 `input/assets/` 的图片,图片不动);
-      改写台账表格里对得上的行(「人工批注」只改解析后指向旧路径的链接);`.ingestignore` 里字面命中的规则改前缀、
-      上级目录规则移出后追加一行新路径,只靠通配符命中的不改、在预览里单列;`output/**` 的 `.md` / `.yaml` / `.yml`、
+      改写台账表格里对得上的行(「人工批注」只改解析后指向旧路径的链接);遗留的 `input/.ingestignore` 不读、不改;
+      `output/**` 的 `.md` / `.yaml` / `.yml`、
       `output/docx-template/**` 的 `.json`(只改整值)、根 `project.yaml` 与 `input/assets/未分类/_manifest.md` 里解析后指向旧路径的写法改成新路径;
       交付稿 `v*.md` 只改 front-matter,记录「## 状态流水」不改;内容因此变了的原稿,交付稿 `source_sha` 换新(复用第十一条的规则);
       **不碰** `input/assets/` 的文件、`input/sources/`、`output/delivery/` 的 `.docx`(产物换位置后显示「未转 Word」)、`visualization/`、`.claude/`;

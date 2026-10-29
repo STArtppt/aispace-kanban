@@ -57,7 +57,7 @@ function refreshRuntimeInstances() {
  * 把「这台机器上的看板运行时信息」落到本机配置目录，供**工作空间脚本**反查。
  *
  * 为什么需要：看板 spawn ingest.py 时会注入 ANYDOC_BIN，所以从界面点「转换」永远
- * 找得到本地 anydoc。但 agent / 用户在终端里直接跑 `python3 scripts/ingest.py` 时
+ * 找得到本地 anydoc。但 agent / 用户在终端里直接跑 `python3 scripts/ingest.py <文件或目录>` 时
  * 没有这层注入，脚本只能找 PATH——找不到就退回 MinerU（要外发文件），
  * 或者 .doc / .ppt 直接转不了。工作空间又无从知道看板装在哪。
  *

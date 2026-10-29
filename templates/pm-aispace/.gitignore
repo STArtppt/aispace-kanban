@@ -37,7 +37,7 @@ visualization/prototypes/*
 # ---- input/：原件、图片、数据源配置整目录不入库 ----
 # 原件常常涉密、体积大；图片由转换脚本从原件抽出，重跑即可重建；
 # input/sources/*.yaml 是数据源连接形状，跟着本机环境走。只留占位和两份说明。
-# input/INDEX.md、input/README.md、input/.ingestignore 继续入库（不在下面三个目录里）。
+# input/INDEX.md、input/README.md 继续入库（不在下面三个目录里）。
 input/raw/*
 !input/raw/.gitkeep
 input/assets/*
