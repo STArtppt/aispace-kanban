@@ -45,7 +45,7 @@
 模板 `.gitignore` SHALL 整目录忽略 `input/raw/*`、`input/assets/*`、`input/sources/*`，并只放行 `.gitkeep`、`input/sources/README.md`、
 `input/sources/example.yaml.txt`；SHALL 删除原来按扩展名列举的 `input/**/*.<扩展名>` 规则；
 SHALL 对 `output/converted/**` 忽略同一组大体积二进制 / 表格扩展名（csv、sqlite、db、sql、Office 文件、pdf、zip），
-`_manifest*.md` 与普通 `.md` 产物仍入库。`input/INDEX.md`、`input/README.md`、`input/.ingestignore` 仍入库。
+`_manifest*.md` 与普通 `.md` 产物仍入库。`input/INDEX.md`、`input/README.md` 仍入库。
 `output/` 其余目录与 `visualization/` 的规则不变。
 
 #### Scenario: 新工作空间提交
