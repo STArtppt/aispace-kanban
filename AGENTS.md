@@ -339,6 +339,7 @@ aispace-kanban/
 
 - **令牌唯一源头 `src/app/styles/globals.css`**;组件里不硬编码色值,不用 `zinc-*` / `stone-*` 原始色阶。
 - **黑白灰为主。orange(`--destructive`)只用于"需要注意"**(待转换资料、内容存疑、目录丢失)。
+- **唯一的彩色例外:两版文本对比(`DiffView`)用 `--diff-*` 令牌的绿增红删**(git 习惯)。只在对比视图里用,不拿去做别处的强调。
 - 层级靠边框和灰底,不靠阴影。详见 [`design-tokens`](.claude/skills/design-tokens/SKILL.md)。
 
 ### 5.5 兼容性(常驻服务特有,最容易踩)

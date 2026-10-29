@@ -982,6 +982,8 @@ interface ReaderBodyExtras {
   topBar?: ReactNode;
   /** 给了就替换掉正文区（交付稿对比视图） */
   replaceBody?: ReactNode;
+  /** 替换正文放宽到约两倍正文宽（交付稿对比是双栏，76ch 两边各一半太挤） */
+  wideBody?: boolean;
   /** 每变一次就打开批注模式（从工作台跳进来） */
   annotateSignal?: number;
   /** 顶栏铅笔从关切到开之前调一次：交付稿要先退出对比视图，正文回来了批注才看得见 */
@@ -1033,6 +1035,7 @@ function ReaderBody({
   onBack,
   topBar,
   replaceBody,
+  wideBody = false,
   annotateSignal = 0,
   onAnnotateStart,
   annotateDisabledReason,
@@ -1435,7 +1438,7 @@ function ReaderBody({
       */}
       {replaceBody ? (
         <div className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-6 sm:py-5">
-          <div className="mx-auto w-full max-w-[76ch]">{replaceBody}</div>
+          <div className={cn('mx-auto w-full', wideBody ? 'max-w-[160ch]' : 'max-w-[76ch]')}>{replaceBody}</div>
         </div>
       ) : mode === 'markdown' ? (
         <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -2057,11 +2060,19 @@ function DeliveryReader({
         replaceBody={listPending ? (
           <div aria-busy="true" className="min-h-[40vh]" />
         ) : compare && !previewing && onFinal && final ? (
-          <DeliveryDiff
-            projectId={projectId}
-            left={latest ? { path: latest.path, label: latest.version } : { path: item.path, label: '原稿' }}
-            right={{ path: final.path, label: '定稿' }}
-          />
+          (() => {
+            // 谁更新谁放右边：定稿之后又改出了新版本，就是「定稿 → 新版」。时间缺失或解析不了时维持定稿在右
+            const other = latest
+              ? { path: latest.path, label: latest.version, time: latest.mtime || latest.created }
+              : { path: item.path, label: '原稿', time: item.mtime };
+            const finalSide = { path: final.path, label: '定稿' };
+            const otherNewer = Date.parse(other.time ?? '') > Date.parse(final.finalizedAt);
+            return otherNewer ? (
+              <DeliveryDiff projectId={projectId} left={finalSide} right={other} />
+            ) : (
+              <DeliveryDiff projectId={projectId} left={other} right={finalSide} />
+            );
+          })()
         ) : compare && compare !== 'final' && !previewing && current ? (
           <DeliveryDiff
             projectId={projectId}
@@ -2072,6 +2083,7 @@ function DeliveryReader({
             right={{ path: current.path, label: current.version }}
           />
         ) : undefined}
+        wideBody={!listPending && Boolean(compare) && !previewing}
         annotateSignal={annotateSignal}
         onAnnotateStart={() => setCompare(null)}
         annotateDisabledReason={onFinal

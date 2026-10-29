@@ -17,6 +17,8 @@ description: 在 aispace-kanban 中改动颜色 / 字体 / 圆角 / 深色模式
 2. **orange(`--destructive`)只用于"需要注意"。** 在这个看板里就是:
    待转换资料、内容存疑(frontmatter 的 `warning`)、登记目录丢失。
    **不是**"删除"的专属色,也**不是**强调色。除此之外的地方一律不上彩色。
+   **唯一例外**:两版文本对比(`components/DiffView.tsx`)用 `--diff-add*` / `--diff-del*` 的绿增红删,
+   这是用户点名要的 git 式对比;红降了饱和、hue 取 20,和 orange 拉开。这组令牌只准用在对比视图里。
 3. 想加新颜色 = 想违反第 1 条。先停下来问人;要加也只能加进 `globals.css` 的变量层,
    并在注释里写清用途。
 

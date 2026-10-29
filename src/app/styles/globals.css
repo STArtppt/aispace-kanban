@@ -18,6 +18,12 @@
     --color-muted-foreground: var(--muted-foreground);
     --color-muted: var(--muted);
     --color-selected: var(--selected);
+    --color-diff-add: var(--diff-add);
+    --color-diff-add-strong: var(--diff-add-strong);
+    --color-diff-add-edge: var(--diff-add-edge);
+    --color-diff-del: var(--diff-del);
+    --color-diff-del-strong: var(--diff-del-strong);
+    --color-diff-del-edge: var(--diff-del-edge);
     --color-secondary-foreground: var(--secondary-foreground);
     --color-secondary: var(--secondary);
     --color-primary-foreground: var(--primary-foreground);
@@ -56,6 +62,17 @@
     --selected: oklch(0.925 0 0);
     --destructive: oklch(0.646 0.222 41.116);
     --destructive-foreground: oklch(0.985 0 0);
+    /*
+     * 对比视图专用（DiffView）：沿用 git 的绿增红删，是「黑白灰」之外唯一的彩色例外。
+     * 只准用在两版文本对比里，别拿去当强调色。红取 hue 20、降饱和，和 orange（41，需要注意）拉开。
+     * 三档：整段底色 / 段内改动的字 / 左边线与 +− 记号。
+     */
+    --diff-add: oklch(0.965 0.03 150);
+    --diff-add-strong: oklch(0.89 0.08 150);
+    --diff-add-edge: oklch(0.6 0.14 150);
+    --diff-del: oklch(0.965 0.02 20);
+    --diff-del-strong: oklch(0.89 0.06 20);
+    --diff-del-edge: oklch(0.58 0.16 20);
     --border: oklch(0.922 0 0);
     --input: oklch(0.922 0 0);
     --ring: oklch(0.708 0 0);
@@ -80,6 +97,12 @@
     --selected: oklch(0.34 0 0);
     --destructive: oklch(0.705 0.213 47.604);
     --destructive-foreground: oklch(0.145 0 0);
+    --diff-add: oklch(0.25 0.04 150);
+    --diff-add-strong: oklch(0.37 0.08 150);
+    --diff-add-edge: oklch(0.72 0.14 150);
+    --diff-del: oklch(0.25 0.035 20);
+    --diff-del-strong: oklch(0.37 0.08 20);
+    --diff-del-edge: oklch(0.7 0.14 20);
     --border: oklch(1 0 0 / 10%);
     --input: oklch(1 0 0 / 15%);
     --ring: oklch(0.439 0 0);
