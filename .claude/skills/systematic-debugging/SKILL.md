@@ -25,6 +25,7 @@ description: 在 aispace-kanban 中定位 / 修复任何 bug、类型报错、�
 | --- | --- | --- |
 | `未知接口:/api/...`(404) | **服务进程比代码旧** —— 改了 `src/server/**` 没重启 | 重启 `pnpm dev` / `pnpm serve` 再试;`api.ts` 的 `request` 已就此加了提示 |
 | 文件改名 / 移动后阅读器的交付稿条消失、「转成 Word」报「找不到这份 .md」 | **前端还拿着旧路径的 `docKey`** —— 键是相对路径的摘要,路径一变服务端就认不出 | 看请求里的 `docKey` 是不是新扫描下发的;改名后要等新扫描、换成扫描里的条目(`OutputPanel` 的 `followPath`),别在前端拼条目沿用旧键 |
+| 转换产物「更多」里的「复制到…」置灰 | 悬停提示分三种：**旧服务进程**没给 `output.canCopyConverted`(重启 `pnpm dev`);**工作空间没有 `scripts/copy_converted.py`**(`canCopyConverted: false`,让工作空间 AI 走 `pm-template-update` 更新模板);工作空间目录找不到了。`.csv` / 目录型产物本来就没有这一项,不是 bug | `curl -s "localhost:7788/api/projects/<id>/scan"` 看 `output.canCopyConverted`,和该条有没有 `docKey`;只有单文件 `.md` 有键 |
 | 界面上某块空白 / `undefined` | **服务端没真的产出这个字段** | `curl -s "localhost:7788/api/projects/<id>/scan"` 看原始返回,别信 type |
 | 整页白屏 / 报 `cannot read property of undefined` | 前端把**可选字段当必填**用了 | 看该字段在 `api.ts` 里是不是 `?`,前端有没有兜底 |
 | 界面改了没变化 | 非 dev 模式的 serve 伺服 `dist/` | `pnpm build`;或改用 `pnpm dev` 开 5180 |

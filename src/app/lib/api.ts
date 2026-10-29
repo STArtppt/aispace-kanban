@@ -152,6 +152,37 @@ export interface RenameResult extends RenamePlan {
   failed?: string[];
 }
 
+/** 转换产物「复制到…」的目标组：只有产出三组 */
+export type ConvertedCopyGroup = 'analysis' | 'decisions' | 'docs';
+
+/**
+ * POST /api/projects/:id/converted-copy/preview 与 /converted-copy 的请求体。
+ * **只带 docKey（种类 converted-md）与组名**，多一个字段服务端就 400。
+ */
+export interface ConvertedCopyRequest {
+  docKey: string;
+  group: ConvertedCopyGroup;
+}
+
+/** 预览结果（`copy_converted.py --dry-run --json`）。冲突时 conflict 为 true，不报错 */
+export interface ConvertedCopyPlan {
+  ok: true;
+  source: string;
+  group: ConvertedCopyGroup;
+  /** 落点：`output/<组>/<来源相对转换产物根的路径>` */
+  target: string;
+  /** 按新位置重算的链接处数；指向 input/ 的图片同深度不用改，不算在内 */
+  rewrittenLinks: number;
+  conflict: boolean;
+  /** 占着落点的已存在路径（落点本身，或中间某一段是个文件）；没冲突时为空串 */
+  conflictPath: string;
+}
+
+/** 执行结果：形状同预览，conflict 恒为 false（冲突时接口 409） */
+export interface ConvertedCopyResult extends ConvertedCopyPlan {
+  copiedAt: string;
+}
+
 export interface ConvertedItem extends FileItem {
   isDir: boolean;
   /**
@@ -573,6 +604,11 @@ export interface Scan {
      * 可选：旧服务进程没有这个字段 —— 和归档不同，这时也置灰（弹窗一开就要调预览接口，旧进程会 404）。
      */
     canRename?: boolean;
+    /**
+     * 工作空间里有 scripts/copy_converted.py 时为 true。false 时转换产物的「复制到…」置灰并提示更新模板。
+     * 可选：旧服务进程没有这个字段 —— 同样置灰，提示重启看板服务（弹窗一开就要调预览接口，旧进程会 404）。
+     */
+    canCopyConverted?: boolean;
   };
   /**
    * visualization/references/ 的参考清单。
@@ -1701,6 +1737,24 @@ export const api = {
    */
   renameOutput: (id: string, body: RenameRequest & { plan: string }) =>
     request<RenameResult>(`/api/projects/${id}/rename`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 转换产物复制预览：服务端 spawn `scripts/copy_converted.py --dry-run`，磁盘不变。
+   * 落点已存在时照常 200，看 `conflict`；400 = 组名不合法、键查不到或工作空间没有脚本。
+   */
+  convertedCopyPreview: (id: string, body: ConvertedCopyRequest) =>
+    request<ConvertedCopyPlan>(`/api/projects/${id}/converted-copy/preview`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /**
+   * 执行复制：只新建一个 .md，落点已存在 409（kind `conflict`），不覆盖。
+   * 看板自己不写盘（不变量 1 第十二条窄例外），错误信息是脚本原话。
+   */
+  convertedCopy: (id: string, body: ConvertedCopyRequest) =>
+    request<ConvertedCopyResult>(`/api/projects/${id}/converted-copy`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),

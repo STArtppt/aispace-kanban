@@ -315,6 +315,8 @@ GitHub 的 `main` 可能与用户本机版本有出入，对不上时如实说�
 
 - **不要主动读 `input/raw/`**（除非用户明确说「打开原件」「对照原始 PDF」）。一律优先 `output/converted/` 和 `input/INDEX.md`。
 - 不要修改或删除 `input/raw/` 里的任何文件；不要手改 `output/converted/` 的产物或在里面手建目录。
+  想基于某份转换产物继续写，用看板「产出文档 → 转换产物 → 更多 → 复制到…」（终端里是 `scripts/copy_converted.py`，先 `--dry-run`），
+  复制件落进 `output/<组>/` 同样的子目录、图片链接不断；不要直接改 converted 里那份，也不要移走它（下次转换会再生成一份）。
 - **不要把大表整个读进上下文**（现场数据 csv / sqlite 事实表、`测点主表.csv`），走 SQL。
 - 不要把散装 `.html` 扔在 `visualization/prototypes/` 或 `references/` 根上，不要动 Axhub Make 生成的目录。
 - 不要把 `.env` 或其中的 key 写进任何会入库的文件、日志或文档。

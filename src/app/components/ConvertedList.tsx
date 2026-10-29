@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AppWindow, CodeXml, Copy, FileText, Image, PencilLine, RefreshCw, Star, StarOff, Table } from 'lucide-react';
+import { AppWindow, CodeXml, Copy, CopyPlus, FileText, Image, RefreshCw, Star, StarOff, Table } from 'lucide-react';
 import { EmptyState, ListPager, Row, RowActions, writeClipboard } from '@/components/Primitives';
 import { DirActions, FileTree, type ViewMode } from '@/components/FileTree';
 import { codePreviewLanguage } from '@/components/CodeFileView';
@@ -74,6 +74,19 @@ function convertedTreePath(item: ConvertedItem, hasAnySource: boolean): string {
   return cut > 0 ? `${rel.slice(0, cut)}/${item.name}` : item.treePath || item.name;
 }
 
+/**
+ * 「复制到…」能不能用：`missing` = 工作空间目录不见了；undefined = 旧服务进程没给字段。
+ * 能点时返回空串。只对带 docKey 的单文件 .md 有意义，调用方先判断 docKey。
+ */
+export type CanCopyConverted = boolean | 'missing' | undefined;
+
+function copyBlockedReason(canCopy: CanCopyConverted): string {
+  if (canCopy === 'missing') return '工作空间目录找不到了，重新关联之后才能复制';
+  if (canCopy === undefined) return '看板服务是旧版本，重启后可用';
+  if (canCopy === false) return '这个工作空间没有复制脚本 scripts/copy_converted.py，更新模板后可用';
+  return '';
+}
+
 function ConvertedRow({
   item,
   indent,
@@ -87,6 +100,8 @@ function ConvertedRow({
   ingestRunning,
   ingestingPath,
   onIngest,
+  canCopy,
+  onCopy,
 }: {
   item: ConvertedItem;
   /** 树形视图里的层级；列表视图不传 */
@@ -102,7 +117,10 @@ function ConvertedRow({
   ingestRunning: boolean;
   ingestingPath: string;
   onIngest: (filePath: string) => void;
+  canCopy: CanCopyConverted;
+  onCopy: (item: ConvertedItem) => void;
 }) {
+  const copyBlocked = copyBlockedReason(canCopy);
   // 原件动过才给「重新转换」：原件已不在（missing）重转不了，没动过也没必要重跑一遍。
   // ingest.py 按 sha256 幂等，对着原件再跑一次就会重出这份产物。
   const canReconvert = canIngest && item.sourceState === 'stale' && Boolean(item.source);
@@ -164,14 +182,18 @@ function ConvertedRow({
               void writeClipboard(absPath(item.path));
             },
           },
-          // 只为说明：转换产物改了名，下次转换还会按原件名再生成一份
-          {
-            label: '重命名',
-            icon: PencilLine,
-            disabled: true,
-            hint: '转换产物由资料转换生成，改名后下次转换会再生成一份旧名的；要改名请改 input/raw/ 里的原件',
-            onSelect: () => undefined,
-          },
+          // 只有单文件 .md（带 docKey，与「转成 Word」同一批）能复制进产出三组；转换产物不提供改名
+          ...(item.docKey
+            ? [
+                {
+                  label: '复制到…',
+                  icon: CopyPlus,
+                  disabled: Boolean(copyBlocked),
+                  hint: copyBlocked || undefined,
+                  onSelect: () => onCopy(item),
+                },
+              ]
+            : []),
         ]}
       />
     </Row>
@@ -264,6 +286,8 @@ export function ConvertedList({
   ingestRunning,
   ingestingPath,
   onIngest,
+  canCopy,
+  onCopy,
 }: {
   items: ConvertedItem[];
   hasOutputs: boolean;
@@ -280,6 +304,8 @@ export function ConvertedList({
   ingestRunning: boolean;
   ingestingPath: string;
   onIngest: (filePath: string) => void;
+  canCopy: CanCopyConverted;
+  onCopy: (item: ConvertedItem) => void;
 }) {
   const fileManager = useFileManagerName();
   const { pins, togglePin } = usePins(projectId);
@@ -363,6 +389,8 @@ export function ConvertedList({
               ingestRunning={ingestRunning}
               ingestingPath={ingestingPath}
               onIngest={onIngest}
+              canCopy={canCopy}
+              onCopy={onCopy}
             />
           )}
         />
@@ -382,6 +410,8 @@ export function ConvertedList({
               ingestRunning={ingestRunning}
               ingestingPath={ingestingPath}
               onIngest={onIngest}
+              canCopy={canCopy}
+              onCopy={onCopy}
             />
           ))}
           <ListPager

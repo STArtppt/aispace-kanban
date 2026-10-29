@@ -1258,6 +1258,68 @@ async function runRename(project, body, { apply }) {
   }
 }
 
+const COPY_TIMEOUT_MS = 30 * 1000;
+const COPY_GROUPS = ['analysis', 'decisions', 'docs'];
+const COPY_BODY_KEYS = new Set(['docKey', 'group']);
+
+/**
+ * 转换产物复制请求的校验，**在起脚本之前**全部做完。请求只带 `{ docKey, group }`，多一个字段都 400：
+ * 组名三选一；键只在 `converted-md`（转换产物根下的单文件 .md）里反查，产出的键换不来路径。
+ * 来源形状、冲突这类要看磁盘的判断留给脚本（两边各拦一次）。
+ */
+function resolveCopyTarget(root, body) {
+  const bad = (message, kind = 'invalid') => {
+    const err = new Error(message);
+    err.statusCode = 400;
+    err.kind = kind;
+    return err;
+  };
+  if (!body || typeof body !== 'object' || Array.isArray(body)) throw bad('请求体必须是 { docKey, group }。');
+  const extra = Object.keys(body).filter((k) => !COPY_BODY_KEYS.has(k));
+  if (extra.length) throw bad(`请求里不认识这些字段：${extra.join('、')}。只收 docKey 和 group，不收路径。`);
+  const group = typeof body.group === 'string' ? body.group : '';
+  if (!COPY_GROUPS.includes(group)) {
+    throw bad(`只能复制到 ${COPY_GROUPS.join(' / ')} 三组之一，收到的组名是：${group || '(空)'}`);
+  }
+  const relPath = findDocByKey(root, 'converted-md', body.docKey);
+  if (!relPath) throw bad('在转换产物里找不到这份 .md（列表可能已经变了），刷新后再试。', 'stale-key');
+  resolveInside(root, relPath);
+  return { relPath, group };
+}
+
+/**
+ * 转换产物复制到产出：spawn 工作空间的 scripts/copy_converted.py（**AGENTS.md 不变量 1 第十二条窄例外**）。
+ * 看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；复制、重算链接、留痕都是脚本做的。
+ * 预览（`--dry-run`）与执行（`--apply`）是同一支脚本的两种模式，不带指纹：执行时脚本再查一次冲突。
+ *
+ * 脚本的 kind 映射：invalid / missing → 400，conflict → 409，其余 → 500；超时 504。
+ */
+async function runConvertedCopy(project, body, { apply }) {
+  const target = resolveCopyTarget(project.root, body);
+  const script = path.join(project.root, 'scripts', 'copy_converted.py');
+  if (!fs.existsSync(script)) {
+    const err = new Error(
+      '这个工作空间没有 scripts/copy_converted.py，看板没法替你复制。'
+        + '更新模板（让工作空间 AI 走 pm-template-update）之后就有了。',
+    );
+    err.statusCode = 400;
+    err.kind = 'no-script';
+    throw err;
+  }
+  const args = ['--source', target.relPath, '--to', target.group, apply ? '--apply' : '--dry-run'];
+  try {
+    return await runScript(project.root, script, args, { timeoutMs: COPY_TIMEOUT_MS, label: apply ? '复制' : '复制预览' });
+  } catch (err) {
+    if (err.kind === 'conflict') err.statusCode = 409;
+    else if (err.kind === 'invalid' || err.kind === 'missing') err.statusCode = 400;
+    if (err.kind === 'timeout') {
+      err.statusCode = 504;
+      if (apply) err.message += '。复制件可能已经写出来了，刷新列表看一眼再决定要不要重试。';
+    }
+    throw err;
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -2193,6 +2255,18 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, await runRename(project, body, { apply: sub !== 'preview' }));
+  }
+
+  // 转换产物复制到产出（不变量 1 第十二条窄例外）：看板只 spawn 工作空间的 scripts/copy_converted.py，
+  // 请求只带 docKey 与组名，不接受任何路径；同步等脚本退出。预览也起子进程，两条都过环回与同源两道闸
+  if (head === 'projects' && id && action === 'converted-copy' && req.method === 'POST') {
+    const sub = segments[3] || '';
+    if (sub && sub !== 'preview') return json(res, 400, { error: `不认识这个操作：${sub}` });
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
+    const project = requireProject(id);
+    const body = await readBody(req);
+    return json(res, 200, await runConvertedCopy(project, body, { apply: sub !== 'preview' }));
   }
 
   if (head === 'projects' && id && action === 'web-ingest') {

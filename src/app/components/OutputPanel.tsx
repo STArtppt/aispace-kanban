@@ -30,6 +30,7 @@ import {
   matchConverted,
   type ConvertedFilter,
 } from '@/components/ConvertedList';
+import { ConvertedCopyDialog } from '@/components/ConvertedCopyDialog';
 import { DocxExportDialog } from '@/components/DocxExportDialog';
 import { RenameDialog } from '@/components/RenameDialog';
 import { Badge } from '@/components/ui/badge';
@@ -527,6 +528,7 @@ export function OutputPanel({
   const [archiveError, setArchiveError] = useState('');
   /** 「重命名」弹窗的对象；null = 关着 */
   const [renaming, setRenaming] = useState<FileItem | null>(null);
+  const [copying, setCopying] = useState<FileItem | null>(null);
   /** 改名时正开着预览：等新扫描里出现新路径，换成扫描下发的条目（docKey 由服务端按新路径算） */
   const [followPath, setFollowPath] = useState('');
   /** 「转成 Word」弹窗的来源 .md；null = 关着 */
@@ -906,6 +908,8 @@ export function OutputPanel({
               ingestRunning={ingest.running}
               ingestingPath={ingest.job?.path || ''}
               onIngest={(filePath) => void ingest.start(filePath)}
+              canCopy={canConvert ? output.canCopyConverted : 'missing'}
+              onCopy={setCopying}
             />
           </TabsContent>
         </Tabs>
@@ -929,6 +933,23 @@ export function OutputPanel({
           }
           toast.success(`已改名为 ${result.to.split('/').pop()}`, {
             description: result.links ? `更新了 ${result.linkFiles} 个文件中的 ${result.links} 处链接` : undefined,
+          });
+        }}
+      />
+
+      <ConvertedCopyDialog
+        projectId={projectId}
+        item={copying}
+        onClose={() => setCopying(null)}
+        onCopied={(result) => {
+          const label = GROUPS.find((g) => g.key === result.group)?.title || result.group;
+          // 切到目标组，先按落点打开占位条目（还没有 docKey）；SSE 推来新扫描后再换成正式条目
+          const name = result.target.split('/').pop() || '';
+          setTab(result.group);
+          onOpen({ path: result.target, name, ext: '.md', reader: 'markdown', size: 0, mtime: result.copiedAt, title: copying?.title || name });
+          setFollowPath(result.target);
+          toast.success(`已复制到${label}`, {
+            description: result.target,
           });
         }}
       />

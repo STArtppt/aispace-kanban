@@ -1087,6 +1087,8 @@ function scanOutput(root) {
       canArchive: fs.existsSync(path.join(root, 'scripts', 'archive_output.py')),
       // 同理：模板更新后才有改名脚本。旧服务进程不给这个字段，前端按「重启后可用」置灰
       canRename: fs.existsSync(path.join(root, 'scripts', 'rename_output.py')),
+      // 转换产物「复制到…」（第十二条）同理：有 copy_converted.py 才可用。条目沿用 converted-md 的 docKey
+      canCopyConverted: fs.existsSync(path.join(root, 'scripts', 'copy_converted.py')),
       stats: {
         analysis: inMain('analysis').length,
         docs: inMain('docs').length,
