@@ -58,6 +58,23 @@ input/sources/*
 *.pptx
 *.pdf
 
+# ---- 图片：不管在哪个目录，一律不入库 ----
+# 转换抽出的 output/converted/assets/、定稿.assets/、截图都算。重跑转换或定稿即可重建，还常常带着涉密画面；
+# Markdown 里的图片链接照常入库，本地文件不受影响。模板脚本自带的合成样图除外；
+# .svg / .ico 是图标和矢量图，体积小、多是手写的，继续入库。
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+*.tif
+*.tiff
+*.heic
+*.heif
+*.avif
+!scripts/docxkit/diagram.png
+
 # ---- 大体积表格 / 数据产物：output/converted/ 下一律不入库 ----
 # output/converted/ 是脚本产物（拆表 csv、点表 / 现场数据 sqlite），重跑 ingest.py / realdata.py / pointtable.py 即可重建；
 # 普通 .md 产物与 _manifest_*.md 摘要仍入库（看板和 AI 靠它了解全局）。
