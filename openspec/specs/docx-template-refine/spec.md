@@ -99,8 +99,8 @@
 
 ### Requirement: 提炼的写入边界
 
-采集与生成 MUST 满足 AGENTS.md 不变量 1 第九条：看板只 spawn `scripts/docx_template.py`，自己不写字节；
-由用户点「开始分析」「生成模板」明确发起；环回且非跨站，否则 403；请求只带 `docKey`、模板名基名与决定 JSON，
+采集与生成（能力标识 `docx-template-refine`）MUST 满足以下边界：看板只 spawn `scripts/docx_template.py`，自己不写字节；
+由用户点「开始分析」「生成模板」明确发起，文件变化不自动重跑；环回且非跨站，否则 403；请求只带 `docKey`、模板名基名与决定 JSON，
 `docKey` 反查不到或决定 JSON 超过 256KB、含路径字段时 400；脚本只写 `output/docx-template/<模板名>/`。
 工作空间没有该脚本、找不到 Python 3 时接口 400，界面说明出路（复制提示词让工作空间 AI 从模板补齐脚本）。
 
