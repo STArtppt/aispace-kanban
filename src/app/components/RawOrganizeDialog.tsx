@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AlertTriangle, ChevronRight, Folder, FolderInput, Loader2, PencilLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -46,6 +46,11 @@ function parentOf(p: string) {
   return p.slice(0, p.lastIndexOf('/'));
 }
 
+/** 目录是不是要整理的目录自己或它下面的（目录不能移进自己里） */
+function insideTarget(p: string, target: OrganizeTarget) {
+  return target.isDir && (p === target.path || p.startsWith(`${target.path}/`));
+}
+
 function splitName(name: string, isDir: boolean) {
   const dot = name.lastIndexOf('.');
   // 目录名整个算名字；文件扩展名不变（脚本按原扩展名补回去）
@@ -89,6 +94,8 @@ export function RawOrganizeDialog({
   const [newName, setNewName] = useState(stem);
   const [dest, setDest] = useState(initialDest || '');
   const [dirQuery, setDirQuery] = useState('');
+  // 目录树里展开着的目录；默认只展开根，拖放带来的目标连同祖先一起展开
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set([RAW_ROOT]));
   const [preview, setPreview] = useState<PreviewState>({ state: 'idle' });
   const [showFiles, setShowFiles] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -101,6 +108,7 @@ export function RawOrganizeDialog({
     setNewName(stem);
     setDest(initialDest || '');
     setDirQuery('');
+    setExpanded(new Set([RAW_ROOT]));
     setPreview({ state: 'idle' });
     setShowFiles(false);
     setApplyError('');
@@ -110,14 +118,102 @@ export function RawOrganizeDialog({
   const choices = useMemo(() => {
     if (!target) return [];
     const parent = parentOf(target.path);
-    const all = [{ path: RAW_ROOT, organizeKey: RAW_ROOT_KEY }, ...dirs];
-    return all.filter((d) => d.path !== parent
-      && !(target.isDir && (d.path === target.path || d.path.startsWith(`${target.path}/`))));
+    return [{ path: RAW_ROOT, organizeKey: RAW_ROOT_KEY }, ...dirs]
+      .filter((d) => d.path !== parent && !insideTarget(d.path, target));
   }, [dirs, target]);
-  const shownChoices = useMemo(() => {
+  /** 树里的全部节点：现在所在的目录也留着（它下面可能还有能选的），只是不能点选 */
+  const tree = useMemo(() => {
+    const children = new Map<string, RawDir[]>();
+    if (!target) return children;
+    for (const d of dirs) {
+      if (insideTarget(d.path, target)) continue;
+      const up = parentOf(d.path);
+      children.set(up, [...(children.get(up) || []), d]);
+    }
+    return children;
+  }, [dirs, target]);
+  /** 筛选时只留命中的目录和它们的祖先，并全部展开 */
+  const matched = useMemo(() => {
     const q = dirQuery.trim().toLowerCase();
-    return q ? choices.filter((d) => d.path.toLowerCase().includes(q)) : choices;
-  }, [choices, dirQuery]);
+    if (!q) return null;
+    const keep = new Set<string>([RAW_ROOT]);
+    for (const list of tree.values()) {
+      for (const d of list) {
+        if (!d.path.slice(RAW_ROOT.length + 1).toLowerCase().includes(q)) continue;
+        for (let p = d.path; p.length > RAW_ROOT.length; p = parentOf(p)) keep.add(p);
+      }
+    }
+    return keep;
+  }, [tree, dirQuery]);
+  useEffect(() => {
+    if (!initialDest) return;
+    const hit = dirs.find((d) => d.organizeKey === initialDest);
+    if (!hit) return;
+    setExpanded((open) => {
+      const next = new Set(open);
+      for (let p = parentOf(hit.path); p.length >= RAW_ROOT.length; p = parentOf(p)) next.add(p);
+      return next;
+    });
+  }, [initialDest, dirs, target?.path]);
+  const toggle = (p: string) => setExpanded((open) => {
+    const next = new Set(open);
+    if (next.has(p)) next.delete(p);
+    else next.add(p);
+    return next;
+  });
+  const selectable = new Set(choices.map((d) => d.organizeKey));
+
+  const renderNode = (d: RawDir, depth: number): ReactNode => {
+    const kids = (tree.get(d.path) || []).filter((c) => !matched || matched.has(c.path));
+    const open = matched ? true : expanded.has(d.path);
+    const canPick = selectable.has(d.organizeKey);
+    const here = target ? d.path === parentOf(target.path) : false;
+    return (
+      <li key={d.organizeKey} role="treeitem" aria-selected={dest === d.organizeKey} aria-expanded={kids.length ? open : undefined}>
+        <div
+          className={cn(
+            'flex min-w-0 items-center gap-1 py-1.5 pr-3 text-xs hover:bg-accent',
+            dest === d.organizeKey && 'bg-selected hover:bg-selected',
+          )}
+          style={{ paddingLeft: `${0.5 + depth * 1}rem` }}
+        >
+          {kids.length ? (
+            <button
+              type="button"
+              onClick={() => toggle(d.path)}
+              disabled={busy || Boolean(matched)}
+              aria-label={open ? '收起' : '展开'}
+              className="flex size-4 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground"
+            >
+              <ChevronRight className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
+            </button>
+          ) : (
+            <span className="size-4 shrink-0" />
+          )}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => (canPick ? setDest(d.organizeKey) : kids.length && toggle(d.path))}
+            className={cn(
+              'flex min-w-0 flex-1 items-center gap-2 text-left',
+              !canPick && 'cursor-default text-muted-foreground',
+            )}
+          >
+            <Folder className="size-3.5 shrink-0 text-muted-foreground" />
+            <span className="min-w-0 break-all">
+              {d.path === RAW_ROOT ? 'input/raw（根）' : baseName(d.path)}
+              {here ? '（当前所在）' : ''}
+            </span>
+          </button>
+        </div>
+        {kids.length && open ? (
+          <ul role="group" className="flex min-w-0 flex-col">
+            {kids.map((c) => renderNode(c, depth + 1))}
+          </ul>
+        ) : null}
+      </li>
+    );
+  };
   const destPath = choices.find((d) => d.organizeKey === dest)?.path || '';
 
   // 当前输入对应的请求；null = 还不能预览（名字没改、没选目录）
@@ -218,35 +314,17 @@ export function RawOrganizeDialog({
                   placeholder="筛选目录"
                   aria-label="筛选目标目录"
                 />
-                <div
-                  role="listbox"
+                <ul
+                  role="tree"
                   aria-label="目标目录"
-                  className="flex max-h-48 min-w-0 flex-col overflow-y-auto rounded-lg border border-border"
+                  className="flex max-h-64 min-w-0 flex-col overflow-y-auto rounded-lg border border-border py-1"
                 >
-                  {shownChoices.length ? (
-                    shownChoices.map((d) => (
-                      <button
-                        key={d.organizeKey}
-                        type="button"
-                        role="option"
-                        aria-selected={dest === d.organizeKey}
-                        disabled={busy}
-                        onClick={() => setDest(d.organizeKey)}
-                        className={cn(
-                          'flex min-w-0 items-center gap-2 border-b border-border px-3 py-2 text-left text-xs last:border-b-0 hover:bg-accent',
-                          dest === d.organizeKey && 'bg-selected hover:bg-selected',
-                        )}
-                      >
-                        <Folder className="size-3.5 shrink-0 text-muted-foreground" />
-                        <span className="min-w-0 break-all">
-                          {d.path === RAW_ROOT ? 'input/raw（根）' : d.path.slice(RAW_ROOT.length + 1)}
-                        </span>
-                      </button>
-                    ))
+                  {matched && matched.size <= 1 ? (
+                    <li className="px-3 py-2 text-xs text-muted-foreground">没有匹配的目录</li>
                   ) : (
-                    <p className="px-3 py-2 text-xs text-muted-foreground">没有匹配的目录</p>
+                    renderNode({ path: RAW_ROOT, organizeKey: RAW_ROOT_KEY }, 0)
                   )}
-                </div>
+                </ul>
               </div>
             )}
 

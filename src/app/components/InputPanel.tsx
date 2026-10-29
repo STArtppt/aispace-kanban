@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowUpDown, BookOpen, ChevronDown, ChevronRight, Copy, Database, EyeOff, FileOutput, FolderInput, FolderOpen, Key, ListFilter, Loader2, PencilLine, RefreshCw, Star, StarOff, X } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, BookOpen, ChevronDown, ChevronRight, Copy, Database, Eye, EyeOff, FileOutput, FolderInput, FolderOpen, Key, ListFilter, Loader2, PencilLine, RefreshCw, Star, StarOff, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
@@ -64,10 +64,10 @@ function rawIntroText(pending: number, ignored: number, canIngest: boolean, with
     text += `其中 ${ignored} 份按 input/.ingestignore 忽略，不算待转换。`;
   }
   if (pending) {
-    text += '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在。';
+    text += '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在；忽略的也能在「更多」里解除。';
   }
   text += canIngest
-    ? '点「开始转换」会一次处理全部待转的与原件已改的（与筛选无关）；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
+    ? '点「开始转换」会一次处理全部「待转」与「改动」的（与筛选无关）；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
     : '在工作空间里跑一次 python3 scripts/ingest.py 即可。';
   return text;
 }
@@ -114,7 +114,7 @@ const RAW_FILTERS = {
   pending: '待转',
   converted: '已转',
   ignored: '忽略',
-  stale: '原件已改',
+  stale: '改动',
 } as const;
 
 type RawFilter = keyof typeof RAW_FILTERS;
@@ -146,7 +146,7 @@ function RawStateTag({ item }: { item: FileItem }) {
   if (item.stale) {
     return (
       <Badge variant="outline" className="shrink-0 border-destructive/40 text-destructive" title="原件在转换后改过，产物可能已经不对">
-        原件已改
+        改动
       </Badge>
     );
   }
@@ -157,11 +157,56 @@ function RawStateTag({ item }: { item: FileItem }) {
       className="shrink-0 text-muted-foreground"
       title={
         item.state === 'ignored'
-          ? '命中 input/.ingestignore。看板不提供取消忽略：要恢复，在 input/.ingestignore 里删掉对应那一行'
+          ? '命中 input/.ingestignore。要恢复，在「更多」里点「解除忽略」'
           : undefined
       }
     >
       {label}
+    </Badge>
+  );
+}
+
+type RawDirState = 'pending' | 'converted' | 'ignored' | 'partial';
+
+const RAW_DIR_STATE_LABEL: Record<RawDirState, string> = {
+  pending: '待转',
+  converted: '已转',
+  ignored: '忽略',
+  partial: '部分',
+};
+
+/**
+ * 每个目录（相对 input/raw/）下全部原件的汇总状态，不随筛选变。
+ * 忽略的不参与判断，除非整个目录都是忽略：剩下的全转了算已转、一份没转算待转，其余算部分。
+ */
+function rawDirStates(all: FileItem[]): Map<string, RawDirState> {
+  const tally = new Map<string, { pending: number; converted: number; ignored: number }>();
+  for (const item of all) {
+    if (!item.state) continue;
+    const parts = pendingLabel(item).split('/');
+    for (let i = 1; i < parts.length; i += 1) {
+      const key = parts.slice(0, i).join('/');
+      const t = tally.get(key) || { pending: 0, converted: 0, ignored: 0 };
+      t[item.state] += 1;
+      tally.set(key, t);
+    }
+  }
+  const states = new Map<string, RawDirState>();
+  for (const [key, t] of tally) {
+    states.set(key, !t.pending && !t.converted ? 'ignored' : !t.pending ? 'converted' : !t.converted ? 'pending' : 'partial');
+  }
+  return states;
+}
+
+function RawDirStateTag({ state }: { state?: RawDirState }) {
+  if (!state) return null;
+  return (
+    <Badge
+      variant="outline"
+      className="shrink-0 text-muted-foreground"
+      title={state === 'partial' ? '目录里有的已转、有的还没转（忽略的不算）' : undefined}
+    >
+      {RAW_DIR_STATE_LABEL[state]}
     </Badge>
   );
 }
@@ -205,7 +250,8 @@ function PendingRow({
   ingestingPath: string;
   onIngest: (filePath: string) => void;
   ignoring: boolean;
-  onIgnore: (targetPath: string) => void;
+  /** undo = 解除忽略：删掉 .ingestignore 里对得上的行 */
+  onIgnore: (targetPath: string, undo?: boolean) => void;
   /** 「重命名」「移动到…」不能用的理由；空串 = 可以 */
   organizeBlocked: string;
   onOrganize: (target: OrganizeTarget, mode: OrganizeMode) => void;
@@ -264,10 +310,14 @@ function PendingRow({
       onSelect: () => onOrganize(target, 'move'),
     },
   ];
-  // 忽略的只多给整理：取消忽略要删 .ingestignore 的行，不在看板的写入例外里
+  // 忽略的只给解除忽略和整理
   const actions: RowAction[] =
     state === 'ignored'
-      ? [...organize, reveal]
+      ? [
+          { label: '解除忽略', icon: Eye, disabled: ignoring, onSelect: () => onIgnore(item.path, true) },
+          ...organize,
+          reveal,
+        ]
       : state === 'converted'
         ? [
             pin,
@@ -321,12 +371,13 @@ function PendingRow({
         >
           {label}
         </span>
-        <RawStateTag item={item} />
         {pinned ? (
           <Star className="size-3.5 shrink-0 fill-current text-muted-foreground" />
         ) : null}
       </span>
       <span className="shrink-0 text-xs text-muted-foreground">{formatBytes(item.size)}</span>
+      {/* 标签放在数字后、动作前：都是两个字，上下对成一列 */}
+      <RawStateTag item={item} />
       <RowActions busy={thisRowRunning} actions={actions} />
     </Row>
   );
@@ -357,6 +408,7 @@ function LedgerRow({ scan, openPath, onOpen }: { scan: Scan; openPath: string; o
 
 function PendingList({
   items,
+  allItems,
   converted,
   viewMode,
   query,
@@ -377,6 +429,8 @@ function PendingList({
   onOrganize,
 }: {
   items: FileItem[];
+  /** 不受状态筛选的全部原件，目录标签按它汇总 */
+  allItems: FileItem[];
   /** 转换产物，给已转的原件反查「打开产物」 */
   converted: ConvertedItem[];
   viewMode: ViewMode;
@@ -392,7 +446,8 @@ function PendingList({
   ingestingPath: string;
   onIngest: (filePath: string) => void;
   ignoringPath: string;
-  onIgnore: (targetPath: string) => void;
+  /** undo = 解除忽略：删掉 .ingestignore 里对得上的行 */
+  onIgnore: (targetPath: string, undo?: boolean) => void;
   /** 服务端下发的目录及其整理键；目录行的整理动作与拖放靠它换键 */
   rawDirs: RawDir[];
   organizeBlocked: string;
@@ -403,6 +458,16 @@ function PendingList({
 }) {
   const { pins, togglePin } = usePins(projectId);
   const dirKeyOf = useMemo(() => new Map(rawDirs.map((d) => [d.path, d.organizeKey])), [rawDirs]);
+  const dirStates = useMemo(() => rawDirStates(allItems), [allItems]);
+  const dirsWithIgnored = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of allItems) {
+      if (item.state !== 'ignored') continue;
+      const parts = pendingLabel(item).split('/');
+      for (let i = 1; i < parts.length; i += 1) set.add(parts.slice(0, i).join('/'));
+    }
+    return set;
+  }, [allItems]);
   const dnd: TreeDnd<FileItem> | undefined = canDrag
     ? {
         canDragFile: (item) => Boolean(item.organizeKey),
@@ -481,6 +546,7 @@ function PendingList({
           keyOf={(item) => item.path}
           expandAll={searching}
           dnd={dnd}
+          renderDirBadge={(dirKey) => <RawDirStateTag state={dirStates.get(dirKey)} />}
           renderFile={(item, indent, dragProps) => (
             <PendingRow
               item={item}
@@ -505,12 +571,13 @@ function PendingList({
                     },
                   ]
                 : []),
-              {
-                label: '忽略此目录',
-                icon: EyeOff,
-                disabled: Boolean(ignoringPath),
-                onSelect: () => onIgnore(dirPath),
-              },
+              // 整个目录都忽略了就不再给「忽略」；下面有忽略的就给「解除」（连同其下单独忽略的一起）
+              ...(dirStates.get(dirKey) !== 'ignored'
+                ? [{ label: '忽略此目录', icon: EyeOff, disabled: Boolean(ignoringPath), onSelect: () => onIgnore(dirPath) }]
+                : []),
+              ...(dirsWithIgnored.has(dirKey)
+                ? [{ label: '解除忽略此目录', icon: Eye, disabled: Boolean(ignoringPath), onSelect: () => onIgnore(dirPath, true) }]
+                : []),
             ];
             const organizeKey = dirKeyOf.get(dirPath) || '';
             const blocked = organizeBlocked || (organizeKey ? '' : ORGANIZE_OLD_SERVER);
@@ -1062,11 +1129,11 @@ export function InputPanel({
   );
 
   const ignore = useCallback(
-    async (targetPath: string) => {
+    async (targetPath: string, undo = false) => {
       setIgnoreError('');
       setIgnoringPath(targetPath);
       try {
-        await api.addIgnore(projectId, targetPath);
+        await (undo ? api.removeIgnore(projectId, targetPath) : api.addIgnore(projectId, targetPath));
       } catch (err) {
         setIgnoreError((err as Error).message);
       } finally {
@@ -1335,10 +1402,10 @@ export function InputPanel({
                 </>
               ) : null}
               {input.pending.length
-                ? '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在。'
+                ? '某一行「更多」里可以忽略此文件（或整目录），写进忽略清单，文件还在；忽略的也能在「更多」里解除。'
                 : null}
               {canIngest ? (
-                '点「开始转换」会一次处理全部待转的与原件已改的（与筛选无关）；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
+                '点「开始转换」会一次处理全部「待转」与「改动」的（与筛选无关）；某一行点「转换」只转那一份（大 PDF 可能要几分钟）。'
               ) : (
                 <>
                   在工作空间里跑一次
@@ -1365,6 +1432,7 @@ export function InputPanel({
             {rawItems.length ? (
               <PendingList
                 items={rawItems}
+                allItems={withState ? input.raw : []}
                 converted={input.converted}
                 viewMode={viewMode}
                 query={query}
@@ -1378,7 +1446,7 @@ export function InputPanel({
                 ingestingPath={ingest.job?.path || ''}
                 onIngest={(filePath) => void ingest.start(filePath)}
                 ignoringPath={ignoringPath}
-                onIgnore={(targetPath) => void ignore(targetPath)}
+                onIgnore={(targetPath, undo) => void ignore(targetPath, undo)}
                 rawDirs={input.rawDirs || []}
                 organizeBlocked={organizeBlocked}
                 canDrag={viewMode === 'tree' && activeRawFilter === 'all' && !query.trim() && !organizeBlocked}

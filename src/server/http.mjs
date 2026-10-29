@@ -497,7 +497,7 @@ function resolveRawTarget(root, relPath) {
 
 /**
  * 把一条模式追加进 input/.ingestignore。
- * 看板只追加一行，不删、不改原件；ingest.py 和 scan.mjs 读的是同一份。
+ * 看板在这里只追加一行，不改原件；解除忽略走 removeIgnore。ingest.py 和 scan.mjs 读的是同一份。
  * 不经过 ingest.py：这不是转换，旧工作空间的脚本也没有写入入口。
  * 模式相对 input/ 写（raw/某目录），跟手改那份文件的约定一致。
  */
@@ -533,6 +533,48 @@ function addIgnore(project, relPath) {
     : `# 忽略清单 —— 不转换、看板上也不算「待转换」\n# 路径相对 input/ 写，例如 raw/某目录 或 raw/某文件.pdf\n\n${pattern}\n`;
   fs.writeFileSync(file, body, 'utf8');
   return { ok: true, pattern, already: false };
+}
+
+/**
+ * 从 input/.ingestignore 删掉这份文件或目录的规则（解除忽略）。
+ * 只删**字面**对得上的行：目录连同字面落在它下面的行一起删；注释、通配符和别的行原样保留。
+ * 被上级目录规则或通配符忽略的，这里删不到，报错说清该去哪一层解除。先写临时文件再原子替换。
+ */
+function removeIgnore(project, relPath) {
+  const target = resolveRawTarget(project.root, relPath);
+  if (!target) {
+    const err = new Error('请指定要解除忽略的文件或目录');
+    err.statusCode = 400;
+    throw err;
+  }
+  const pattern = target.rel.replace(/^input\//, '').replace(/\/+$/, '');
+  const file = path.join(project.root, 'input', '.ingestignore');
+  const prev = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  const norm = (line) => line.trim().replace(/\/+$/, '');
+  const hit = (line) => {
+    const p = norm(line);
+    if (!p || p.startsWith('#')) return false;
+    return p === pattern || (target.isDir && p.startsWith(`${pattern}/`));
+  };
+  const lines = prev.split('\n');
+  const removed = lines.filter(hit).map(norm);
+  if (!removed.length) {
+    const parent = lines.map(norm).find((p) => p && !p.startsWith('#') && pattern.startsWith(`${p}/`));
+    const err = new Error(parent
+      ? `它是被上级规则 ${parent} 忽略的，请到那一层解除忽略`
+      : `input/.ingestignore 里没有字面写着 ${pattern} 的规则，可能是通配符规则命中的，请手改那份文件`);
+    err.statusCode = 409;
+    throw err;
+  }
+  const tmp = path.join(path.dirname(file), `.${path.basename(file)}.tmp-${process.pid}-${Date.now()}`);
+  try {
+    fs.writeFileSync(tmp, lines.filter((line) => !hit(line)).join('\n'), 'utf8');
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    fs.rmSync(tmp, { force: true });
+    throw err;
+  }
+  return { ok: true, removed };
 }
 
 /**
@@ -2278,6 +2320,15 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, addIgnore(project, body.path));
+  }
+
+  // 从 input/.ingestignore 删掉字面对得上的行：用户点「解除忽略」时走这里
+  if (head === 'projects' && id && action === 'unignore' && req.method === 'POST') {
+    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
+    if (rejectIfForeignOrigin(req, res)) return undefined;
+    const project = requireProject(id);
+    const body = await readBody(req);
+    return json(res, 200, removeIgnore(project, body.path));
   }
 
   // 预览批注。有产出物记录时读/写工作空间 output/records/notes/，没有记录时退回看板缓存。

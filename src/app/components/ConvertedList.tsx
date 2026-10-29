@@ -354,7 +354,7 @@ export function ConvertedList({
       {staleCount ? (
         <p className="text-xs text-muted-foreground">
           有 <span className="text-destructive">{staleCount} 份原件在转换后动过</span>
-          ，产物可能已经不对。右上角筛选可以只看这些；「输入资料 → 原始资料」里它们标着「原件已改」。
+          ，产物可能已经不对。右上角筛选可以只看这些；「输入资料 → 原始资料」里它们标着「改动」。
           {canIngest
             ? '行内「更多」点「重新转换」只重转那一份；「原始资料」里的「开始转换」会把动过的一起重跑。'
             : '在工作空间里重跑一次 scripts/ingest.py 即可，只有动过的会重转。'}

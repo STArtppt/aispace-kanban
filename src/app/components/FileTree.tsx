@@ -224,6 +224,7 @@ export function FileTree<T>({
   keyOf,
   renderFile,
   renderDirActions,
+  renderDirBadge,
   expandAll,
   dnd,
 }: {
@@ -238,6 +239,8 @@ export function FileTree<T>({
    * 树是前端按路径拼的，只有调用方知道它对应磁盘上的哪个目录，所以由调用方来给。
    */
   renderDirActions?: (dirKey: string) => ReactNode;
+  /** 文件数后、动作前的标签（如原始资料的汇总状态）。dirKey 同上 */
+  renderDirBadge?: (dirKey: string) => ReactNode;
   /**
    * 无视折叠状态一律展开。给「正在搜索」用 —— 命中的文件藏在收起的目录里，
    * 看着就跟搜不到一样。搜索结束后仍回到用户自己点开的那几层。
@@ -329,6 +332,7 @@ export function FileTree<T>({
             {child.name}
           </span>
           <span className="shrink-0 text-xs text-muted-foreground">{child.count}</span>
+          {renderDirBadge?.(child.key)}
           {renderDirActions?.(child.key)}
         </Row>,
       );

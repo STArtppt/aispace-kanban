@@ -2057,6 +2057,16 @@ export const api = {
       body: JSON.stringify({ path: targetPath }),
     }),
   /**
+   * 解除忽略：删掉 input/.ingestignore 里字面对得上的行（目录连同其下的行）。
+   * 被上级目录或通配符规则忽略的删不到，409 带着该去哪解除的说明，原样显示即可。
+   * 旧服务进程没有这个接口，request 会带上「重启 serve」的提示。
+   */
+  removeIgnore: (id: string, targetPath: string) =>
+    request<{ ok: boolean; removed: string[] }>(`/api/projects/${id}/unignore`, {
+      method: 'POST',
+      body: JSON.stringify({ path: targetPath }),
+    }),
+  /**
    * 预览批注历史。有产出物记录时读工作空间 `output/records/notes/I<编号>.md`，
    * 没有记录时退回看板缓存 `~/.pmwork/dashboard/note-history/`，两边合并。
    * 旧服务没有这套字段（整段 404 时接口本身也不在），调用方要兜住并当成没有历史。
