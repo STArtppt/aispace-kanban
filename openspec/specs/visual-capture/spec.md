@@ -5,7 +5,7 @@
 约定看板上「贴一个 URL 就把东西收进当前工作空间」这条写入路径:参考 tab 采集公开页面、
 原型 tab 导入云端发布链接。采集走独立子进程(`single-file` 出 `index.html`,Playwright 出三张截图),
 产出落 `visualization/references/<slug>/`;原型导入只落封面与 `meta.json`,不抓 SPA 本体。
-这是不变量 1 的第二条窄例外 —— 写入面就是 `visualization/` 之下的这两处,`input/` `output/`
+这是能力清单里的 `visual-capture` —— 写入面就是 `visualization/` 之下的这两处,`input/` `output/`
 `project.yaml` 仍然只读,接口必须环回且非跨站。Playwright 不进 `dependencies`:装了就出图,
 没装就降级(界面说清少了什么),任务仍算成功。
 

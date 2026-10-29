@@ -1823,7 +1823,7 @@ const CONVERTED_MD_RE = /^(output|input)\/converted\/.+\.md$/i;
  * 选了对比就用对比视图替换正文；「预览 Word」把成品 .docx 当成一份文件交给 ReaderBody 渲染。
  * 工作空间目录丢失时没有版本条；旧服务进程（接口 404）只有「原稿」，Word 按钮始终是「转成 Word」。
  * 输入转换产物带 docKey 时另给一条只有 Word 按钮的栏；接口 400（旧服务不认这个键）就不显示。
- * 顶栏「定稿」（第十条）作用于原稿，无论版本条选中哪一份；选中「定稿」时正文是 `定稿.md`，不能批注、不能转 Word。
+ * 顶栏「定稿」（能力 `delivery-finalize`）作用于原稿，无论版本条选中哪一份；选中「定稿」时正文是 `定稿.md`，不能批注、不能转 Word。
  * 资料台账（`ledger`）另走 LedgerReader，不经这一层。
  */
 export function Reader({

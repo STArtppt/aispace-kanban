@@ -1,7 +1,7 @@
 /**
  * 提炼 Word 模板、把产出 .md 转成 Word：参数校验与 spawn 的唯一收口。
  *
- * **AGENTS.md 不变量 1 的第九条窄例外**（「看板只 spawn，工作空间脚本写盘」一族，与第七条同构）：
+ * **能力 `docx-template-refine` / `md-docx-export`**（「看板只 spawn，工作空间脚本写盘」一族，与能力 `output-archive` 同构）：
  * - 看板只 spawn 工作空间的 `scripts/docx_template.py` / `scripts/md2docx.py`，自己不写、不 rename、不 unlink 任何一个字节；
  * - 请求**不带任何路径**：来源只用扫描时下发的 `docKey` 指定，这里重新走目录反查，查不到 400；
  *   待转换的 .md 可以是产出三组、交付稿，或转换产物根（`output/converted/`，旧布局 `input/converted/`）下的单文件
@@ -9,9 +9,9 @@
  *   模板名只接受一层基名；决定 JSON 限 256KB、拒绝路径类键名，经 stdin 交给脚本（脚本再校验结构）；
  * - 同名 `.docx` 没有生成标记一律 409，带标记也要用户确认 `overwrite`（脚本再校验一次）；
  * - 同步等脚本退出、带超时；同一模板 / 同一目标文件在前一个没结束时直接 409。
- * 环回与跨站两道闸在 http.mjs 的路由上（`allowMutations` + `rejectIfForeignOrigin`）。
+ * 环回与跨站两道闸在 http.mjs 的路由上（`guardCapability`，见 capabilities.mjs）。
  *
- * `runScript` / `exclusive` / `requirePython` 也给第十条（定稿，finalize.mjs）用，只此一份，别复制。
+ * `runScript` / `exclusive` / `requirePython` 也给能力 `delivery-finalize`（定稿，finalize.mjs）用，只此一份，别复制。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -200,7 +200,7 @@ export async function runDocxBuild(project, name, body) {
 /**
  * POST docx/convert  载荷 { docKey, template, archive?, overwrite? }
  * archive：同名成品带生成标记时，由脚本先改名为 `<基名>-<上次转换时间>.docx` 再写新的（看板「重新转换」）；
- * overwrite 只留给旧前端。改名是脚本做的，看板自己不写盘（第九条）。
+ * overwrite 只留给旧前端。改名是脚本做的，看板自己不写盘（能力 `md-docx-export`）。
  */
 export async function runDocxConvert(project, body) {
   const root = project.root;

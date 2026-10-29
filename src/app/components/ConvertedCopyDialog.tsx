@@ -35,7 +35,7 @@ type PreviewState =
   | { state: 'error'; message: string };
 
 /**
- * 转换产物「复制到…」弹窗（不变量 1 第十二条）：三选一 → 自动预览落点 → 确定。
+ * 转换产物「复制到…」弹窗（能力 `converted-copy-to-output`）：三选一 → 自动预览落点 → 确定。
  * 预览和执行都由服务端 spawn 工作空间的 `scripts/copy_converted.py`，请求只带 docKey 与组名。
  * 落点已存在时「确定」不可点；执行时脚本再查一次，被人抢先建了同名文件会 409，这里自动重新预览。
  */

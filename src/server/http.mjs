@@ -26,6 +26,7 @@ import {
   userTemplatesRoot,
   writeRuntimeInfo,
 } from './config.mjs';
+import { guardCapability } from './capabilities.mjs';
 import { captureStatus, startCapture } from './capture.mjs';
 import { CAPTURE_PACKAGE_PATH, readPackageBody, receiveCapturePackage } from './capture-inbox.mjs';
 import { appendNoteHistory, clearNoteHistory, listNoteHistory } from './note-history.mjs';
@@ -1067,7 +1068,7 @@ function resolveArchiveTarget(root, rawGroup, rawName) {
 
 /**
  * 一次归档：spawn 工作空间的 scripts/archive_output.py。
- * **AGENTS.md 不变量 1 的第七条窄例外**：看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；
+ * **能力 `output-archive`**：看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；
  * 真正移动文件与追加 README 交接单的是脚本本身 —— 与 startIngest / startWebIngest 同构。
  *
  * 与那两条不同，这里**同步等脚本退出**，不做 running/done 任务态：移一个文件是毫秒级，
@@ -1186,7 +1187,7 @@ function resolveRenameTarget(root, body) {
 }
 
 /**
- * 重命名：spawn 工作空间的 scripts/rename_output.py（**AGENTS.md 不变量 1 第十一条窄例外**）。
+ * 重命名：spawn 工作空间的 scripts/rename_output.py（**能力 `output-rename`**）。
  * 看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；改名、改链接、留痕都是脚本做的。
  * 预览（`--dry-run`）与执行（`--apply --expect <指纹>`）是同一支脚本的两种模式：
  * 执行时脚本重算计划，与预览指纹不符就退出 3，不在服务端存任何预览状态。
@@ -1259,7 +1260,7 @@ function resolveCopyTarget(root, body) {
 }
 
 /**
- * 转换产物复制到产出：spawn 工作空间的 scripts/copy_converted.py（**AGENTS.md 不变量 1 第十二条窄例外**）。
+ * 转换产物复制到产出：spawn 工作空间的 scripts/copy_converted.py（**能力 `converted-copy-to-output`**）。
  * 看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；复制、重算链接、留痕都是脚本做的。
  * 预览（`--dry-run`）与执行（`--apply`）是同一支脚本的两种模式，不带指纹：执行时脚本再查一次冲突。
  *
@@ -1340,7 +1341,7 @@ function resolveRawOrganizeTarget(root, body) {
 }
 
 /**
- * 原始资料重命名 / 移动：spawn 工作空间的 scripts/move_raw.py（**AGENTS.md 不变量 1 第十三条窄例外**）。
+ * 原始资料重命名 / 移动：spawn 工作空间的 scripts/move_raw.py（**能力 `raw-source-organize`**）。
  * 看板只 spawn，自己不写、不 rename、不 unlink 任何一个字节；搬原件和产物、改台账、忽略规则、链接都是脚本做的。
  * 预览（`--dry-run`）与执行（`--apply --expect <指纹>`）是同一支脚本的两种模式，服务端不存预览状态。
  *
@@ -1601,87 +1602,6 @@ function decodeSegment(segment) {
 }
 
 /**
- * 会起子进程或写盘的接口：监听非环回地址时一律拒绝。
- * 看板没有鉴权，`--host 0.0.0.0` 是给评审只读分享用的，不能变成局域网里的可执行入口。
- */
-function rejectIfRemoteWrite(res, allowMutations) {
-  if (allowMutations) return false;
-  json(res, 403, {
-    error: '当前服务监听的不是本机回环地址，已禁用会改动本机状态的操作'
-      + '（新建 / 登记 / 转换资料等）。只读浏览不受影响；'
-      + '要在看板里操作，请用默认的 127.0.0.1 再起一次服务。',
-  });
-  return true;
-}
-
-/**
- * **来源判定 —— 所有会写盘 / 起子进程的接口共用这一个函数。**
- *
- * 环回 ≠ 可信:服务端没有 token,`readBody` 连 Content-Type 都不看,
- * 于是浏览器里**任意一个网页**都能用 `enctype="text/plain"` 的表单往 `127.0.0.1:<端口>` POST,
- * body 拼成合法 JSON 就被收下 —— 这种表单提交不触发预检,`allowMutations` 那条闸拦不住它。
- * 所以再加一道:请求表明自己来自别的站点时一律拒绝。
- *
- * 判据两条(浏览器一定会带其中之一,非浏览器客户端如 curl 两条都没有 → 放行):
- *   1. `Sec-Fetch-Site` 存在且不是 same-origin / none → 拒(cross-site、same-site 都拒);
- *   2. 没有该头但有 `Origin`,且 Origin 的 host 与本次请求的 Host 不同 → 拒。
- *
- * ## 扩展来源(实测过,不是猜的)
- * 装真实扩展跑一次投递,打到 `127.0.0.1` 的请求带的是:
- * `Origin: chrome-extension://<id>`、**`Sec-Fetch-Site: none`**、`Sec-Fetch-Mode: cors`,
- * 而且**没有预检**(`host_permissions` 让它不走网页那套 CORS)。
- *
- * `none` 这个值很要命:它会从上面第 1 条直接放行,第 2 条又因为该头存在而被跳过 ——
- * 也就是说**任何一个已装的扩展本来能打通全部写接口**。所以这里把扩展来源单独拎出来先判:
- * 只有采集包接收端(`/capture-package`)放行,其余一律拒。
- *
- * 头里没有能区分「我们这个扩展」和「别的扩展」的东西,放行只认协议。
- * 接受这个代价:扩展要用户自己装,而这条路的写入面只有 `visualization/references/<slug>/`,
- * 包还得先过契约 C 的校验 —— 比把它对所有网页敞开小得多。
- *
- * 只读接口(扫描、读文件、SSE)不过这道闸:它们不改本机状态,
- * 而只读分享(`--host`)场景本来就要能跨机器访问。
- *
- * @param {{ allowExtensionOrigin?: boolean }} [opts] 只有 `/capture-package` 传 true
- * @returns {boolean} true = 已经回了 403，调用方直接 return
- */
-function rejectIfForeignOrigin(req, res, { allowExtensionOrigin = false } = {}) {
-  const site = req.headers['sec-fetch-site'];
-  const origin = typeof req.headers.origin === 'string' ? req.headers.origin : '';
-  // chrome-extension: / moz-extension: / safari-web-extension: 都以 -extension: 收尾
-  if (/^[a-z][a-z0-9+.-]*-extension:$/i.test(origin.slice(0, origin.indexOf(':') + 1))) {
-    if (allowExtensionOrigin) return false;
-    json(res, 403, {
-      error: `这个请求来自浏览器扩展（${origin}）。看板只在采集包接收端接受扩展投递，`
-        + '其它操作请在看板自己的页面上做。',
-    });
-    return true;
-  }
-  if (site && site !== 'same-origin' && site !== 'none') {
-    json(res, 403, {
-      error: `这个请求来自其它站点（Sec-Fetch-Site: ${site}），看板不接受跨站的写操作。`
-        + '请在看板自己的页面上操作。',
-    });
-    return true;
-  }
-  if (!site && req.headers.origin) {
-    let originHost = '';
-    try {
-      originHost = new URL(req.headers.origin).host;
-    } catch {
-      originHost = '';
-    }
-    if (originHost !== (req.headers.host || '')) {
-      json(res, 403, {
-        error: `这个请求的来源（${req.headers.origin}）不是看板自己，已拒绝。请在看板自己的页面上操作。`,
-      });
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
  * `POST /capture-package` —— annotation-collect 扩展的投递落点(契约 D)。
  *
  * 不在 `/api/` 下面,也不带 `projectId`:**路径与端口是扩展硬编码的默认目标**,
@@ -1696,9 +1616,8 @@ async function handleCapturePackage(req, res, { allowMutations = true } = {}) {
   if (req.method !== 'POST') {
     return json(res, 405, { error: '采集包接收端只收 POST。' });
   }
-  if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-  // 这是**唯一**放行扩展来源的路径；其它写接口照旧拒扩展
-  if (rejectIfForeignOrigin(req, res, { allowExtensionOrigin: true })) return undefined;
+  // 这是**唯一**放行扩展来源的能力（注册表里 allowExtensionOrigin: true）；其它写接口照旧拒扩展
+  if (guardCapability(req, res, 'capture-package-inbox', { allowMutations })) return undefined;
 
   const { projects, activeProjectId } = readProjects();
   // 与前端 useWorkspace 同一条兜底链：活动工作空间 → 第一个
@@ -1755,8 +1674,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       return json(res, 200, { available: allowMutations });
     }
     if (req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'directory-picker', { allowMutations })) return undefined;
       if (directoryPickBusy) {
         return json(res, 409, {
           error: '已经开着一个目录选择框了，请先在桌面上把那个选完或关掉。',
@@ -1782,8 +1700,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       });
     }
     if (req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'project-registry', { allowMutations })) return undefined;
       const body = await readBody(req);
       const project = addProject(body.root, body.name);
       return json(res, 200, project);
@@ -1792,13 +1709,11 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
 
   if (head === 'projects' && id && !action) {
     if (req.method === 'DELETE') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'project-registry', { allowMutations })) return undefined;
       return json(res, 200, { removed: removeProject(id) });
     }
     if (req.method === 'PATCH') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'project-registry', { allowMutations })) return undefined;
       const body = await readBody(req);
       return json(res, 200, updateProject(id, { root: body.root, name: body.name }));
     }
@@ -1847,8 +1762,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
 
   // 新建工作空间：调共享 init_workspace.py 铺选中的模板，建完自动登记
   if (head === 'workspaces' && req.method === 'POST') {
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
+    if (guardCapability(req, res, 'workspace-init', { allowMutations })) return undefined;
     const body = await readBody(req);
     const name = (body.name || '').trim();
     const target = (body.path || '').trim();
@@ -1893,13 +1807,12 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   if (head === 'projects' && id && action === 'questions') {
     const project = requireProject(id);
     const questionId = segments[3] || '';
-    // 保存人工反馈：**不变量 1 的第四条窄例外**，看板自己写盘的唯一一处。
+    // 保存人工反馈：**能力 `question-feedback`**，看板自己写盘的唯一一处。
     // 两道闸的顺序与其它写接口一致：先非环回禁写、再来源判定，最后才读请求体。
     // 写入面压在 questions.mjs 的 writeQuestion 里（只改已存在文件的人写区四个字段），
     // 这里不做任何字段判断 —— 契约只有一处实现，路由层再判一遍只会漂。
     if (questionId && req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'question-feedback', { allowMutations })) return undefined;
       const body = await readBody(req);
       return json(res, 200, writeQuestion(project.root, questionId, body));
     }
@@ -1914,13 +1827,12 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   if (head === 'projects' && id && action === 'records') {
     const project = requireProject(id);
     const recordId = segments[3] || '';
-    // 保存一次状态变更：**不变量 1 的第六条窄例外**，看板自己写盘的第二处（另一处是人工反馈）。
+    // 保存一次状态变更：**能力 `record-status`**，看板自己写盘的第二处（另一处是人工反馈）。
     // 两道闸的顺序与其它写接口一致：先非环回禁写、再来源判定，最后才读请求体。
     // 写入面压在 records.mjs 的 writeRecordStatus 里（只改已存在记录的人写区三个字段
     // 与正文「## 状态流水」），这里不做任何字段判断 —— 契约只有一处实现，路由层再判一遍只会漂。
     if (recordId && req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'record-status', { allowMutations })) return undefined;
       const body = await readBody(req);
       return json(res, 200, writeRecordStatus(project.root, recordId, body));
     }
@@ -1929,18 +1841,17 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   }
 
   // 看板反馈单：扫 output/feedback/ 现算索引。带编号时取详情；
-  // POST .../sent 写发送记录 —— **不变量 1 的第八条窄例外**。
+  // POST .../sent 写发送记录 —— **能力 `feedback-sent`**。
   // 两道闸的顺序与其它写接口一致。字段判断只在 feedback.mjs 里做一遍。
   if (head === 'projects' && id && action === 'feedback') {
     const project = requireProject(id);
     const feedbackId = segments[3] || '';
     const sub = segments[4] || '';
-    if (sub && !(sub === 'sent' && req.method === 'POST')) {
+    if (sub && !(sub === 'sent' && req.method === 'POST')) { // capability: no-write（只回 400）
       return json(res, 400, { error: `不认识这个操作：${sub}` });
     }
     if (feedbackId && sub === 'sent' && req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'feedback-sent', { allowMutations })) return undefined;
       const body = await readBody(req);
       return json(res, 200, markSent(project.root, feedbackId, body));
     }
@@ -1949,15 +1860,14 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   }
 
   // docx 模板目录：GET 只读。名字只接受一层基名，路径由 docxTemplates.mjs 用 resolveInside 拼。
-  // POST .../:name/collect 与 .../:name/build 是**第九条窄例外**：看板只 spawn 工作空间的
+  // POST .../:name/collect 与 .../:name/build 是**能力 `docx-template-refine`**：看板只 spawn 工作空间的
   // docx_template.py，自己不写盘；载荷只有 docKey、决定与 regenerate，不收路径（见 docxTools.mjs）。
   if (head === 'projects' && id && action === 'docx-templates') {
     const project = requireProject(id);
     const templateName = segments[3] || '';
     const step = segments[4];
     if (req.method === 'POST' && segments.length === 5 && (step === 'collect' || step === 'build')) {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'docx-template-refine', { allowMutations })) return undefined;
       const body = await readBody(req);
       const result = step === 'collect'
         ? await runDocxCollect(project, templateName, body)
@@ -1969,7 +1879,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return json(res, 200, listDocxTemplates(project.root));
   }
 
-  // 去 AI 味：规则库与交付稿版本，**只读**（不变量 1：这条线看板不新增写入，见 deai.mjs）。
+  // 去 AI 味：规则库与交付稿版本，**只读**（能力清单：这条线看板不新增写入，见 deai.mjs）。
   // 路径全部由服务端拼、过 resolveInside；版本号只收正整数，交付稿只收原稿的 docKey。
   if (head === 'projects' && id && action === 'deai' && segments[3] === 'rules') {
     if (req.method !== 'GET') return json(res, 405, { error: '只接受 GET' });
@@ -1978,13 +1888,12 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     if (segments.length === 6 && segments[4] === 'versions') return json(res, 200, readDeaiRuleVersion(project.root, segments[5]));
     return json(res, 400, { error: '规则库接口只有 rules 与 rules/versions/<正整数>' });
   }
-  // 交付稿定稿：**第十条窄例外**。pick 在本机弹系统选文件框、只回一次性令牌；confirm 只收令牌（和可选备注），
+  // 交付稿定稿：**能力 `delivery-finalize`**。pick 在本机弹系统选文件框、只回一次性令牌；confirm 只收令牌（和可选备注），
   // spawn 工作空间的 finalize_delivery.py。两步都不收任何路径（见 finalize.mjs）。
   if (head === 'projects' && id && action === 'delivery' && segments[3] === 'final'
       && (segments.length === 4 || (segments.length === 5 && segments[4] === 'pick'))) {
     if (req.method !== 'POST') return json(res, 405, { error: '只接受 POST' });
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
+    if (guardCapability(req, res, 'delivery-finalize', { allowMutations })) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, segments.length === 5 ? await pickFinal(project, body) : await confirmFinal(project, body));
@@ -1995,12 +1904,11 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     return json(res, 200, listDelivery(project.root, url.searchParams.get('docKey') || ''));
   }
 
-  // .md 转成 Word：**第九条窄例外**。看板只 spawn 工作空间的 md2docx.py，
+  // .md 转成 Word：**能力 `md-docx-export`**。看板只 spawn 工作空间的 md2docx.py，
   // 载荷只有 docKey、模板名与 overwrite，不收路径；成品落点由脚本按来源计算（见 docxTools.mjs）。
   if (head === 'projects' && id && action === 'docx' && segments[3] === 'convert' && segments.length === 4) {
     if (req.method !== 'POST') return json(res, 405, { error: '只接受 POST' });
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
+    if (guardCapability(req, res, 'md-docx-export', { allowMutations })) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, await runDocxConvert(project, body));
@@ -2201,8 +2109,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
   // 交给系统：在访达里定位，或用默认程序打开原始文档
   if (head === 'projects' && id && action === 'reveal' && req.method === 'POST') {
     // 起系统进程只在服务所在机器上有意义；远程分享场景禁掉，避免被当成任意 open 入口
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
+    if (guardCapability(req, res, 'reveal-in-system', { allowMutations })) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     const abs = resolveInside(project.root, body.path);
@@ -2218,8 +2125,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       return json(res, 200, ingestStatus(project.id));
     }
     if (req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'raw-ingest', { allowMutations })) return undefined;
       const body = await readBody(req);
       const started = await startIngest(project, body.path);
       return json(res, 200, started);
@@ -2234,8 +2140,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     }
     if (req.method === 'POST') {
       // 会起子进程，与其它同类接口一样：非环回监听时一律 403
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'db-schema-refresh', { allowMutations })) return undefined;
       const body = await readBody(req);
       const started = await startSourceIngest(project, body.source);
       return json(res, 200, started);
@@ -2254,14 +2159,12 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       if (req.method === 'GET') {
         return json(res, 200, mergeNoteHistory(project.root, file, listNoteHistory(project.id, file).batches));
       }
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'note-history-cache', { allowMutations })) return undefined;
       clearNoteHistory(project.id, file);
       return json(res, 200, mergeNoteHistory(project.root, file, listNoteHistory(project.id, file).batches));
     }
     if (req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'record-notes', { allowMutations })) return undefined;
       const body = await readBody(req);
       const payload = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
       const recordId = typeof payload.recordId === 'string' ? payload.recordId.trim() : '';
@@ -2290,49 +2193,45 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
 
   // 参考收件箱：看板只 spawn 工作空间 scripts/web_ingest.py --inbox，自己不写任何一个字节。
   // 请求不带路径 / 文件名 / URL，参数由服务端写死。
-  // 一次归档（不变量 1 第七条窄例外）：看板只 spawn 工作空间的 scripts/archive_output.py，
+  // 一次归档（能力 `output-archive`）：看板只 spawn 工作空间的 scripts/archive_output.py，
   // 请求只带组名与文件名，不接受任何路径；同步等脚本退出
   if (head === 'projects' && id && action === 'archive' && req.method === 'POST') {
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
+    if (guardCapability(req, res, 'output-archive', { allowMutations })) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, await runArchive(project, body));
   }
 
-  // 重命名（不变量 1 第十一条窄例外）：看板只 spawn 工作空间的 scripts/rename_output.py，
+  // 重命名（能力 `output-rename`）：看板只 spawn 工作空间的 scripts/rename_output.py，
   // 请求只带 docKey、新基名与（执行时）预览指纹，不接受任何路径；同步等脚本退出。
   // 预览也起子进程，所以两条都过环回与同源两道闸
   if (head === 'projects' && id && action === 'rename' && req.method === 'POST') {
     const sub = segments[3] || '';
     if (sub && sub !== 'preview') return json(res, 400, { error: `不认识这个操作：${sub}` });
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
+    if (guardCapability(req, res, 'output-rename', { allowMutations })) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, await runRename(project, body, { apply: sub !== 'preview' }));
   }
 
-  // 转换产物复制到产出（不变量 1 第十二条窄例外）：看板只 spawn 工作空间的 scripts/copy_converted.py，
+  // 转换产物复制到产出（能力 `converted-copy-to-output`）：看板只 spawn 工作空间的 scripts/copy_converted.py，
   // 请求只带 docKey 与组名，不接受任何路径；同步等脚本退出。预览也起子进程，两条都过环回与同源两道闸
   if (head === 'projects' && id && action === 'converted-copy' && req.method === 'POST') {
     const sub = segments[3] || '';
     if (sub && sub !== 'preview') return json(res, 400, { error: `不认识这个操作：${sub}` });
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
+    if (guardCapability(req, res, 'converted-copy-to-output', { allowMutations })) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, await runConvertedCopy(project, body, { apply: sub !== 'preview' }));
   }
 
-  // 原始资料重命名 / 移动（不变量 1 第十三条窄例外）：看板只 spawn 工作空间的 scripts/move_raw.py，
+  // 原始资料重命名 / 移动（能力 `raw-source-organize`）：看板只 spawn 工作空间的 scripts/move_raw.py，
   // 请求只带整理键、新名字或目标目录键与（执行时）预览指纹，不接受任何路径；同步等脚本退出。
   // 预览也起子进程，所以两条都过环回与同源两道闸
   if (head === 'projects' && id && action === 'raw-organize' && req.method === 'POST') {
     const sub = segments[3] || '';
     if (sub && sub !== 'preview') return json(res, 400, { error: `不认识这个操作：${sub}` });
-    if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-    if (rejectIfForeignOrigin(req, res)) return undefined;
+    if (guardCapability(req, res, 'raw-source-organize', { allowMutations })) return undefined;
     const project = requireProject(id);
     const body = await readBody(req);
     return json(res, 200, await runRawOrganize(project, body, { apply: sub !== 'preview' }));
@@ -2344,8 +2243,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       return json(res, 200, webIngestStatus(project.id));
     }
     if (req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'reference-inbox-refresh', { allowMutations })) return undefined;
       await readBody(req);
       return json(res, 200, await startWebIngest(project));
     }
@@ -2359,8 +2257,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
       return json(res, 200, protoSyncStatus(project.id));
     }
     if (req.method === 'POST') {
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'prototype-refresh', { allowMutations })) return undefined;
       const body = await readBody(req);
       return json(res, 200, startProtoSync(project, body.item));
     }
@@ -2376,8 +2273,7 @@ async function handleApi(req, res, url, { allowMutations = true } = {}) {
     }
     if (req.method === 'POST') {
       // 先环回闸，再来源闸 —— 两条都过了才起子进程
-      if (rejectIfRemoteWrite(res, allowMutations)) return undefined;
-      if (rejectIfForeignOrigin(req, res)) return undefined;
+      if (guardCapability(req, res, 'visual-capture', { allowMutations })) return undefined;
       const body = await readBody(req);
       return json(res, 200, startCapture(project, body.plane, body.url));
     }

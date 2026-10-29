@@ -1,9 +1,9 @@
 /**
  * 去 AI 味：读规则库、列交付稿版本。**全部只读**。
  *
- * AGENTS.md 不变量 1：去 AI 味这条线看板不新增任何写入。交付稿、规则库、快照、CHANGELOG
+ * AGENTS.md 能力清单：去 AI 味这条线看板不新增任何写入。交付稿、规则库、快照、CHANGELOG
  * 全由工作空间 AI 按技能 `pm-deai-writing` 写；改交付稿走「批注 → AI 修改 → 同步沉淀」，
- * 看板唯一的写入是批注落盘（notes.mjs，第六条第二种写入）。**别在这个模块里加写入。**
+ * 看板唯一的写入是批注落盘（notes.mjs，能力 `record-notes`）。**别在这个模块里加写入。**
  *
  * 规则库在工作空间 `.claude/skills/pm-deai-writing/rules/`，不在 SSE 监听范围里（只监听 input/ output/ visualization/），
  * 前端在打开模块页时自己重新拉。
@@ -219,7 +219,7 @@ function docxAt(root, rel) {
 const FINAL_MD = '定稿.md';
 
 /**
- * 镜像目录下的 `定稿.md`（第十条，由 scripts/finalize_delivery.py 写）→ 列表的可选字段 `final`；没有就是 undefined。
+ * 镜像目录下的 `定稿.md`（能力 `delivery-finalize`，由 scripts/finalize_delivery.py 写）→ 列表的可选字段 `final`；没有就是 undefined。
  * 「最近一次用的哪份 Word」只认 front-matter 的 `docx`，且必须直接落在镜像目录里，否则当 null（不按修改时间猜）。
  * history 行：`<时间> | <镜像目录里的文件名> | 镜像目录 | 备注 …` 或 `… | 其他目录（原名 <原文件名>） | …`。
  */

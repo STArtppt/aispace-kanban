@@ -133,7 +133,7 @@ function ensureZipExtracted(zipAbs) {
   }
 
   try {
-    fs.rmSync(dest, { recursive: true, force: true });
+    fs.rmSync(dest, { recursive: true, force: true }); // capability: tmp-cleanup
     fs.mkdirSync(dest, { recursive: true });
     extractZip(zipAbs, dest);
     fs.writeFileSync(readyMark, `${new Date().toISOString()}\n${zipAbs}\n`, 'utf8');

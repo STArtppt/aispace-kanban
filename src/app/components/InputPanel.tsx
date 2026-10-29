@@ -80,7 +80,7 @@ function pendingLabel(item: FileItem): string {
 const ORGANIZE_OLD_SERVER = '看板服务是旧版本，重启看板服务后可用';
 
 /**
- * 「重命名」「移动到…」为什么不能用；能用时返回空串（不变量 1 第十三条）。
+ * 「重命名」「移动到…」为什么不能用；能用时返回空串（能力 `raw-source-organize`）。
  * 不能用时置灰并写原因，不隐藏：新旧进程混跑时，人才分得清是版本问题还是没有这个功能。
  */
 function organizeBlockReason(scan: Scan): string {

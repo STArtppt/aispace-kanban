@@ -95,7 +95,7 @@ const SELECT = 'h-8 max-w-44 rounded-lg border border-input bg-background px-1 t
 
 /**
  * 模版洗炼的四步。第 ② 步「开始分析」、第 ④ 步「生成模板」经服务端 spawn 工作空间的
- * `scripts/docx_template.py`（AGENTS.md 不变量 1 第九条）；载荷只有 docKey、模板名与决定，不带路径。
+ * `scripts/docx_template.py`（能力 `docx-template-refine`）；载荷只有 docKey、模板名与决定，不带路径。
  * 第 ②③ 步的决定只在这个组件里，离开页面就丢（采集报告已经落盘，「继续」能接上）。
  */
 export function RefineWizard({

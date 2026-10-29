@@ -49,8 +49,14 @@ description: 在 aispace-kanban 里新增或修改任何功能时使用 —— �
   - 出错 `throw new Error('中文说明')`,需要状态码就挂 `err.statusCode`,由 `createServer` 统一转 JSON。
   - **接路径参数的接口第一件事是 `resolveInside(project.root, 参数)`**(红线,防 `../` 穿越)。
   - 需要项目对象就用 `requireProject(id)`,别自己写"项目不存在"。
-- **只读红线**:不 `writeFile` / `rename` / `unlink` 工作空间里的任何东西。
-  想写?先停下来问人。允许的窄例外只写在 [AGENTS.md](../../../AGENTS.md) 不变量 1,这里不复制 —— 改范围改那一份。
+- **写入只走能力清单 + 安全链路**:清单以外不 `writeFile` / `rename` / `unlink` 工作空间里的任何东西,
+  想新增或扩大写入先停下来问人。链路与清单只写在 [AGENTS.md](../../../AGENTS.md) 不变量 1,这里不复制。
+  人拍板后,新增写能力按这个顺序落地:
+  1. `src/server/capabilities.mjs` 的 `CAPABILITIES` 登记(标识、作用域、执行者、承载模块、spec、偏离);
+  2. 路由里在读请求体之前调 `guardCapability(req, res, '<标识>', { allowMutations })`;
+  3. AGENTS.md 能力清单加一行(标识与注册表一致);
+  4. 写 / 改对应的 openspec spec(写入面、寻址、拒绝条件);
+  5. 跑 `pnpm test:capabilities`。
 - 读失败降级成空值,别让进程崩(照 `readProjects` 的写法)。
 
 ### 步骤 2 · 同步契约(`src/app/lib/api.ts`)
@@ -84,11 +90,12 @@ SSE 由 `http.mjs` 的 `watchWorkspace` 提供,**只监听**:
 新数据源在这些路径之外(比如工作空间根下另一个目录),它**不会自动刷新**。
 要么把目录加进 `watchWorkspace` 的列表,要么在界面上说清"需要手动刷新"。别默认它会更新。
 
-### 步骤 5 · 验证(三道闸,一道都不能省)
+### 步骤 5 · 验证(四道闸,一道都不能省)
 
 ```bash
 pnpm typecheck                      # 只覆盖 src/app —— 服务端全绿不代表没错
 pnpm build                          # 非 dev 模式的 serve 伺服 dist/,不构建看不到新界面
+pnpm test:capabilities              # 服务端写入边界的静态检查(改了 src/server/** 必跑)
 pnpm dev                            # 重启!服务端不热更
 curl -s localhost:7788/api/health   # 服务活着
 curl -s "localhost:7788/api/projects/<id>/scan" | head -c 600   # 新字段真的在返回里
@@ -106,10 +113,10 @@ curl -s "localhost:7788/api/projects/<id>/scan" | head -c 600   # 新字段真�
 
 - [ ] 服务端真的产出了这个字段(`curl` 看过原始返回,不是"应该有")
 - [ ] `api.ts` 的 type 与返回一致,新字段是可选的,前端有兜底
-- [ ] 新接口过了 `resolveInside`,没往工作空间写任何文件
+- [ ] 新接口过了 `resolveInside`;写接口调了 `guardCapability`,写入在能力清单内,`pnpm test:capabilities` 绿
 - [ ] 新视图同时改了 `View` 和 `NAV`
 - [ ] 新数据源在 SSE 监听范围内,或界面上已说明需手动刷新
-- [ ] `pnpm typecheck` 绿、`pnpm build` 绿、重启后冒烟点过
+- [ ] `pnpm typecheck` 绿、`pnpm build` 绿、`pnpm test:capabilities` 绿、重启后冒烟点过
 - [ ] 文案是中文、平实、说清后果
 
 ## 关联

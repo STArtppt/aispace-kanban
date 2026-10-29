@@ -66,7 +66,7 @@ export interface FileItem {
   nested?: boolean;
   /**
    * 不透明键：产出三组里的所有文件、`input/raw/` 里的 `.docx`、转换产物根下的单文件 `.md` 才有。
-   * 「转成 Word」「提炼模板」「重命名」只拿它指定来源，不传路径（AGENTS.md 不变量 1 第九、十一条）。
+   * 「转成 Word」「提炼模板」「重命名」只拿它指定来源，不传路径（能力 `docx-template-refine` / `md-docx-export` / `output-rename`）。
    * 产出组里非 `.md` 的键只用于重命名，「转成 Word」仍按 `ext === '.md'` 判断。
    * 可选：旧服务进程没有。产出列表缺了就置灰；输入转换产物缺了就不出现交付稿栏。
    */
@@ -77,7 +77,7 @@ export interface FileItem {
    */
   docxGenerated?: boolean;
   /**
-   * 只在 `input.raw` 条目上：「重命名」「移动到…」（不变量 1 第十三条）只拿它指定来源，不传路径。
+   * 只在 `input.raw` 条目上：「重命名」「移动到…」（能力 `raw-source-organize`）只拿它指定来源，不传路径。
    * 可选：旧服务进程没有，缺了整理动作置灰、不能拖。
    */
   organizeKey?: string;
@@ -1607,7 +1607,7 @@ export interface DeliveryList {
   final?: DeliveryFinal;
 }
 
-/** 定稿（第十条）：最近一次交出去的那份 Word 及历次记录，读自 `定稿.md` 的 front-matter */
+/** 定稿（能力 `delivery-finalize`）：最近一次交出去的那份 Word 及历次记录，读自 `定稿.md` 的 front-matter */
 export interface DeliveryFinal {
   /** `output/delivery/…/定稿.md` */
   path: string;
@@ -1755,7 +1755,7 @@ export const api = {
     request<QuestionDetail>(`/api/projects/${id}/questions/${encodeURIComponent(questionId)}`),
   /**
    * 保存一条人工反馈。**看板唯一一处自己写工作空间的接口**
-   * （AGENTS.md 不变量 1 的第四条窄例外，六条约束写在那里）。
+   * （能力 `question-feedback`，约束见能力清单与对应 spec）。
    *
    * 只改已存在文件的人写区四个字段与正文「## 人工反馈」小节；不新建、不删除、不改名。
    * 返回保存后的整条详情 —— 前端据此立刻更新，不等 SSE 绕一圈回来。
@@ -1782,7 +1782,7 @@ export const api = {
     request<OutputRecordDetail>(`/api/projects/${id}/records/${encodeURIComponent(recordId)}`),
   /**
    * 保存一次状态变更（状态 + 一句说明）。**看板第二处自己写工作空间的接口**
-   * （AGENTS.md 不变量 1 的第六条窄例外，六条约束写在那里）。
+   * （能力 `record-status`，约束见能力清单与对应 spec）。
    *
    * 只改已存在记录的人写区三个字段与正文「## 状态流水」小节；不新建、不删除、不改名。
    * 返回保存后的整条详情 —— 前端据此立刻更新，不等 SSE 绕一圈回来。
@@ -1790,7 +1790,7 @@ export const api = {
    */
   /**
    * 一次归档：服务端 spawn 工作空间的 scripts/archive_output.py，把组根目录下的一份产出物
-   * 移进同组的 `一次归档/`，同步等脚本退出。看板自己不写盘（不变量 1 第七条窄例外）。
+   * 移进同组的 `一次归档/`，同步等脚本退出。看板自己不写盘（能力 `output-archive`）。
    * 失败时错误信息是脚本或服务端的原话，照原文显示。
    * 老服务进程没有这个接口（404 「未知接口」），`request` 已经把「重启 serve」写进提示。
    */
@@ -1810,7 +1810,7 @@ export const api = {
     }),
   /**
    * 执行重命名：脚本按预览指纹重算，对不上 409（kind `stale`），磁盘不变。
-   * 看板自己不写盘（不变量 1 第十一条窄例外），错误信息是脚本原话。
+   * 看板自己不写盘（能力 `output-rename`），错误信息是脚本原话。
    */
   renameOutput: (id: string, body: RenameRequest & { plan: string }) =>
     request<RenameResult>(`/api/projects/${id}/rename`, {
@@ -1828,7 +1828,7 @@ export const api = {
     }),
   /**
    * 执行整理：脚本按预览指纹重算，对不上 409（kind `stale`），磁盘不变。
-   * 看板自己不写盘（不变量 1 第十三条窄例外），错误信息是脚本原话。
+   * 看板自己不写盘（能力 `raw-source-organize`），错误信息是脚本原话。
    */
   rawOrganize: (id: string, body: RawOrganizeRequest & { plan: string }) =>
     request<RawOrganizeResult>(`/api/projects/${id}/raw-organize`, {
@@ -1846,7 +1846,7 @@ export const api = {
     }),
   /**
    * 执行复制：只新建一个 .md，落点已存在 409（kind `conflict`），不覆盖。
-   * 看板自己不写盘（不变量 1 第十二条窄例外），错误信息是脚本原话。
+   * 看板自己不写盘（能力 `converted-copy-to-output`），错误信息是脚本原话。
    */
   convertedCopy: (id: string, body: ConvertedCopyRequest) =>
     request<ConvertedCopyResult>(`/api/projects/${id}/converted-copy`, {
@@ -1869,7 +1869,7 @@ export const api = {
     request<FeedbackDetail>(`/api/projects/${id}/feedback/${encodeURIComponent(feedbackId)}`),
   /**
    * 用户确认「我已发出」之后写 `sent_at` 并追加一条发送记录
-   * （AGENTS.md 不变量 1 的第八条窄例外）。
+   * （能力 `feedback-sent`）。
    * 时间以服务端为准，载荷里的 `sent_at` 会被忽略；带上其它字段则 400。
    */
   feedbackMarkSent: (id: string, feedbackId: string) =>
@@ -1887,7 +1887,7 @@ export const api = {
       `/api/projects/${id}/docx-templates/${encodeURIComponent(name)}`,
     ),
   /**
-   * 提炼第 ② 步「开始分析」：服务端 spawn 工作空间的 docx_template.py collect（第九条例外）。
+   * 提炼第 ② 步「开始分析」：服务端 spawn 工作空间的 docx_template.py collect（能力 `docx-template-refine`）。
    * 载荷只有 docKey 与 regenerate。重名未确认 409、非环回 403、缺脚本 / Python 400（kind 说明是哪种）。
    * 旧服务进程 404，调用方用 `isUnsupported` 识别并提示重启。
    */
@@ -1903,7 +1903,7 @@ export const api = {
       body: JSON.stringify(body),
     }),
   /**
-   * 「转成 Word」：服务端 spawn 工作空间的 md2docx.py（第九条例外）。
+   * 「转成 Word」：服务端 spawn 工作空间的 md2docx.py（能力 `md-docx-export`）。
    * 成品落在按来源算出的镜像目录（产出原稿、输入转换产物）或交付稿同目录，结果里的 `target` 是实际路径。
    * 同名文件没有生成标记 409（kind `not-generated`）、带标记但没勾覆盖 409（`exists`）、缺 pandoc 400（`no-pandoc`）。
    */
@@ -2086,7 +2086,7 @@ export const api = {
   deliveryVersions: (id: string, docKey: string) =>
     request<DeliveryList>(`/api/projects/${id}/delivery?docKey=${encodeURIComponent(docKey)}`),
   /**
-   * 定稿第一步：服务端在本机弹系统选文件框（只能选 .docx），只回一次性令牌（第十条）。
+   * 定稿第一步：服务端在本机弹系统选文件框（只能选 .docx），只回一次性令牌（能力 `delivery-finalize`）。
    * 旧服务 404（`isUnsupported`）→ 按钮置灰提示重启；缺脚本 / Python 400；已有选框开着 409。
    */
   finalizePick: (id: string, docKey: string) =>

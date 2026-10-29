@@ -25,7 +25,8 @@
     "test:converted-migration": "node scripts/check-converted-migration.mjs",
     "test:rename": "node scripts/check-rename.mjs",
     "test:converted-copy": "node scripts/check-converted-copy.mjs",
-    "test:raw-move": "node scripts/check-move-raw.mjs"
+    "test:raw-move": "node scripts/check-move-raw.mjs",
+    "test:capabilities": "node scripts/check-capabilities.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

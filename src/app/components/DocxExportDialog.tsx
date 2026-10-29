@@ -145,7 +145,7 @@ function showConvertResultToast({
 }
 
 /**
- * 产出 `.md` 的「转成 Word」：选模板，然后「转换」（服务端 spawn md2docx.py，第九条例外）或「复制提示词」。
+ * 产出 `.md` 的「转成 Word」：选模板，然后「转换」（服务端 spawn md2docx.py，能力 `md-docx-export`）或「复制提示词」。
  *
  * 同名 `.docx` 的处理按服务端下发的 `docxGenerated`：带生成标记的上一份由脚本改名为
  * `<基名>-<上次转换时间>.docx` 保留，再写新的（载荷总带 `archive: true`，没有同名文件时它不起作用）；

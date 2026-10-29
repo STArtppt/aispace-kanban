@@ -32,7 +32,7 @@ type PreviewState =
   | { state: 'error'; message: string };
 
 /**
- * 重命名弹窗（不变量 1 第十一条）：填新名字 → 自动预览 → 确定。
+ * 重命名弹窗（能力 `output-rename`）：填新名字 → 自动预览 → 确定。
  * 预览和执行都由服务端 spawn 工作空间的 `scripts/rename_output.py`，请求只带 docKey 与新基名。
  * 「确定」只在当前输入的预览成功后可点；执行时脚本按指纹重算，预览后有文件变了会 409，这里自动重新预览。
  */

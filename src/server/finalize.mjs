@@ -1,14 +1,14 @@
 /**
  * 交付稿定稿：弹系统选文件框、发一次性令牌、确认后 spawn 工作空间脚本。
  *
- * **AGENTS.md 不变量 1 的第十条窄例外**（spawn 族，与第九条同构）：
+ * **能力 `delivery-finalize`**（spawn 族，与能力 `docx-template-refine` / `md-docx-export` 同构）：
  * - 看板只 spawn 工作空间的 `scripts/finalize_delivery.py`，自己不写、不 rename、不 unlink 任何一个字节；
  * - 请求**不带任何路径**：原稿只用 `docKey`；选中文件的绝对路径只存在这里的内存 `tokens`，前端只拿令牌
  *   （10 分钟有效、用一次即废，且必须属于同一个工作空间）。确认时可附 ≤60 字的单行备注，只作为文本交给脚本；
  * - 这是唯一会读工作空间以外文件的例外：读的是脚本，只读用户在系统选文件框里亲手选中的那一个 `.docx`；
  *   这里不提供任何「按路径读外部文件」的能力；
  * - 同步等脚本退出、带超时；同一份原稿的定稿进行中第二个请求 409；同一时间只弹一个选文件框，第二个 409。
- * 环回与跨站两道闸在 http.mjs 的路由上（`allowMutations` + `rejectIfForeignOrigin`）。
+ * 环回与跨站两道闸在 http.mjs 的路由上（`guardCapability`，见 capabilities.mjs）。
  */
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';

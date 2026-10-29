@@ -87,7 +87,7 @@ export function outputPlacement(relPath) {
  * 转换产物根（`output/converted/`，旧布局 `input/converted/`）下的单文件 `.md`
  * （转成 Word，成品进 `output/delivery/converted/`；摘要入口和目录型产物没有）。
  *
- * 写接口只收这个键、**不收路径**（AGENTS.md 不变量 1 第九条第 ④ 款）：
+ * 写接口只收这个键、**不收路径**（能力 `docx-template-refine` / `md-docx-export` 的「寻址」）：
  * 服务端重新走一遍对应目录、在同一类条目里反查出路径，查不到就 400。
  * 用路径摘要而不是内存里的临时 id，是为了不维护状态 —— 服务重启后键照样有效。
  */
@@ -158,7 +158,7 @@ export function docxTargetOf(relPath) {
 
 /**
  * docKey 的五类来源。反查只在对应的那一类里找，产出的键换不来原件、也换不来输入转换产物。
- * `output-file` 是三组下的所有文件（重命名用，第十一条）；`output-md` 仍只在其中的 .md 里找，
+ * `output-file` 是三组下的所有文件（重命名用，能力 `output-rename`）；`output-md` 仍只在其中的 .md 里找，
  * 非 .md 的键在「转成 Word」上照样查不到。
  */
 const DOC_KEY_KINDS = {
@@ -195,7 +195,7 @@ function rel(root, abs) {
 
 /**
  * 原始资料清单里出现过的目录（`input/raw` 本身不算）：只含「下面至少有一个已列出文件」的。
- * 整理（第十三条）只能把东西移到这些目录或根上；空目录不进来，本次不做新建目录。
+ * 整理（能力 `raw-source-organize`）只能把东西移到这些目录或根上；空目录不进来，本次不做新建目录。
  * @param {string[]} filePaths 工作空间相对路径
  */
 function rawDirsOf(filePaths) {
@@ -904,9 +904,9 @@ function scanInput(root) {
       ext: path.extname(abs).toLowerCase(),
       reader: readerKind(path.extname(abs).toLowerCase()),
       ...stat(abs),
-      // 可选：提炼 Word 模板时用它指定来源（第九条例外不收路径）。旧前端不认，忽略即可
+      // 可选：提炼 Word 模板时用它指定来源（能力 `docx-template-refine` 不收路径）。旧前端不认，忽略即可
       ...(path.extname(abs).toLowerCase() === '.docx' ? { docKey: docKeyOf(p) } : {}),
-      // 可选：重命名 / 移动（第十三条）用它指定来源，只在 findRawByKey 里反查
+      // 可选：重命名 / 移动（能力 `raw-source-organize`）用它指定来源，只在 findRawByKey 里反查
       organizeKey: docKeyOf(p),
     };
   });
@@ -955,7 +955,7 @@ function scanInput(root) {
   const indexPath = path.join(inputDir, 'INDEX.md');
   // 模板工作空间才有 scripts/ingest.py；自己 mkdir 的只有目录约定，不能在看板里触发转换
   const canIngest = fs.existsSync(path.join(root, 'scripts', 'ingest.py'));
-  // 原始资料整理（第十三条）：要有 move_raw.py，产物也不能还在旧位置 input/converted/（脚本会拒绝）。
+  // 原始资料整理（能力 `raw-source-organize`）：要有 move_raw.py，产物也不能还在旧位置 input/converted/（脚本会拒绝）。
   // 判据与 http.mjs 的 runRawOrganize 起脚本前的两道拦截同一口径
   const organizeRawBlock = !fs.existsSync(path.join(root, 'scripts', 'move_raw.py')) ? 'no-script'
     : convertedRoot.layout === 'input' ? 'legacy-converted' : '';
@@ -1078,7 +1078,7 @@ function scanOutput(root) {
       canArchive: fs.existsSync(path.join(root, 'scripts', 'archive_output.py')),
       // 同理：模板更新后才有改名脚本。旧服务进程不给这个字段，前端按「重启后可用」置灰
       canRename: fs.existsSync(path.join(root, 'scripts', 'rename_output.py')),
-      // 转换产物「复制到…」（第十二条）同理：有 copy_converted.py 才可用。条目沿用 converted-md 的 docKey
+      // 转换产物「复制到…」（能力 `converted-copy-to-output`）同理：有 copy_converted.py 才可用。条目沿用 converted-md 的 docKey
       canCopyConverted: fs.existsSync(path.join(root, 'scripts', 'copy_converted.py')),
       stats: {
         analysis: inMain('analysis').length,

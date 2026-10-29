@@ -1,7 +1,7 @@
 /**
  * 批注文件：读 `output/records/notes/I<编号>.md`，以及唯一的写入收口 `appendNotes`。
  *
- * 这是 AGENTS.md 不变量 1 第六条窄例外的**第二种写入**。
+ * 这是能力 `record-notes` 的写入。
  * 和记录状态写入同形（看板自己写盘、不 spawn），但有一款是实质扩张：
  * **允许新建**批注文件。同编号的记录文件必须已经存在，不存在就 404，
  * 不因此去建记录。只追加，不改已有条目，不删、不改名。
@@ -572,7 +572,7 @@ function writeAtomic(abs, text) {
     fs.renameSync(tmp, abs);
   } catch (err) {
     try {
-      fs.unlinkSync(tmp);
+      fs.unlinkSync(tmp); // capability: tmp-cleanup
     } catch {
       // 临时件没写成，不用再删
     }

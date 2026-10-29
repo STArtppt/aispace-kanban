@@ -23,10 +23,10 @@
  *   - 缺 `playwright`  → **成功但降级**,参考只出 index.html、原型只出 meta.json。
  * 降级原因写进 `meta.json` 的 `degraded` 和界面,不许只写日志。
  *
- * ## 只读红线的窄例外
+ * ## 写工作空间的能力
  * 写路径只允许落在 `visualization/references/<slug>/` 与 `visualization/prototypes/<slug>/`,
  * 且必须先过 `resolveInside()`;slug 由本模块生成,不接受任何客户端传来的路径片段;
- * **只新建,不覆盖、不删除**。范围见 AGENTS.md 不变量 1 的第二条窄例外。
+ * **只新建,不覆盖、不删除**。范围见能力 `visual-capture`。
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -164,7 +164,7 @@ export function writeCaptureDir(root, plane, baseSlug, stageDir) {
   } catch (err) {
     if (err.code !== 'EXDEV') throw err;
     fs.cpSync(stageDir, dirAbs, { recursive: true });
-    fs.rmSync(stageDir, { recursive: true, force: true });
+    fs.rmSync(stageDir, { recursive: true, force: true }); // capability: tmp-cleanup
   }
 
   return { slug, dir: dirAbs, rel: `${planeDir.split(path.sep).join('/')}/${slug}` };
@@ -183,7 +183,7 @@ export function makeStageDir() {
 
 export function dropStageDir(stageDir) {
   try {
-    fs.rmSync(stageDir, { recursive: true, force: true });
+    fs.rmSync(stageDir, { recursive: true, force: true }); // capability: tmp-cleanup
   } catch {
     // 清不掉只是留个临时目录在缓存里，不该因此让任务失败
   }
@@ -442,7 +442,7 @@ async function captureScreenshots(browser, url, stageDir) {
       } catch {
         // 单档失败只丢这一档；写了一半的 png 一并删掉，别让扫描列出一张破图
         try {
-          fs.rmSync(path.join(shotsDir, `${kind}.png`), { force: true });
+          fs.rmSync(path.join(shotsDir, `${kind}.png`), { force: true }); // capability: tmp-cleanup
         } catch {
           /* 删不掉就算了 */
         }
@@ -522,7 +522,7 @@ async function runReferenceCapture(root, url) {
       if (shots.length < 3) degraded.push('screenshots');
       if (!shots.length) {
         // 一张都没有就别留空目录，免得扫描以为有截图
-        fs.rmSync(path.join(stageDir, 'screenshots'), { recursive: true, force: true });
+        fs.rmSync(path.join(stageDir, 'screenshots'), { recursive: true, force: true }); // capability: tmp-cleanup
       }
     }
 
@@ -581,7 +581,7 @@ async function runPrototypeImport(root, url) {
         coverError = err?.message || String(err);
         console.warn('[capture] 封面截图失败，按降级处理：', coverError);
         degraded.push('cover');
-        fs.rmSync(path.join(stageDir, 'cover.png'), { force: true });
+        fs.rmSync(path.join(stageDir, 'cover.png'), { force: true }); // capability: tmp-cleanup
       }
     }
 

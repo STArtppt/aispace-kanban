@@ -59,7 +59,7 @@ function changelogSections(text: string): Map<number, string> {
 
 /**
  * 工作台「去 AI 味」：规则库（只读）、版本与变更（CHANGELOG 小节、两版对比）、三张提示词卡片。
- * **只读**：复制提示词只写剪贴板，不发任何写请求（AGENTS.md 不变量 1：这条线看板不新增写入）。
+ * **只读**：复制提示词只写剪贴板，不发任何写请求（AGENTS.md 能力清单：这条线看板不新增写入）。
  */
 export function DeaiPane({
   projectId,

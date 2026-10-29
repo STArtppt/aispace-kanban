@@ -4,7 +4,7 @@ schema: spec-driven
 # 事实源是根目录 AGENTS.md —— 这里只放"写规划产物当下必须知道"的部分,不复制它的内容,
 # 避免两份文档漂移。改协作约定去改 AGENTS.md。
 context: |
-  项目:aispace-kanban —— 与 AI 反复对话完成知识工作时用的本机**只读看板**。
+  项目:aispace-kanban —— 与 AI 反复对话完成知识工作时用的**本机工作空间协作台**。
   完整规范先读根目录 AGENTS.md(唯一事实源);具体怎么改代码读
   .claude/skills/dashboard-feature-flow(加/改功能的主入口)。
 
@@ -15,11 +15,13 @@ context: |
   - **三个平面**:CLI(`bin/cli.mjs`)/ 服务端(`src/server/**`,`.mjs`,**无类型检查**)/
     前端(`src/app/**`,TS strict)。影响面必须写清落在哪几个平面。
     跨平面的唯一契约是 `src/app/lib/api.ts`,改一侧就要改另一侧。
-  - **只读红线**:看板对工作空间只读,一切工作空间内路径必须过 `resolveInside()`。
-    任何"往工作空间写"的方案,在 proposal 里显式标出来留给人拍板,不要在 tasks 里顺手做掉。
+  - **安全链路**:看板写工作空间只走 AGENTS.md 第 1 节的能力清单,每项满足六条安全链路
+    (发起 / 来源 / 寻址 / 写入面 / 执行者 / 可回退),清单以外一律只读;删除只进回收区 `.aispace/trash/`。
+    一切工作空间内路径必须过 `resolveInside()`。新增或放宽写入面的方案,在 proposal 里显式标出来留给人拍板,
+    不要在 tasks 里顺手做掉;落地时注册表登记、路由调 `guardCapability()`、清单加一行、跑 `pnpm test:capabilities`。
   - **常驻服务不热更**:改 `src/server/**` 或 `bin/cli.mjs` 必须重启进程才生效;
     新增接口字段一律可选 + 前端兜底(用户可能跑着旧进程配新前端)。
-  - **验收闸门**:`pnpm typecheck`(只覆盖 `src/app`)+ `pnpm build` + 重启后浏览器点一遍。
+  - **验收闸门**:`pnpm typecheck`(只覆盖 `src/app`)+ `pnpm build` + `pnpm test:capabilities` + 重启后浏览器点一遍。
     服务端没有静态检查也没有测试,typecheck 绿不等于做完。
   - **templates/ 是另一套语境**(发给用户的工作空间模板),本仓编码规范不适用于它内部;
     改动涉及它要单独说明,并记住"放进去就是发出去"。
@@ -49,7 +51,7 @@ rules:
   proposal:
     - 开头一句话说清"不做会怎样",不要从方案讲起。
     - Impact 必须点名落在哪几个平面(CLI / 服务端 / 前端 / templates),以及是否动 src/app/lib/api.ts 契约。
-    - 涉及往工作空间写入、或要放宽只读红线的,必须在 proposal 里单独成段标出来,留给人拍板。
+    - 新增或放宽写入面、偏离安全链路的,必须在 proposal 里单独成段标出来,留给人拍板。
     - 引入新依赖要写清给哪个平面用;服务端用的必须进 dependencies(bin/ 拿不到 devDependencies)。
   specs:
     - 能力名用 kebab-case,贴着看板的语汇取(如 input-ingest、prototype-preview),别用泛词。

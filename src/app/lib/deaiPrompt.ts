@@ -1,6 +1,6 @@
 /**
  * 去 AI 味的「复制提示词」。只写剪贴板，**不发任何写请求** —— 交付稿、规则库全由工作空间 AI 按技能
- * `pm-deai-writing` 写（AGENTS.md 不变量 1：去 AI 味这条线看板不新增写入）。
+ * `pm-deai-writing` 写（AGENTS.md 能力清单：去 AI 味这条线看板不新增写入）。
  *
  * 口径以工作空间 `.claude/skills/pm-deai-writing/SKILL.md` 与 `output/delivery/README.md` 为准，
  * 那边改了落点、字段或标记格式，这里要跟着改。

@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * 模版洗炼。左侧是 `output/docx-template/` 下的真实模板，右侧是选中模板的概要，或者新建的四步。
- * 写盘只经服务端 spawn 工作空间的 `scripts/docx_template.py`（AGENTS.md 不变量 1 第九条），看板自己不写。
+ * 写盘只经服务端 spawn 工作空间的 `scripts/docx_template.py`（能力 `docx-template-refine`），看板自己不写。
  */
 
 const PART_LABEL: { key: 'collect' | 'profile' | 'reference' | 'spec' | 'sample' | 'front'; label: string; note: string }[] = [

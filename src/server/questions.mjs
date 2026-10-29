@@ -4,7 +4,7 @@
  * 要消除的病根（见 openspec changes/open-questions-workbench 的 design 决策 1）。
  *
  * 读的部分（`scanQuestions` / `readQuestion`）不写任何东西。
- * 写的部分只有一个 `writeQuestion`，它是 **AGENTS.md 不变量 1 的第四条窄例外**：
+ * 写的部分只有一个 `writeQuestion`，它是 **能力 `question-feedback`**：
  * 只改已存在问题文件的人写区四个字段与正文「## 人工反馈」小节，六条约束写在本文件下半部分
  * 的分隔线之后与 AGENTS.md 里。**别在这个模块里加第二个写入口。**
  *
@@ -289,7 +289,7 @@ export function readQuestion(root, id) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 写入：**AGENTS.md 不变量 1 的第四条窄例外**，范围就是那六条，越界即为 bug。
+// 写入：**能力 `question-feedback`**，范围见能力清单与对应 spec，越界即为 bug。
 //
 // 与前三条例外的形状不同：前三条是「看板只 spawn，工作空间自己的脚本写盘」，
 // 这一条是看板服务端自己写 —— 人工反馈没有现成脚本可以承接，而且它是高频小写入。

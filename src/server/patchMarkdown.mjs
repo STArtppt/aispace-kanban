@@ -55,7 +55,7 @@ export function replaceFileAtomic(abs, text) {
     fs.renameSync(tmp, abs);
   } catch (err) {
     try {
-      fs.unlinkSync(tmp);
+      fs.unlinkSync(tmp); // capability: tmp-cleanup
     } catch {
       // 临时件没写成，不用再删
     }

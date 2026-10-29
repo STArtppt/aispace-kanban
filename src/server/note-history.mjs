@@ -44,7 +44,7 @@ function writeStore(projectId, store) {
   const file = historyFile(projectId);
   if (!Object.keys(store).length) {
     try {
-      fs.unlinkSync(file);
+      fs.unlinkSync(file); // capability: tmp-cleanup
     } catch {
       // 本来就没有
     }
