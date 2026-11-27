@@ -20,3 +20,4 @@ release/
 
 # 私有资料（不入库，如 docs/private 的发布与CI笔记）
 private/
+.workbuddy/
